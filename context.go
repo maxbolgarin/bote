@@ -3,7 +3,7 @@ package bote
 import (
 	"context"
 
-	tele "gopkg.in/telebot.v3"
+	tele "gopkg.in/telebot.v4"
 )
 
 type Context[App any] interface {

@@ -1,7 +1,7 @@
 package bote
 
 import (
-	tele "gopkg.in/telebot.v3"
+	tele "gopkg.in/telebot.v4"
 )
 
 // MiddlewareFunc executes at every bot reqeust, msg is nil if it is a callback

@@ -9,7 +9,7 @@ import (
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 	"github.com/maxbolgarin/logze"
-	tele "gopkg.in/telebot.v3"
+	tele "gopkg.in/telebot.v4"
 )
 
 type BaseBot struct {
@@ -55,7 +55,7 @@ func NewBase(ctx contem.Context, cfg Config) (*BaseBot, error) {
 	b.Bot = bot
 
 	b.log.Info("bot is starting")
-	runGoroutine(b.Bot.Start)
+	lang.Go(logze.ConvertToS(cfg.Logger), b.Bot.Start)
 
 	ctx.AddFunc(b.Bot.Stop)
 

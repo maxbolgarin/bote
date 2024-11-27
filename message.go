@@ -3,7 +3,7 @@ package bote
 import (
 	"strconv"
 
-	tele "gopkg.in/telebot.v3"
+	tele "gopkg.in/telebot.v4"
 )
 
 type UserID int

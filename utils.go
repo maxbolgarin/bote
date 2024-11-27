@@ -4,13 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/hex"
-	"runtime/debug"
 	"strings"
 
 	"github.com/maxbolgarin/errm"
-	"github.com/maxbolgarin/logze"
 	"golang.org/x/exp/utf8string"
-	tele "gopkg.in/telebot.v3"
+	tele "gopkg.in/telebot.v4"
 )
 
 const (
@@ -140,63 +138,26 @@ func utfSlice(s string, i int) string {
 	return ss.Slice(0, i)
 }
 
-// Go runs goroutine with recover. It will print stack trace and restart goroutine in case of panic.
-// If you want to run goroutine without restarting after panic, just use go func() with defer panicsafe.Recover().
-func runGoroutine(f func()) {
-	var foo func()
-	fn := f
-	foo = func() {
-		defer func() {
-			if err := recover(); err != nil {
-				printErrorWithStack(err)
-				go foo()
+func isNumeric(s string, ignore ...rune) bool {
+loop:
+	for _, v := range s {
+		for _, a := range ignore {
+			if v == a {
+				continue loop
 			}
-		}()
-		fn()
+		}
+		if v < '0' || v > '9' {
+			return false
+		}
 	}
-	go foo()
+	return true
 }
 
-// Recover should be used with defer to recover and log stack trace in case of panic.
-func Recover() bool {
-	if err := recover(); err != nil {
-		printErrorWithStack(err)
-		return true
+func ignoreError(err error, toIgnore ...error) error {
+	for _, e := range toIgnore {
+		if errm.Is(err, e) {
+			return nil
+		}
 	}
-	return false
-}
-
-// RecoverWithErr should be used with defer to recover panic and return error from function without logging.
-func RecoverWithErr(outerError *error) bool {
-	if panicErr := recover(); panicErr != nil {
-		err := errm.Errorf("%v", panicErr)
-		*outerError = err
-		return true
-	}
-	return false
-}
-
-// RecoverWithErrAndStack should be used with defer to recover panic and return error from function with logging stack.
-func RecoverWithErrAndStack(outerError *error) bool {
-	if panicErr := recover(); panicErr != nil {
-		err := errm.Errorf("%v", panicErr)
-		*outerError = err
-		logze.Error(nil, string(debug.Stack()))
-		return true
-	}
-	return false
-}
-
-// RecoverWithHandler should be used with defer to recover and call provided handler func.
-func RecoverWithHandler(handler func(err any)) bool {
-	if panicErr := recover(); panicErr != nil {
-		handler(panicErr)
-		return true
-	}
-	return false
-}
-
-func printErrorWithStack(err any) {
-	stack := debug.Stack()
-	logze.Error(errm.Errorf("%v", err), string(stack)) // build with -trimpath to avoid printing build path in trace
+	return nil
 }

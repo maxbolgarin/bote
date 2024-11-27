@@ -8,7 +8,7 @@ import (
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 	"github.com/maxbolgarin/logze"
-	tele "gopkg.in/telebot.v3"
+	tele "gopkg.in/telebot.v4"
 )
 
 const (

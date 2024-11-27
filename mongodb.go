@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
@@ -14,6 +13,7 @@ import (
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/gorder"
 	"github.com/maxbolgarin/logze"
+	"github.com/maypok86/otter"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -65,8 +65,7 @@ type MongoDB struct {
 	client   *mongo.Client
 	log      logze.Logger
 
-	colls map[string]*Collection
-	mu    sync.RWMutex
+	colls otter.Cache[string, *Collection]
 }
 
 // NewMongo creates a new MongoDB client.
@@ -86,6 +85,11 @@ func NewMongo(ctx contem.Context, cfg DatabaseConfig) (*MongoDB, error) {
 		})
 	}
 
+	cache, err := otter.MustBuilder[string, *Collection](50).Build()
+	if err != nil {
+		return nil, err
+	}
+
 	client, err := mongo.Connect(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -99,32 +103,26 @@ func NewMongo(ctx contem.Context, cfg DatabaseConfig) (*MongoDB, error) {
 	db := &MongoDB{
 		database: client.Database(cfg.DBName),
 		client:   client,
-		colls:    make(map[string]*Collection),
+		colls:    cache,
 	}
 
 	return db, err
 }
 
-// GetCollection returns a collection object by name.
+// Collection returns a collection object by name.
 // It will create a new collection if it doesn't exist after first query.
-func (m *MongoDB) GetCollection(name string) *Collection {
-	m.mu.RLock()
-	coll, ok := m.colls[name]
-	m.mu.RUnlock()
-
+func (m *MongoDB) Collection(name string) *Collection {
+	coll, ok := m.colls.Get(name)
 	if ok {
 		return coll
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.colls[name] = &Collection{
+	coll = &Collection{
 		coll: m.database.Collection(name),
 		name: name,
 	}
+	m.colls.Set(name, coll)
 
-	return m.colls[name]
+	return coll
 }
 
 // MakeTransaction executes a transaction.

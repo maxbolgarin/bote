@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	tele "gopkg.in/telebot.v3"
+	tele "gopkg.in/telebot.v4"
 )
 
 var (
