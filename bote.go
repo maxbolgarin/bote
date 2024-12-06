@@ -66,6 +66,7 @@ func Start(ctx contem.Context, token string, optsRaw ...Options) (*Bote, error) 
 		msgs: opts.Msgs,
 
 		defaultLanguageCode: opts.Config.DefaultLanguageCode,
+		middlewares:         abstract.NewSafeSlice[MiddlewareFunc](),
 	}
 
 	b.addMiddleware(bote.masterMiddleware)
@@ -107,11 +108,11 @@ func (b *Bote) SetStartHandler(h HandlerFunc, commands ...string) {
 }
 
 func (b *Bote) Handle(endpoint any, f HandlerFunc) {
-	b.bot.handle(endpoint, func(c tele.Context) error {
-		// TODO: recover
+	b.bot.handle(endpoint, func(c tele.Context) (err error) {
+		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
 
 		ctx := b.newContext(c)
-		err := f(ctx)
+		err = f(ctx)
 		if err != nil {
 			return b.handleError(ctx, err)
 		}
@@ -123,7 +124,7 @@ func (b *Bote) Handle(endpoint any, f HandlerFunc) {
 }
 
 func (b *Bote) masterMiddleware(upd *tele.Update) bool {
-	// TODO: recover
+	defer lang.Recover(b.bot.log)
 
 	sender := GetSender(upd)
 	if sender == nil {
@@ -154,6 +155,8 @@ func (b *Bote) cleanMiddleware(upd *tele.Update, user User) bool {
 	if upd.Message != nil {
 		b.bot.delete(user.ID(), upd.Message.ID)
 	}
+
+	// TODO: sanitize
 	return true
 }
 
@@ -168,7 +171,8 @@ func (b *Bote) logMiddleware(upd *tele.Update, user User) bool {
 
 	switch {
 	case upd.Message != nil:
-		fields = append(fields, "state", user.State(upd.Message.ID), "msg_id", upd.Message.ID, "text", upd.Message.Text)
+		// TODO: truncate text
+		fields = append(fields, "state", user.State(), "msg_id", upd.Message.ID, "text", upd.Message.Text)
 		if user.HasTextStates() {
 			ts, msgID := user.LastTextState()
 			fields = append(fields, "text_state", ts, "text_state_msg_id", msgID)

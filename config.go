@@ -57,7 +57,7 @@ func (cfg *Config) prepareAndValidate() error {
 	cfg.LPTimeout = lang.Check(cfg.LPTimeout, 15*time.Second)
 	cfg.DefaultLanguageCode = lang.Check(cfg.DefaultLanguageCode, "en")
 
-	return validation.ValidateStruct(&cfg,
+	return validation.ValidateStruct(cfg,
 		validation.Field(&cfg.LPTimeout, validation.Required, validation.Min(1*time.Second)),
 		validation.Field(&cfg.ParseMode, validation.Required),
 		validation.Field(&cfg.DefaultLanguageCode, validation.Required, validation.Length(2, 2)),

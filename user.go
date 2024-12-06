@@ -255,6 +255,9 @@ func (u *userContextImpl) State(msgID ...int) State {
 	if len(msgID) == 0 {
 		return u.user.State.Main
 	}
+	if msgID[0] == u.user.Messages.MainID {
+		return u.user.State.Main
+	}
 	s, ok := u.user.State.InfoStates[msgID[0]]
 	if !ok {
 		return Unknown

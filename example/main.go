@@ -2,23 +2,33 @@ package main
 
 import (
 	"log/slog"
+	"os"
 
+	"github.com/maxbolgarin/bote"
 	"github.com/maxbolgarin/contem"
+	"github.com/maxbolgarin/errm"
 )
 
-type App struct {
-}
-
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	contem.Start(run, slog.Default())
 }
 
 func run(ctx contem.Context) error {
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	if token == "" {
+		return errm.New("TELEGRAM_BOT_TOKEN is not set")
+	}
 
-	// b, err := bote.Start[App](ctx, cfg)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	b, err := bote.Start(ctx, token)
+	if err != nil {
+		return err
+	}
+
+	b.Handle("/start", func(ctx bote.Context) error {
+		slog.Info("start")
+		return nil
+	})
 
 	return nil
 }
