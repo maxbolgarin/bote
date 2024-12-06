@@ -5,52 +5,61 @@ import (
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/ilyakaznacheev/cleanenv"
-	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
-	"github.com/maxbolgarin/logze"
 	tele "gopkg.in/telebot.v4"
 )
 
-const (
-	DefaultLPTimeout = 15 * time.Second
-)
-
-var (
-	EmptyUserIDErr = errm.New("empty user id")
-	EmptyMsgIDErr  = errm.New("empty msg id")
-)
-
+// Config contains bote configurations.
+//
+// You can use environment variables to fill it:
+// BOTE_LP_TIMEOUT - long polling timeout
+// BOTE_PARSE_MODE - default parse mode
+// BOTE_DEFAULT_LANGUAGE_CODE - default language code
+// BOTE_NO_PREVIEW - disable link preview
+// BOTE_DEBUG - enable debug mode
 type Config struct {
-	Token     string        `yaml:"token" env:"BOTE_TOKEN"`
-	LPTimeout time.Duration `yaml:"lp_timeout" env:"BOTE_TIMEOUT"`
+	// LPTimeout is the long polling timeout.
+	// Default is 15 seconds.
+	// You can use environment variable BOTE_LP_TIMEOUT.
+	LPTimeout time.Duration `yaml:"lp_timeout" json:"lp_timeout"  env:"BOTE_LP_TIMEOUT"`
 
-	ParseMode tele.ParseMode `yaml:"mode" env:"BOTE_PARSE_MODE"`
-	NoPreview bool           `yaml:"no_preview" env:"BOTE_NO_PREVIEW"`
-	Debug     bool           `yaml:"debug" env:"BOTE_DEBUG"`
+	// ParseMode is the default parse mode for the bot.
+	// Default is HTML.
+	// You can use environment variable BOTE_PARSE_MODE.
+	// It can be one of the following:
+	// - "HTML"
+	// - "Markdown"
+	// - "MarkdownV2"
+	ParseMode tele.ParseMode `yaml:"mode" json:"mode" env:"BOTE_PARSE_MODE"`
 
-	Logger logze.Logger `yaml:"-" env:"-"`
+	// DefaultLanguageCode is the default language code for the bot in ISO 639-1 format.
+	// Default is "en".
+	DefaultLanguageCode string `yaml:"default_language_code" json:"default_language_code" env:"BOTE_DEFAULT_LANGUAGE_CODE"`
+
+	// NoPreview is a flag that disables link preview.
+	// You can use environment variable BOTE_NO_PREVIEW.
+	NoPreview bool `yaml:"no_preview" json:"no_preview" env:"BOTE_NO_PREVIEW"`
+
+	// Debug is a flag that enables debug mode.
+	// You can use environment variable BOTE_DEBUG.
+	Debug bool `yaml:"debug" json:"debug" env:"BOTE_DEBUG"`
 }
 
-func (cfg Config) Validate() error {
-	return validation.ValidateStruct(&cfg,
-		validation.Field(&cfg.Token, validation.Required),
-		validation.Field(&cfg.ParseMode, validation.In(tele.ModeHTML, tele.ModeMarkdown, tele.ModeMarkdownV2)),
-		validation.Field(&cfg.LPTimeout, validation.Min(time.Second)),
-	)
+func (cfg *Config) Read(fileName ...string) error {
+	if len(fileName) > 0 {
+		return cleanenv.ReadConfig(fileName[0], cfg)
+	}
+	return cleanenv.ReadEnv(cfg)
 }
 
-func (cfg Config) prepare() (Config, error) {
-	if err := cleanenv.ReadEnv(&cfg); err != nil {
-		return cfg, errm.Wrap(err, "read env")
-	}
-
-	if err := cfg.Validate(); err != nil {
-		return cfg, errm.Wrap(err, "validate")
-	}
-
+func (cfg *Config) prepareAndValidate() error {
 	cfg.ParseMode = lang.Check(cfg.ParseMode, tele.ModeHTML)
-	cfg.LPTimeout = lang.Check(cfg.LPTimeout, DefaultLPTimeout)
-	cfg.Logger = lang.If(cfg.Logger.NotInited(), logze.Log, cfg.Logger)
+	cfg.LPTimeout = lang.Check(cfg.LPTimeout, 15*time.Second)
+	cfg.DefaultLanguageCode = lang.Check(cfg.DefaultLanguageCode, "en")
 
-	return cfg, nil
+	return validation.ValidateStruct(&cfg,
+		validation.Field(&cfg.LPTimeout, validation.Required, validation.Min(1*time.Second)),
+		validation.Field(&cfg.ParseMode, validation.Required),
+		validation.Field(&cfg.DefaultLanguageCode, validation.Required, validation.Length(2, 2)),
+	)
 }

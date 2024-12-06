@@ -1,53 +1,27 @@
 package bote
 
 import (
+	"encoding/hex"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/maxbolgarin/abstract"
 	tele "gopkg.in/telebot.v4"
 )
 
 var (
-	EmptyBtn tele.Btn
-
-	EmptyCallback tele.HandlerFunc = func(ctx tele.Context) error { return nil }
-
+	EmptyBtn      tele.Btn
 	EmptyKeyboard = Inline(1)
 )
 
-func (b *BaseBot) NewBtn(name string, callback tele.HandlerFunc, dataList ...string) tele.Btn {
+func (b *Bote) NewBtn(callback HandlerFunc, name string, dataList ...string) tele.Btn {
 	btn := tele.Btn{
 		Text:   name,
-		Unique: GetBtnUnique(name),
+		Unique: getBtnUnique(name),
 		Data:   createBtnData(dataList...),
 	}
 	b.Handle(&btn, callback)
 	return btn
-}
-
-func createBtnData(dataList ...string) string {
-	switch len(dataList) {
-	case 0:
-		return ""
-	case 1:
-		return dataList[0]
-	}
-	n := len(dataList) - 1
-	for i := 0; i < len(dataList); i++ {
-		n += len(dataList[i])
-	}
-
-	var b strings.Builder
-	b.Grow(n)
-	b.WriteString(dataList[0])
-	for _, s := range dataList[1:] {
-		if s == "" {
-			continue
-		}
-		b.WriteString("|")
-		b.WriteString(s)
-	}
-	return b.String()
 }
 
 type Keyboard struct {
@@ -192,4 +166,59 @@ func InlineLines(lines ...[]tele.Btn) *tele.ReplyMarkup {
 	}
 
 	return keyboard.CreateInlineMarkup()
+}
+
+func RemoveKeyboard() *tele.ReplyMarkup {
+	selector := tele.ReplyMarkup{
+		RemoveKeyboard: true,
+	}
+	return &selector
+}
+
+func createBtnData(dataList ...string) string {
+	switch len(dataList) {
+	case 0:
+		return ""
+	case 1:
+		return dataList[0]
+	}
+
+	var b strings.Builder
+	b.WriteString(dataList[0])
+	for _, s := range dataList[1:] {
+		if s == "" {
+			continue
+		}
+		b.WriteString("|" + s)
+	}
+	return b.String()
+}
+
+const (
+	// maxBytesInUnique is the maximum number of bytes that can be used in button unique value
+	maxBytesInUnique = 38
+	// randBytesInUnique is the number of random bytes in unique button value
+	randBytesInUnique = 10
+	// nameBytesInUnique is the maximum length of name in unique button value
+	nameBytesInUnique = maxBytesInUnique - randBytesInUnique
+)
+
+func getBtnUnique(name string) string {
+	var (
+		nameHex = hex.EncodeToString([]byte(name))
+		rnd     = abstract.GetRandomString(maxBytesInUnique)
+	)
+	if len(nameHex) < nameBytesInUnique {
+		nameHex = nameHex[:nameBytesInUnique]
+	}
+	return nameHex + rnd
+}
+
+func parseBtnUnique(unique string) string {
+	notRand := unique[:len(unique)-randBytesInUnique]
+	raw, err := hex.DecodeString(notRand)
+	if err != nil {
+		return unique
+	}
+	return string(raw)
 }

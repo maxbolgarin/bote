@@ -6,11 +6,10 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-type Context[App any] interface {
+type Context interface {
 	User() User
 	Tele() tele.Context
 	Data() string
-	App() App
 	Context() context.Context
 
 	Set(key, value string)
@@ -31,6 +30,88 @@ type Context[App any] interface {
 	DeleteHistory(lastMessageID int64)
 }
 
-func (b *Bote[T]) NewContext(c tele.Context) Context[T] {
+func (b *Bote) newContext(c tele.Context) Context {
+	return &contextImpl{
+		b: b,
+		c: c,
+	}
+}
+
+type contextImpl struct {
+	b *Bote
+	c tele.Context
+}
+
+func (c *contextImpl) User() User {
+	upd := c.c.Update()
+	return c.b.um.getUser(GetSender(&upd).ID)
+}
+
+func (c *contextImpl) Tele() tele.Context {
+	return c.c
+}
+
+func (c *contextImpl) Data() string {
+	if cb := c.c.Callback(); cb != nil {
+		return cb.Data
+	}
+	if msg := c.c.Message(); msg != nil {
+		return msg.Text
+	}
+	return ""
+}
+
+func (c *contextImpl) Context() context.Context {
+	return context.TODO()
+}
+
+func (c *contextImpl) Set(key, value string) {
+	c.c.Set(key, value)
+}
+
+func (c *contextImpl) Get(key string) string {
+	return c.c.Get(key).(string)
+}
+
+func (c *contextImpl) Send(s State, msgMain, msgHead string, kbMain, kbHead *tele.ReplyMarkup, opts ...any) error {
 	return nil
+}
+
+func (c *contextImpl) SendMain(s State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
+	return nil
+}
+
+func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error {
+	return c.c.Send(msg, append(opts, kb)...)
+}
+
+func (c *contextImpl) SendError(msg string, opts ...any) error {
+	return c.c.Send(msg, append(opts, tele.NoPreview)...)
+}
+
+func (c *contextImpl) Edit(s State, msgMain, msgHead string, kbMain, kbHead *tele.ReplyMarkup, opts ...any) error {
+	return nil
+}
+
+func (c *contextImpl) EditMain(s State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
+	return nil
+}
+
+func (c *contextImpl) EditAny(s State, msgID int64, msg string, kb *tele.ReplyMarkup, opts ...any) error {
+	return nil
+}
+
+func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) error {
+	return nil
+}
+
+func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
+	return nil
+}
+
+func (c *contextImpl) Delete(msgIDs ...int64) error {
+	return nil
+}
+
+func (c *contextImpl) DeleteHistory(lastMessageID int64) {
 }
