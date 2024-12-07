@@ -3,6 +3,7 @@ package bote
 import (
 	"context"
 	"log/slog"
+	"os"
 	"regexp"
 	"time"
 
@@ -13,32 +14,16 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-type (
-	HandlerFunc    func(c Context) error
-	MiddlewareFunc func(*tele.Update, User) bool
-	Logger         interface {
-		Debug(msg string, args ...any)
-		Info(msg string, args ...any)
-		Warn(msg string, args ...any)
-		Error(msg string, args ...any)
-	}
-
-	Options struct {
-		Config Config
-		UserDB UserStorage
-		Msgs   MessageProvider
-		Logger Logger
-	}
-)
-
 type Bote struct {
 	bot  *baseBot
 	um   *userManagerImpl
 	msgs MessageProvider
+	rlog UpdateLogger
 
 	defaultLanguageCode string
 
-	middlewares *abstract.SafeSlice[MiddlewareFunc]
+	middlewares    *abstract.SafeSlice[MiddlewareFunc]
+	deleteMessages bool
 }
 
 func Start(ctx contem.Context, token string, optsRaw ...Options) (*Bote, error) {
@@ -64,15 +49,20 @@ func Start(ctx contem.Context, token string, optsRaw ...Options) (*Bote, error) 
 		bot:  b,
 		um:   um,
 		msgs: opts.Msgs,
+		rlog: opts.UpdateLogger,
 
 		defaultLanguageCode: opts.Config.DefaultLanguageCode,
 		middlewares:         abstract.NewSafeSlice[MiddlewareFunc](),
+		deleteMessages:      *opts.Config.DeleteMessages,
 	}
 
 	b.addMiddleware(bote.masterMiddleware)
 
 	bote.AddMiddleware(bote.cleanMiddleware)
-	bote.AddMiddleware(bote.logMiddleware)
+
+	if *opts.Config.LogUpdates {
+		bote.AddMiddleware(bote.logMiddleware)
+	}
 
 	return bote, nil
 }
@@ -152,7 +142,7 @@ func (b *Bote) cleanMiddleware(upd *tele.Update, user User) bool {
 		b.bot.delete(user.ID(), msgIDs.ErrorID)
 		user.SetErrorMessage(0)
 	}
-	if upd.Message != nil {
+	if upd.Message != nil && b.deleteMessages {
 		b.bot.delete(user.ID(), upd.Message.ID)
 	}
 
@@ -171,13 +161,12 @@ func (b *Bote) logMiddleware(upd *tele.Update, user User) bool {
 
 	switch {
 	case upd.Message != nil:
-		// TODO: truncate text
-		fields = append(fields, "state", user.State(), "msg_id", upd.Message.ID, "text", upd.Message.Text)
+		fields = append(fields, "state", user.State(), "msg_id", upd.Message.ID, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
 		if user.HasTextStates() {
 			ts, msgID := user.LastTextState()
 			fields = append(fields, "text_state", ts, "text_state_msg_id", msgID)
 		}
-		b.bot.log.Debug("msg", fields...)
+		b.rlog.Log(MessageUpdate, fields...)
 
 	case upd.Callback != nil:
 		var (
@@ -197,7 +186,7 @@ func (b *Bote) logMiddleware(upd *tele.Update, user User) bool {
 		}
 		fields = lang.AppendIfAll(fields, "payload", any(payload))
 
-		b.bot.log.Debug("cb", fields...)
+		b.rlog.Log(CallbackUpdate, fields...)
 		return true
 	}
 
@@ -244,8 +233,22 @@ func prepareOpts(optsRaw ...Options) (Options, error) {
 		return opts, errm.Wrap(err, "prepare and validate config")
 	}
 	if opts.Logger == nil {
-		opts.Logger = slog.Default()
+		opts.Logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: lang.If(opts.Config.Debug, slog.LevelDebug, slog.LevelInfo),
+		}))
+		if opts.UpdateLogger == nil && !opts.Config.Debug {
+			opts.UpdateLogger = &updateLogger{slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			}))}
+		}
 	}
+	if opts.UpdateLogger == nil {
+		opts.UpdateLogger = &updateLogger{opts.Logger}
+	}
+	if !*opts.Config.EnableLogging {
+		opts.Logger = noopLogger{}
+	}
+
 	if opts.UserDB == nil {
 		opts.UserDB, err = newInMemoryUserStorage()
 		if err != nil {
@@ -259,9 +262,24 @@ func prepareOpts(optsRaw ...Options) (Options, error) {
 	return opts, nil
 }
 
-type NoopLogger struct{}
+type noopLogger struct{}
 
-func (NoopLogger) Debug(msg string, fields ...any) {}
-func (NoopLogger) Info(msg string, fields ...any)  {}
-func (NoopLogger) Warn(msg string, fields ...any)  {}
-func (NoopLogger) Error(msg string, fields ...any) {}
+func (noopLogger) Debug(msg string, fields ...any) {}
+func (noopLogger) Info(msg string, fields ...any)  {}
+func (noopLogger) Warn(msg string, fields ...any)  {}
+func (noopLogger) Error(msg string, fields ...any) {}
+
+type updateLogger struct {
+	l Logger
+}
+
+func (r *updateLogger) Log(t UpdateType, fields ...any) {
+	r.l.Debug(t.String(), fields...)
+}
+
+func maxLen(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
+}

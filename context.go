@@ -1,16 +1,16 @@
 package bote
 
 import (
-	"context"
-
 	tele "gopkg.in/telebot.v4"
 )
 
+// Context for handlers.
 type Context interface {
 	User() User
 	Tele() tele.Context
 	Data() string
-	Context() context.Context
+	DataParsed() []string
+	DataDouble() (string, string)
 
 	Set(key, value string)
 	Get(key string) string
@@ -32,45 +32,49 @@ type Context interface {
 
 func (b *Bote) newContext(c tele.Context) Context {
 	return &contextImpl{
-		b: b,
-		c: c,
+		bt: b,
+		ct: c,
 	}
 }
 
 type contextImpl struct {
-	b *Bote
-	c tele.Context
+	bt *Bote
+	ct tele.Context
 }
 
 func (c *contextImpl) User() User {
-	upd := c.c.Update()
-	return c.b.um.getUser(GetSender(&upd).ID)
+	upd := c.ct.Update()
+	return c.bt.um.getUser(GetSender(&upd).ID)
 }
 
 func (c *contextImpl) Tele() tele.Context {
-	return c.c
+	return c.ct
 }
 
 func (c *contextImpl) Data() string {
-	if cb := c.c.Callback(); cb != nil {
+	if cb := c.ct.Callback(); cb != nil {
 		return cb.Data
 	}
-	if msg := c.c.Message(); msg != nil {
+	if msg := c.ct.Message(); msg != nil {
 		return msg.Text
 	}
 	return ""
 }
 
-func (c *contextImpl) Context() context.Context {
-	return context.TODO()
+func (c *contextImpl) DataParsed() []string {
+	return ParseCallbackData(c.Data())
+}
+
+func (c *contextImpl) DataDouble() (string, string) {
+	return ParseDoubleCallbackData(c.Data())
 }
 
 func (c *contextImpl) Set(key, value string) {
-	c.c.Set(key, value)
+	c.ct.Set(key, value)
 }
 
 func (c *contextImpl) Get(key string) string {
-	return c.c.Get(key).(string)
+	return c.ct.Get(key).(string)
 }
 
 func (c *contextImpl) Send(s State, msgMain, msgHead string, kbMain, kbHead *tele.ReplyMarkup, opts ...any) error {
@@ -82,11 +86,11 @@ func (c *contextImpl) SendMain(s State, msg string, kb *tele.ReplyMarkup, opts .
 }
 
 func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	return c.c.Send(msg, append(opts, kb)...)
+	return c.ct.Send(msg, append(opts, kb)...)
 }
 
 func (c *contextImpl) SendError(msg string, opts ...any) error {
-	return c.c.Send(msg, append(opts, tele.NoPreview)...)
+	return c.ct.Send(msg, append(opts, tele.NoPreview)...)
 }
 
 func (c *contextImpl) Edit(s State, msgMain, msgHead string, kbMain, kbHead *tele.ReplyMarkup, opts ...any) error {

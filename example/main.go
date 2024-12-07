@@ -14,13 +14,15 @@ func main() {
 	contem.Start(run, slog.Default())
 }
 
+var isDebug = false
+
 func run(ctx contem.Context) error {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		return errm.New("TELEGRAM_BOT_TOKEN is not set")
 	}
 
-	b, err := bote.Start(ctx, token)
+	b, err := bote.Start(ctx, token, bote.Options{Config: bote.Config{Debug: isDebug}})
 	if err != nil {
 		return err
 	}

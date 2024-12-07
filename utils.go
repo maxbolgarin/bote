@@ -13,12 +13,34 @@ func GetSender(upd *tele.Update) *tele.User {
 		return upd.Callback.Sender
 	case upd.Message != nil:
 		return upd.Message.Sender
+	case upd.Query != nil:
+		return upd.Query.Sender
+	case upd.MessageReaction != nil:
+		return upd.MessageReaction.User
+	case upd.InlineResult != nil:
+		return upd.InlineResult.Sender
 	case upd.MyChatMember != nil:
 		return upd.MyChatMember.Sender
 	case upd.EditedMessage != nil:
 		return upd.EditedMessage.Sender
-	case upd.Query != nil:
-		return upd.Query.Sender
+	case upd.ShippingQuery != nil:
+		return upd.ShippingQuery.Sender
+	case upd.ChannelPost != nil:
+		return upd.ChannelPost.Sender
+	case upd.EditedChannelPost != nil:
+		return upd.EditedChannelPost.Sender
+	case upd.PreCheckoutQuery != nil:
+		return upd.PreCheckoutQuery.Sender
+	case upd.PollAnswer != nil:
+		return upd.PollAnswer.Sender
+	case upd.ChatJoinRequest != nil:
+		return upd.ChatJoinRequest.Sender
+	case upd.BusinessMessage != nil:
+		return upd.BusinessMessage.Sender
+	case upd.BusinessConnection != nil:
+		return upd.BusinessConnection.Sender
+	case upd.EditedBusinessMessage != nil:
+		return upd.EditedBusinessMessage.Sender
 	default:
 		return nil
 	}
