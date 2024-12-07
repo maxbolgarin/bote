@@ -1,10 +1,12 @@
 package bote
 
 import (
+	"log/slog"
+	"os"
 	"time"
 
-	validation "github.com/go-ozzo/ozzo-validation/v4"
-	"github.com/ilyakaznacheev/cleanenv"
+	"github.com/caarlos0/env/v11"
+	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
@@ -113,14 +115,11 @@ type Config struct {
 	Debug bool `yaml:"debug" json:"debug" env:"BOTE_DEBUG"`
 }
 
-func (cfg *Config) Read(fileName ...string) error {
-	if len(fileName) > 0 {
-		return cleanenv.ReadConfig(fileName[0], cfg)
-	}
-	return cleanenv.ReadEnv(cfg)
-}
-
 func (cfg *Config) prepareAndValidate() error {
+	if err := env.Parse(cfg); err != nil {
+		return err
+	}
+
 	cfg.ParseMode = lang.Check(cfg.ParseMode, tele.ModeHTML)
 	cfg.LPTimeout = lang.Check(cfg.LPTimeout, 15*time.Second)
 	cfg.DefaultLanguageCode = lang.Check(cfg.DefaultLanguageCode, "en")
@@ -128,13 +127,46 @@ func (cfg *Config) prepareAndValidate() error {
 	cfg.LogUpdates = lang.Check(cfg.LogUpdates, lang.Ptr(true))
 	cfg.EnableLogging = lang.Check(cfg.EnableLogging, lang.Ptr(true))
 
-	return validation.ValidateStruct(cfg,
-		validation.Field(&cfg.LPTimeout, validation.Required, validation.Min(1*time.Second)),
-		validation.Field(&cfg.ParseMode, validation.Required),
-		validation.Field(&cfg.DefaultLanguageCode, validation.Required, validation.Length(2, 2)),
-	)
+	return nil
 }
 
 func (t UpdateType) String() string {
 	return string(t)
+}
+
+func prepareOpts(optsRaw ...Options) (Options, error) {
+	opts := lang.First(optsRaw)
+
+	err := opts.Config.prepareAndValidate()
+	if err != nil {
+		return opts, errm.Wrap(err, "prepare and validate config")
+	}
+	if opts.Logger == nil {
+		opts.Logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: lang.If(opts.Config.Debug, slog.LevelDebug, slog.LevelInfo),
+		}))
+		if opts.UpdateLogger == nil && !opts.Config.Debug {
+			opts.UpdateLogger = &updateLogger{slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			}))}
+		}
+	}
+	if opts.UpdateLogger == nil {
+		opts.UpdateLogger = &updateLogger{opts.Logger}
+	}
+	if !*opts.Config.EnableLogging {
+		opts.Logger = noopLogger{}
+	}
+
+	if opts.UserDB == nil {
+		opts.UserDB, err = newInMemoryUserStorage()
+		if err != nil {
+			return opts, errm.Wrap(err, "new user storage")
+		}
+	}
+	if opts.Msgs == nil {
+		opts.Msgs = NewDefaultMessageProvider()
+	}
+
+	return opts, nil
 }

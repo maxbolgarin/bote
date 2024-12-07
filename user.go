@@ -566,7 +566,7 @@ func (m *userManagerImpl) getUser(userID int64) User {
 		return user
 	}
 
-	m.log.Warn("bug: not found user in cache", "user_id", userID)
+	m.log.Warn("bug: not found in cache", "user_id", userID)
 
 	tUser := &tele.User{ID: userID}
 
@@ -599,7 +599,7 @@ func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (Use
 	if !isFound {
 		userModel = newUserModel(tUser)
 		if err := m.db.Insert(ctx, userModel); err != nil {
-			return nil, errm.Wrap(err, "create user in db")
+			return nil, errm.Wrap(err, "insert user")
 		}
 	}
 
@@ -613,7 +613,7 @@ func (m *userManagerImpl) initAllUsersFromDB(ctx context.Context) error {
 	users, err := m.db.GetAll(ctx)
 	switch {
 	case err == nil && len(users) == 0:
-		m.log.Info("no users found in DB")
+		m.log.Info("no users in DB")
 		return nil
 
 	case err != nil:
@@ -627,7 +627,7 @@ func (m *userManagerImpl) initAllUsersFromDB(ctx context.Context) error {
 		m.users.Set(u.Info.ID, m.newUserContext(u))
 	}
 
-	m.log.Info("successfully init users", "count", m.users.Size())
+	m.log.Info("init users", "count", m.users.Size())
 
 	return nil
 }

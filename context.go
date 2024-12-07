@@ -1,6 +1,8 @@
 package bote
 
 import (
+	"strings"
+
 	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
@@ -96,7 +98,7 @@ type contextImpl struct {
 
 func (c *contextImpl) User() User {
 	upd := c.ct.Update()
-	return c.bt.um.getUser(GetSender(&upd).ID)
+	return c.bt.um.getUser(getSender(&upd).ID)
 }
 
 func (c *contextImpl) Tele() tele.Context {
@@ -114,11 +116,15 @@ func (c *contextImpl) Data() string {
 }
 
 func (c *contextImpl) DataParsed() []string {
-	return ParseCallbackData(c.Data())
+	return strings.Split(c.Data(), "|")
 }
 
 func (c *contextImpl) DataDouble() (string, string) {
-	return ParseDoubleCallbackData(c.Data())
+	spl := strings.Split(c.Data(), "|")
+	if len(spl) < 2 {
+		return spl[0], ""
+	}
+	return spl[0], spl[1]
 }
 
 func (c *contextImpl) Text() string {
@@ -164,7 +170,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 
 	if headMsgID := user.Messages().HeadID; headMsgID != 0 {
 		if err := c.bt.bot.delete(user.ID(), headMsgID); err != nil {
-			c.bt.bot.log.Warn("failed to delete previous head message", userFields(user)...)
+			c.bt.bot.log.Warn("cannot delete previous head message", userFields(user)...)
 		}
 	}
 
@@ -188,7 +194,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 
 	if headMsgID := user.Messages().HeadID; headMsgID != 0 {
 		if err := c.bt.bot.delete(user.ID(), headMsgID); err != nil {
-			c.bt.bot.log.Warn("failed to delete previous head message", userFields(user)...)
+			c.bt.bot.log.Warn("cannot delete previous head message", userFields(user)...)
 		}
 	}
 
@@ -338,22 +344,23 @@ func (c *contextImpl) DeleteHistory(lastMessageID int) {
 func (c *contextImpl) handleError(err error) error {
 	user := c.User()
 
-	if IsBlockedError(err) {
+	if strings.Contains(err.Error(), "bot was blocked by the user") {
 		c.bt.bot.log.Info("bot is blocked, disable", userFields(user)...)
 		user.Disable()
 		c.bt.um.removeUserFromMemory(user.ID())
 		return nil
 	}
 
-	// TODO: handle other errors
-	if IsNotFoundEditMsgErr(err) {
+	if strings.Contains(err.Error(), "message to edit not found") {
 		c.bt.bot.log.Warn("message not found", userFields(user)...)
 		//return app.StartHandlerByUser(user, "")
 		// user.ForgetHistoryDay(day)
 		return nil
 	}
 
-	c.bt.bot.log.Error("handler error", userFields(user, "error", err)...)
+	// TODO: handle other errors
+
+	c.bt.bot.log.Error("handler", userFields(user, "error", err)...)
 
 	msgID, _ := c.bt.bot.send(user.ID(), c.bt.msgs.Messages(user.Language()).GeneralError())
 	user.SetErrorMessage(msgID)

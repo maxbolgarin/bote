@@ -2,18 +2,19 @@ package bote
 
 import (
 	"context"
-	"log/slog"
-	"os"
+	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/maxbolgarin/abstract"
-	"github.com/maxbolgarin/contem"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
 
+// Bote is a main struct of this package. It contains all necessary components for working with Telegram bot.
 type Bote struct {
 	bot  *baseBot
 	um   *userManagerImpl
@@ -26,7 +27,9 @@ type Bote struct {
 	deleteMessages bool
 }
 
-func Start(ctx contem.Context, token string, optsRaw ...Options) (*Bote, error) {
+// Start starts the bot. All that you need is to pass your bot token and options.
+// Don't forget to call Stop() when you're done.
+func Start(ctx context.Context, token string, optsRaw ...Options) (*Bote, error) {
 	if token == "" {
 		return nil, errm.New("token cannot be empty")
 	}
@@ -40,7 +43,7 @@ func Start(ctx contem.Context, token string, optsRaw ...Options) (*Bote, error) 
 		return nil, errm.Wrap(err, "new user manager")
 	}
 
-	b, err := startBot(ctx, token, opts.Config, opts.Logger)
+	b, err := startBot(token, opts.Config, opts.Logger)
 	if err != nil {
 		return nil, errm.Wrap(err, "start bot")
 	}
@@ -65,6 +68,10 @@ func Start(ctx contem.Context, token string, optsRaw ...Options) (*Bote, error) 
 	}
 
 	return bote, nil
+}
+
+func (b *Bote) Stop() {
+	b.bot.bot.Stop()
 }
 
 func (b *Bote) Bot() *tele.Bot {
@@ -116,13 +123,10 @@ func (b *Bote) Handle(endpoint any, f HandlerFunc) {
 func (b *Bote) masterMiddleware(upd *tele.Update) bool {
 	defer lang.Recover(b.bot.log)
 
-	sender := GetSender(upd)
-	if sender == nil {
-		panic("sender cannot be nil")
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	sender := getSender(upd)
 
 	user, err := b.um.prepareUser(ctx, sender)
 	if err != nil {
@@ -147,6 +151,7 @@ func (b *Bote) cleanMiddleware(upd *tele.Update, user User) bool {
 	}
 
 	// TODO: sanitize
+
 	return true
 }
 
@@ -194,46 +199,187 @@ func (b *Bote) logMiddleware(upd *tele.Update, user User) bool {
 }
 
 func userFields(user User, fields ...any) []any {
-	f := make([]any, 0, len(fields)+4)
-	f = append(f, "user_id", user.ID(), "username", user.Username())
+	f := make([]any, 0, len(fields)+6)
+	f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.State())
 	return append(f, fields...)
 }
 
-func prepareOpts(optsRaw ...Options) (Options, error) {
-	opts := lang.First(optsRaw)
+var (
+	errEmptyUserID = errm.New("empty user id")
+	errEmptyMsgID  = errm.New("empty msg id")
+)
 
-	err := opts.Config.prepareAndValidate()
+type baseBot struct {
+	bot *tele.Bot
+	log Logger
+
+	defaultOptions []any
+	middlewares    []func(upd *tele.Update) bool
+}
+
+func startBot(token string, cfg Config, log Logger) (*baseBot, error) {
+	b := &baseBot{
+		log:            log,
+		defaultOptions: []any{cfg.ParseMode},
+		middlewares:    make([]func(upd *tele.Update) bool, 0),
+	}
+
+	if cfg.NoPreview {
+		b.defaultOptions = append(b.defaultOptions, tele.NoPreview)
+	}
+
+	bot, err := tele.NewBot(tele.Settings{
+		Token:   token,
+		Poller:  tele.NewMiddlewarePoller(&tele.LongPoller{Timeout: cfg.LPTimeout}, b.middleware),
+		Client:  &http.Client{Timeout: 2 * cfg.LPTimeout},
+		Verbose: cfg.Debug,
+		OnError: func(err error, ctx tele.Context) {
+			var userID int64
+			if ctx != nil && ctx.Chat() != nil {
+				userID = ctx.Chat().ID
+			}
+			b.log.Error("error callback", "error", err, "user_id", userID)
+		},
+	})
 	if err != nil {
-		return opts, errm.Wrap(err, "prepare and validate config")
+		return nil, errm.Wrap(err, "new telebot")
 	}
-	if opts.Logger == nil {
-		opts.Logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-			Level: lang.If(opts.Config.Debug, slog.LevelDebug, slog.LevelInfo),
-		}))
-		if opts.UpdateLogger == nil && !opts.Config.Debug {
-			opts.UpdateLogger = &updateLogger{slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-				Level: slog.LevelDebug,
-			}))}
-		}
-	}
-	if opts.UpdateLogger == nil {
-		opts.UpdateLogger = &updateLogger{opts.Logger}
-	}
-	if !*opts.Config.EnableLogging {
-		opts.Logger = noopLogger{}
+	b.bot = bot
+
+	b.log.Info("bot is starting")
+
+	lang.Go(b.log, b.bot.Start)
+
+	return b, nil
+}
+
+func (b *baseBot) addMiddleware(f func(upd *tele.Update) bool) {
+	b.middlewares = append(b.middlewares, f)
+}
+
+func (b *baseBot) handle(endpoint any, handler tele.HandlerFunc) {
+	b.bot.Handle(endpoint, handler)
+}
+
+func (b *baseBot) send(userID int64, msg string, options ...any) (int, error) {
+	if userID == 0 {
+		return 0, errEmptyUserID
 	}
 
-	if opts.UserDB == nil {
-		opts.UserDB, err = newInMemoryUserStorage()
+	m, err := b.bot.Send(userIDWrapper(userID), msg, append(options, b.defaultOptions...)...)
+	if err != nil {
+		return 0, err
+	}
+
+	return m.ID, nil
+}
+
+func (b *baseBot) edit(userID int64, msgID int, what any, options ...any) error {
+	if userID == 0 {
+		return errEmptyUserID
+	}
+	if msgID == 0 {
+		return errEmptyMsgID
+	}
+
+	_, err := b.bot.Edit(getEditable(userID, msgID), what, append(options, b.defaultOptions...)...)
+	if err != nil {
+		if strings.Contains(err.Error(), "message is not modified") {
+			b.log.Warn("message is not modified", "msg_id", msgID, "user_id", userID)
+			return nil
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (b *baseBot) editReplyMarkup(userID int64, msgID int, markup *tele.ReplyMarkup) error {
+	if userID == 0 {
+		return errEmptyUserID
+	}
+	if msgID == 0 {
+		return errEmptyMsgID
+	}
+
+	_, err := b.bot.EditReplyMarkup(getEditable(userID, msgID), markup)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *baseBot) delete(userID int64, msgIDs ...int) error {
+	if userID == 0 {
+		return errEmptyUserID
+	}
+
+	errSet := errm.NewList()
+
+	for _, msgID := range msgIDs {
+		if msgID == 0 {
+			return errEmptyMsgID
+		}
+		if err := b.bot.Delete(getEditable(userID, msgID)); err != nil {
+			errSet.Add(err)
+		}
+	}
+
+	return errSet.Err()
+}
+
+func (b *baseBot) deleteHistory(userID int64, lastMessageID int) {
+	var counter int
+	for msgID := lastMessageID - 1; msgID > 1; msgID-- {
+		err := b.delete(userID, msgID)
 		if err != nil {
-			return opts, errm.Wrap(err, "new user storage")
+			counter += 1
+		} else {
+			counter = 0
+		}
+		if counter == 5 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (b *baseBot) middleware(upd *tele.Update) bool {
+	if upd.MyChatMember != nil {
+		if lang.Deref(upd.MyChatMember.NewChatMember).Role == "kicked" {
+			b.log.Warn("bot is blocked",
+				"user_id", lang.Deref(upd.MyChatMember.Sender).ID,
+				"username", lang.Deref(upd.MyChatMember.Sender).Username,
+				"old_role", lang.Deref(upd.MyChatMember.OldChatMember).Role,
+				"new_role", lang.Deref(upd.MyChatMember.NewChatMember).Role)
+
+			return false
+		}
+		if lang.Deref(upd.MyChatMember.OldChatMember).Role == "kicked" {
+			b.log.Info("bot is unblocked",
+				"user_id", lang.Deref(upd.MyChatMember.Sender).ID,
+				"username", lang.Deref(upd.MyChatMember.Sender).Username,
+				"old_role", lang.Deref(upd.MyChatMember.OldChatMember).Role,
+				"new_role", lang.Deref(upd.MyChatMember.NewChatMember).Role)
+
+			return false
 		}
 	}
-	if opts.Msgs == nil {
-		opts.Msgs = NewDefaultMessageProvider()
+
+	for _, m := range b.middlewares {
+		if !m(upd) {
+			return false
+		}
 	}
 
-	return opts, nil
+	return true
+}
+
+type userIDWrapper int64
+
+func (u userIDWrapper) Recipient() string {
+	return strconv.Itoa(int(u))
 }
 
 type noopLogger struct{}
@@ -251,9 +397,52 @@ func (r *updateLogger) Log(t UpdateType, fields ...any) {
 	r.l.Debug(t.String(), fields...)
 }
 
+func getEditable(senderID int64, messageID int) tele.Editable {
+	return &tele.Message{ID: messageID, Chat: &tele.Chat{ID: senderID}}
+}
+
 func maxLen(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
 	return s[:max]
+}
+
+func getSender(upd *tele.Update) *tele.User {
+	switch {
+	case upd.Callback != nil:
+		return upd.Callback.Sender
+	case upd.Message != nil:
+		return upd.Message.Sender
+	case upd.Query != nil:
+		return upd.Query.Sender
+	case upd.MessageReaction != nil:
+		return upd.MessageReaction.User
+	case upd.InlineResult != nil:
+		return upd.InlineResult.Sender
+	case upd.MyChatMember != nil:
+		return upd.MyChatMember.Sender
+	case upd.EditedMessage != nil:
+		return upd.EditedMessage.Sender
+	case upd.ShippingQuery != nil:
+		return upd.ShippingQuery.Sender
+	case upd.ChannelPost != nil:
+		return upd.ChannelPost.Sender
+	case upd.EditedChannelPost != nil:
+		return upd.EditedChannelPost.Sender
+	case upd.PreCheckoutQuery != nil:
+		return upd.PreCheckoutQuery.Sender
+	case upd.PollAnswer != nil:
+		return upd.PollAnswer.Sender
+	case upd.ChatJoinRequest != nil:
+		return upd.ChatJoinRequest.Sender
+	case upd.BusinessMessage != nil:
+		return upd.BusinessMessage.Sender
+	case upd.BusinessConnection != nil:
+		return upd.BusinessConnection.Sender
+	case upd.EditedBusinessMessage != nil:
+		return upd.EditedBusinessMessage.Sender
+	default:
+		return nil
+	}
 }
