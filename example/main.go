@@ -28,7 +28,7 @@ func run(ctx contem.Context) error {
 	}
 
 	b.Handle("/start", func(ctx bote.Context) error {
-		slog.Info("start")
+		ctx.SendMain(bote.NoChange, "Hello, World!", nil)
 		return nil
 	})
 

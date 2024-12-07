@@ -40,11 +40,13 @@ type User interface {
 	Info() UserInfo
 	// Username returns Telegram username (without @).
 	Username() string
+	// Language returns Telegram user language code.
+	Language() string
 	// State returns current state for the given message ID.
-	// If message ID is not provided, it returns current state for the last message ID.
+	// If message ID is not provided, it returns current state for the Main message.
 	State(msgID ...int) State
 	// SetState sets the given state for the given message ID.
-	// If message ID is not provided, it sets the given state for the last message ID.
+	// If message ID is not provided, it sets the given state for the Main message.
 	SetState(state State, msgID ...int)
 	// HasTextStates returns true if there is text states in stack.
 	HasTextStates() bool
@@ -68,16 +70,21 @@ type User interface {
 	SetErrorMessage(msgID int)
 	// SetNotificationMessage sets the given message ID as notification message ID.
 	SetNotificationMessage(msgID int)
-	// AddInfoMessage adds the given message ID to info message IDs.
-	AddInfoMessage(msgID int)
+	// AddHistoryMessage adds the given message ID to history message IDs.
+	AddHistoryMessage(msgID int)
 	// Register set user as registered.
 	Register()
+	// IsRegistered returns true if user is registered.
+	IsRegistered() bool
 	// Update updates user info with the given Telegram user.
 	Update(user *tele.User)
 	// Disable set user as disabled.
 	Disable()
 	// IsDisabled returns true if user is disabled.
 	IsDisabled() bool
+	// HandleSend makes three user updates that usually happen after Send new message in one request:
+	//SetState, SetMessages, AddHistoryMessage.
+	HandleSend(s State, mainMsgID, headMsgID int)
 }
 
 // UserStorage is a storage for users.
@@ -149,10 +156,10 @@ type UserMessages struct {
 	NotificationID int `bson:"notification_id"`
 	// Error message can be sent in any time in case of error and deleted automically after next action.
 	ErrorID int `bson:"error_id"`
-	// Info message is the previous main messages. Main message becomes Info after new Main sending.
-	InfoIDs []int `bson:"info_ids"`
-	// ActionsHistory contains time of last interaction of user with every message.
-	ActionsHistory map[int]time.Time `bson:"actions_history"`
+	// History message is the previous main messages. Main message becomes History message after new Main sending.
+	HistoryIDs []int `bson:"history_ids"`
+	// LastActions contains time of last interaction of user with every message.
+	LastActions map[int]time.Time `bson:"last_actions"`
 }
 
 // UserState contains current user state and state history.
@@ -160,8 +167,8 @@ type UserMessages struct {
 type UserState struct {
 	// Main is the main state of the user, state of the Main message.
 	Main State `bson:"main"`
-	// InfoStates contains all states of the user (for all Info messages). It is a map of message_id -> state.
-	InfoStates map[int]State `bson:"info_states"`
+	// MessageStates contains all states of the user for all messages. It is a map of message_id -> state.
+	MessageStates map[int]State `bson:"message_states"`
 	// TextStates contains all text states of the user.
 	// Every message can produce text state and they should be handled as LIFO.
 	TextStates *abstract.UniqueStack[TextStateWithMessage] `bson:"text_states"`
@@ -203,15 +210,15 @@ type UserMessagesDiff struct {
 	HeadID         *int              `bson:"head_id"`
 	NotificationID *int              `bson:"notification_id"`
 	ErrorID        *int              `bson:"error_id"`
-	InfoIDs        []int             `bson:"info_ids"`
-	ActionsHistory map[int]time.Time `bson:"actions_history"`
+	HistoryIDs     []int             `bson:"history_ids"`
+	LastActions    map[int]time.Time `bson:"last_actions"`
 }
 
 // UserStateDiff contains changes that should be applied to user state.
 type UserStateDiff struct {
-	Main       *State                                      `bson:"main"`
-	InfoStates map[int]State                               `bson:"info_states"`
-	TextStates *abstract.UniqueStack[TextStateWithMessage] `bson:"text_states"`
+	Main          *State                                      `bson:"main"`
+	MessageStates map[int]State                               `bson:"message_states"`
+	TextStates    *abstract.UniqueStack[TextStateWithMessage] `bson:"text_states"`
 }
 
 // userContextImpl implements User interface.
@@ -230,8 +237,8 @@ func (s State) Unknown() bool {
 	return s == Unknown
 }
 
-// NotEmpty returns true if state is not empty.
-func (s State) NotEmpty() bool {
+// IsChanged returns true if state is not empty and should be changed.
+func (s State) IsChanged() bool {
 	return s != NoChange
 }
 
@@ -251,39 +258,42 @@ func (u *userContextImpl) Username() string {
 	return u.user.Info.Username
 }
 
-func (u *userContextImpl) State(msgID ...int) State {
-	if len(msgID) == 0 {
-		return u.user.State.Main
-	}
-	if msgID[0] == u.user.Messages.MainID {
-		return u.user.State.Main
-	}
-	s, ok := u.user.State.InfoStates[msgID[0]]
-	if !ok {
-		return Unknown
-	}
-	return s
+func (u *userContextImpl) Language() string {
+	return u.user.Info.LanguageCode
 }
 
-func (u *userContextImpl) SetState(state State, msgID ...int) {
-	var upd UserStateDiff
+func (u *userContextImpl) State(msgID ...int) State {
+	if len(msgID) == 0 || msgID[0] == u.user.Messages.MainID {
+		return u.user.State.Main
+	}
+	return u.user.State.MessageStates[msgID[0]]
+}
 
-	if len(msgID) == 0 {
+func (u *userContextImpl) SetState(state State, msgIDRaw ...int) {
+	if !state.IsChanged() {
+		return
+	}
+
+	u.user.LastSeen = time.Now().UTC()
+
+	var (
+		msgID = lang.Check(lang.First(msgIDRaw), u.user.Messages.MainID)
+		upd   UserStateDiff
+	)
+
+	if msgID == u.user.Messages.MainID {
 		u.user.State.Main = state
 		upd.Main = &state
-
-		u.user.Messages.ActionsHistory[u.user.Messages.MainID] = u.user.LastSeen
-	} else {
-		u.user.State.InfoStates[msgID[0]] = state
-		upd.InfoStates = u.user.State.InfoStates
-
-		u.user.Messages.ActionsHistory[msgID[0]] = u.user.LastSeen
 	}
-	u.user.LastSeen = time.Now().UTC()
+
+	u.user.State.MessageStates[msgID] = state
+	u.user.Messages.LastActions[msgID] = u.user.LastSeen
+
+	upd.MessageStates = u.user.State.MessageStates
 
 	u.db.Update(u.user.Info.ID, &UserModelDiff{
 		State:    &upd,
-		Messages: &UserMessagesDiff{ActionsHistory: u.user.Messages.ActionsHistory},
+		Messages: &UserMessagesDiff{LastActions: u.user.Messages.LastActions},
 		LastSeen: &u.user.LastSeen,
 	})
 }
@@ -393,11 +403,11 @@ func (u *userContextImpl) SetNotificationMessage(msgID int) {
 	})
 }
 
-func (u *userContextImpl) AddInfoMessage(msgID int) {
-	u.user.Messages.InfoIDs = append(u.user.Messages.InfoIDs, msgID)
+func (u *userContextImpl) AddHistoryMessage(msgID int) {
+	u.user.Messages.HistoryIDs = append(u.user.Messages.HistoryIDs, msgID)
 	u.db.Update(u.user.Info.ID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
-			InfoIDs: u.user.Messages.InfoIDs,
+			HistoryIDs: u.user.Messages.HistoryIDs,
 		},
 	})
 }
@@ -407,6 +417,10 @@ func (u *userContextImpl) Register() {
 	u.db.Update(u.user.Info.ID, &UserModelDiff{
 		Registered: &u.user.Registered,
 	})
+}
+
+func (u *userContextImpl) IsRegistered() bool {
+	return !u.user.Registered.IsZero()
 }
 
 func (u *userContextImpl) Update(user *tele.User) {
@@ -450,16 +464,45 @@ func (u *userContextImpl) IsDisabled() bool {
 	return u.user.IsDisabled
 }
 
+func (u *userContextImpl) HandleSend(newState State, mainMsgID, headMsgID int) {
+	u.user.LastSeen = time.Now().UTC()
+	u.user.Messages.LastActions[mainMsgID] = u.user.LastSeen
+
+	u.user.Messages.HistoryIDs = append(u.user.Messages.HistoryIDs, u.user.Messages.MainID)
+
+	if newState.IsChanged() {
+		u.user.State.Main = newState
+		u.user.State.MessageStates[mainMsgID] = newState
+	}
+
+	u.user.Messages.MainID = mainMsgID
+	u.user.Messages.HeadID = headMsgID
+
+	u.db.Update(u.user.Info.ID, &UserModelDiff{
+		State: &UserStateDiff{
+			Main:          &u.user.State.Main,
+			MessageStates: u.user.State.MessageStates,
+		},
+		Messages: &UserMessagesDiff{
+			MainID:      &u.user.Messages.MainID,
+			HeadID:      &u.user.Messages.HeadID,
+			HistoryIDs:  u.user.Messages.HistoryIDs,
+			LastActions: u.user.Messages.LastActions,
+		},
+		LastSeen: &u.user.LastSeen,
+	})
+}
+
 func newUserModel(tUser *tele.User) UserModel {
 	return UserModel{
 		Info: newUserInfo(tUser),
 		State: UserState{
-			Main:       FirstRequest,
-			InfoStates: make(map[int]State),
-			TextStates: abstract.NewUniqueStack[TextStateWithMessage](),
+			Main:          FirstRequest,
+			MessageStates: make(map[int]State),
+			TextStates:    abstract.NewUniqueStack[TextStateWithMessage](),
 		},
 		Messages: UserMessages{
-			ActionsHistory: make(map[int]time.Time),
+			LastActions: make(map[int]time.Time),
 		},
 		LastSeen: time.Now().UTC(),
 		Created:  time.Now().UTC(),
@@ -630,13 +673,13 @@ func (m *inMemoryUserStorage) GetAll(ctx context.Context) ([]UserModel, error) {
 }
 
 func (m *inMemoryUserStorage) Update(id int64, diff *UserModelDiff) {
-
 	user, found := m.cache.Get(id)
 	if !found {
 		return
 	}
-	user = UserModel{
-		Info: UserInfo{
+
+	if diff.Info != nil {
+		user.Info = UserInfo{
 			ID:           user.Info.ID,
 			FirstName:    lang.Check(lang.Deref(diff.Info.FirstName), user.Info.FirstName),
 			LastName:     lang.Check(lang.Deref(diff.Info.LastName), user.Info.LastName),
@@ -644,25 +687,30 @@ func (m *inMemoryUserStorage) Update(id int64, diff *UserModelDiff) {
 			LanguageCode: lang.Check(lang.Deref(diff.Info.LanguageCode), user.Info.LanguageCode),
 			IsBot:        lang.Check(lang.Deref(diff.Info.IsBot), user.Info.IsBot),
 			IsPremium:    lang.Check(lang.Deref(diff.Info.IsPremium), user.Info.IsPremium),
-		},
-		Messages: UserMessages{
+		}
+	}
+	if diff.Messages != nil {
+		user.Messages = UserMessages{
 			MainID:         lang.Check(lang.Deref(diff.Messages.MainID), user.Messages.MainID),
 			HeadID:         lang.Check(lang.Deref(diff.Messages.HeadID), user.Messages.HeadID),
 			NotificationID: lang.Check(lang.Deref(diff.Messages.NotificationID), user.Messages.NotificationID),
 			ErrorID:        lang.Check(lang.Deref(diff.Messages.ErrorID), user.Messages.ErrorID),
-			InfoIDs:        lang.If(len(diff.Messages.InfoIDs) > 0, diff.Messages.InfoIDs, user.Messages.InfoIDs),
-			ActionsHistory: lang.If(len(diff.Messages.ActionsHistory) > 0, diff.Messages.ActionsHistory, user.Messages.ActionsHistory),
-		},
-		State: UserState{
-			Main:       lang.Check(lang.Deref(diff.State.Main), user.State.Main),
-			InfoStates: lang.If(len(diff.State.InfoStates) > 0, diff.State.InfoStates, user.State.InfoStates),
-			TextStates: lang.If(diff.State.TextStates != nil, diff.State.TextStates, user.State.TextStates),
-		},
-		LastSeen:   lang.CheckTime(lang.Deref(diff.LastSeen), user.LastSeen),
-		Registered: lang.CheckTime(lang.Deref(diff.Registered), user.Registered),
-		Disabled:   lang.CheckTime(lang.Deref(diff.Disabled), user.Disabled),
-		IsDisabled: lang.Check(lang.Deref(diff.IsDisabled), user.IsDisabled),
+			HistoryIDs:     lang.If(len(diff.Messages.HistoryIDs) > 0, diff.Messages.HistoryIDs, user.Messages.HistoryIDs),
+			LastActions:    lang.If(len(diff.Messages.LastActions) > 0, diff.Messages.LastActions, user.Messages.LastActions),
+		}
 	}
+	if diff.State != nil {
+		user.State = UserState{
+			Main:          lang.Check(lang.Deref(diff.State.Main), user.State.Main),
+			MessageStates: lang.If(len(diff.State.MessageStates) > 0, diff.State.MessageStates, user.State.MessageStates),
+			TextStates:    lang.If(diff.State.TextStates != nil, diff.State.TextStates, user.State.TextStates),
+		}
+	}
+
+	user.LastSeen = lang.CheckTime(lang.Deref(diff.LastSeen), user.LastSeen)
+	user.Registered = lang.CheckTime(lang.Deref(diff.Registered), user.Registered)
+	user.Disabled = lang.CheckTime(lang.Deref(diff.Disabled), user.Disabled)
+	user.IsDisabled = lang.Check(lang.Deref(diff.IsDisabled), user.IsDisabled)
 
 	m.cache.Set(id, user)
 }

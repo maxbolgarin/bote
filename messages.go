@@ -6,6 +6,7 @@ type MessageProvider interface {
 
 type Messages interface {
 	GeneralError() string
+	PrepareMainMessage(main string, u User) string
 }
 
 func NewDefaultMessageProvider() MessageProvider {
@@ -26,4 +27,8 @@ type defaultMessages struct {
 
 func (d defaultMessages) GeneralError() string {
 	return d.generalError
+}
+
+func (d defaultMessages) PrepareMainMessage(main string, u User) string {
+	return main
 }

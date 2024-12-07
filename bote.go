@@ -104,7 +104,7 @@ func (b *Bote) Handle(endpoint any, f HandlerFunc) {
 		ctx := b.newContext(c)
 		err = f(ctx)
 		if err != nil {
-			return b.handleError(ctx, err)
+			return ctx.handleError(err)
 		}
 		if c.Callback() != nil {
 			c.Respond(&tele.CallbackResponse{})
@@ -191,32 +191,6 @@ func (b *Bote) logMiddleware(upd *tele.Update, user User) bool {
 	}
 
 	return true
-}
-
-func (b *Bote) handleError(ctx Context, err error) error {
-	user := ctx.User()
-
-	if IsBlockedError(err) {
-		b.bot.log.Info("bot is blocked, disable", userFields(user)...)
-		user.Disable()
-		b.um.removeUserFromMemory(ctx.User().ID())
-		return nil
-	}
-
-	// TODO: handle other errors
-	if IsNotFoundEditMsgErr(err) {
-		b.bot.log.Warn("message not found", userFields(user)...)
-		//return app.StartHandlerByUser(user, "")
-		// user.ForgetHistoryDay(day)
-		return nil
-	}
-
-	b.bot.log.Error("handler error", userFields(user, "error", err)...)
-
-	msgID, _ := b.bot.send(user.ID(), b.msgs.Messages(b.defaultLanguageCode).GeneralError())
-	user.SetErrorMessage(msgID)
-
-	return nil
 }
 
 func userFields(user User, fields ...any) []any {
