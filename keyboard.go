@@ -13,6 +13,10 @@ const (
 	maxButtonsInRow = 8
 )
 
+// RuneSizeType sets type of UTF-8 runes in button text.
+// For example, if you use English language, you should use OneBytePerRune.
+// If you use Russian language, you should use TwoBytesPerRune.
+// If you add a lot of emojis of special symbols, you should use FourBytesPerRune.
 type RuneSizeType string
 
 const (
