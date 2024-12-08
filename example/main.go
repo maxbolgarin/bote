@@ -30,10 +30,8 @@ func main() {
 			b.Btn("2", nil),
 			b.Btn("3", nil),
 			b.Btn("4", nil),
-			b.Btn("5", nil),
-			b.Btn("6", nil),
-			b.Btn("fafwefwfwefwefwefwefwefwefwefewf", nil),
-			b.Btn("fweferwrrrrrrrrrrr", nil),
+			b.Btn("some text for a long inline button", nil),
+			b.Btn("use Bote to build bots", nil),
 		)
 		return ctx.SendMain(bote.NoChange, "Main message", kb)
 	})
