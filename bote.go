@@ -27,13 +27,24 @@ type Bote struct {
 	deleteMessages bool
 }
 
-// Start starts the bot. All that you need is to pass your bot token and options.
+// Start starts the bot with optional options.
+// All that you need is to pass your bot token to start it with default options.
 // Don't forget to call Stop() when you're done.
-func Start(ctx context.Context, token string, optsRaw ...Options) (*Bote, error) {
+func Start(ctx context.Context, token string, optsFuncs ...func(*Options)) (*Bote, error) {
+	var opts Options
+	for _, f := range optsFuncs {
+		f(&opts)
+	}
+	return StartWithOptions(ctx, token, opts)
+}
+
+// StartWithOptions starts the bot with required options.
+// Don't forget to call Stop() when you're done.
+func StartWithOptions(ctx context.Context, token string, opts Options) (*Bote, error) {
 	if token == "" {
 		return nil, errm.New("token cannot be empty")
 	}
-	opts, err := prepareOpts(optsRaw...)
+	opts, err := prepareOpts(opts)
 	if err != nil {
 		return nil, errm.Wrap(err, "prepare opts")
 	}
@@ -70,31 +81,38 @@ func Start(ctx context.Context, token string, optsRaw ...Options) (*Bote, error)
 	return bote, nil
 }
 
+// Stop gracefully shuts the poller down.
 func (b *Bote) Stop() {
 	b.bot.bot.Stop()
 }
 
+// Bot returns the underlying *tele.Bot.
 func (b *Bote) Bot() *tele.Bot {
 	return b.bot.bot
 }
 
+// GetUser returns user by its ID.
 func (b *Bote) GetUser(userID int64) User {
 	return b.um.getUser(userID)
 }
 
+// GetAllUsers returns all users.
 func (b *Bote) GetAllUsers() []User {
 	return b.um.getAllUsers()
 }
 
+// AddMiddleware adds middleware functions that will be called on each update.
 func (b *Bote) AddMiddleware(f ...MiddlewareFunc) {
 	b.middlewares.Append(f...)
 }
 
-func (b *Bote) SetTextHandler(h HandlerFunc) {
+// HandleText sets handler for text messages.
+func (b *Bote) HandleText(h HandlerFunc) {
 	b.Handle(tele.OnText, h)
 }
 
-func (b *Bote) SetStartHandler(h HandlerFunc, commands ...string) {
+// HandleStart sets handler for start command.
+func (b *Bote) HandleStart(h HandlerFunc, commands ...string) {
 	if len(commands) > 0 {
 		for _, c := range commands {
 			b.Handle(c, h)
@@ -104,6 +122,7 @@ func (b *Bote) SetStartHandler(h HandlerFunc, commands ...string) {
 	b.Handle("/start", h)
 }
 
+// Handle sets handler for any endpoint. Endpoint can be string or callback button.
 func (b *Bote) Handle(endpoint any, f HandlerFunc) {
 	b.bot.handle(endpoint, func(c tele.Context) (err error) {
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)

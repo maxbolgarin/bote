@@ -606,6 +606,8 @@ func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (Use
 	user := m.newUserContext(userModel)
 	m.users.Set(user.ID(), user)
 
+	m.log.Info("new user", "user_id", user.ID(), "username", user.Username())
+
 	return user, nil
 }
 

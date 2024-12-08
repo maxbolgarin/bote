@@ -115,6 +115,41 @@ type Config struct {
 	Debug bool `yaml:"debug" json:"debug" env:"BOTE_DEBUG"`
 }
 
+// WithConfig returns an option that sets the bot configuration.
+func WithConfig(cfg Config) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config = cfg
+	}
+}
+
+// WithUserDB returns an option that sets the user storage.
+func WithUserDB(db UserStorage) func(opts *Options) {
+	return func(opts *Options) {
+		opts.UserDB = db
+	}
+}
+
+// WithMsgs returns an option that sets the message provider.
+func WithMsgs(msgs MessageProvider) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Msgs = msgs
+	}
+}
+
+// WithLogger returns an option that sets the logger.
+func WithLogger(logger Logger) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Logger = logger
+	}
+}
+
+// WithUpdateLogger returns an option that sets the update logger.
+func WithUpdateLogger(logger UpdateLogger) func(opts *Options) {
+	return func(opts *Options) {
+		opts.UpdateLogger = logger
+	}
+}
+
 func (cfg *Config) prepareAndValidate() error {
 	if err := env.Parse(cfg); err != nil {
 		return err
@@ -134,9 +169,7 @@ func (t UpdateType) String() string {
 	return string(t)
 }
 
-func prepareOpts(optsRaw ...Options) (Options, error) {
-	opts := lang.First(optsRaw)
-
+func prepareOpts(opts Options) (Options, error) {
 	err := opts.Config.prepareAndValidate()
 	if err != nil {
 		return opts, errm.Wrap(err, "prepare and validate config")
@@ -165,7 +198,7 @@ func prepareOpts(optsRaw ...Options) (Options, error) {
 		}
 	}
 	if opts.Msgs == nil {
-		opts.Msgs = NewDefaultMessageProvider()
+		opts.Msgs = newDefaultMessageProvider()
 	}
 
 	return opts, nil
