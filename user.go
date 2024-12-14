@@ -19,18 +19,10 @@ import (
 // You should create states as constants in your application and pass it in Send or Edit methods as first argument.
 // States is generally changes in response to user actions inside handlers,
 // but also can be changed in other places in case of any action.
-type State string
-
-const (
-	// Unknown is empty state of User that means error.
-	Unknown State = ""
-	// NoChange is a state that means that user state should not be changed after Send of Edit.
-	NoChange State = Unknown
-	// FirstRequest is a state of a user after first request to bot.
-	FirstRequest State = "first_request"
-	// Disabled is a state of a disabled user.
-	Disabled State = "disabled"
-)
+type State interface {
+	String() string
+	IsChanged() bool
+}
 
 // User is an interface that represents user context in the bot.
 type User interface {
@@ -197,7 +189,7 @@ func (t StateWithMessage) MessageID() int {
 
 // State returns state from state with message.
 func (t StateWithMessage) State() State {
-	return State(strings.Split(string(t), "_")[0])
+	return state(strings.Split(string(t), "_")[0])
 }
 
 // UserModelDiff contains changes that should be applied to user.
@@ -246,20 +238,6 @@ type userContextImpl struct {
 
 func (u userContextImpl) String() string {
 	return "[@" + u.user.Info.Username + "|" + strconv.Itoa(int(u.user.ID)) + "]"
-}
-
-// Unknown returns true if state is Unknown.
-func (s State) Unknown() bool {
-	return s == Unknown
-}
-
-// IsChanged returns true if state is not empty and should be changed.
-func (s State) IsChanged() bool {
-	return s != NoChange
-}
-
-func (s State) String() string {
-	return string(s)
 }
 
 func (m *userManagerImpl) newUserContext(user UserModel) User {
@@ -334,7 +312,7 @@ func (u *userContextImpl) HasTextStates() bool {
 
 func (u *userContextImpl) LastTextState() (State, int) {
 	if len(u.user.State.TextStates) == 0 {
-		return Unknown, 0
+		return NoChange, 0
 	}
 	u.prepareTextStates()
 
@@ -344,7 +322,7 @@ func (u *userContextImpl) LastTextState() (State, int) {
 
 func (u *userContextImpl) PopTextState() (State, int) {
 	if len(u.user.State.TextStates) == 0 {
-		return Unknown, 0
+		return NoChange, 0
 	}
 	u.prepareTextStates()
 
@@ -757,4 +735,23 @@ func (m *inMemoryUserStorage) Update(id int64, diff *UserModelDiff) {
 	user.IsDisabled = lang.Check(lang.Deref(diff.IsDisabled), user.IsDisabled)
 
 	m.cache.Set(id, user)
+}
+
+type state string
+
+const (
+	// NoChange is a state that means that user state should not be changed after Send of Edit.
+	NoChange state = ""
+	// FirstRequest is a state of a user after first request to bot.
+	FirstRequest state = "first_request"
+	// Disabled is a state of a disabled user.
+	Disabled state = "disabled"
+)
+
+func (s state) IsChanged() bool {
+	return len(s) > 0
+}
+
+func (s state) String() string {
+	return string(s)
 }
