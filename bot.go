@@ -14,8 +14,8 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-// Bote is a main struct of this package. It contains all necessary components for working with Telegram bot.
-type Bote struct {
+// Bot is a main struct of this package. It contains all necessary components for working with Telegram bot.
+type Bot struct {
 	bot  *baseBot
 	um   *userManagerImpl
 	msgs MessageProvider
@@ -30,7 +30,7 @@ type Bote struct {
 // Start starts the bot with optional options.
 // All that you need is to pass your bot token to start it with default options.
 // Don't forget to call Stop() when you're done.
-func Start(ctx context.Context, token string, optsFuncs ...func(*Options)) (*Bote, error) {
+func Start(ctx context.Context, token string, optsFuncs ...func(*Options)) (*Bot, error) {
 	var opts Options
 	for _, f := range optsFuncs {
 		f(&opts)
@@ -40,7 +40,7 @@ func Start(ctx context.Context, token string, optsFuncs ...func(*Options)) (*Bot
 
 // StartWithOptions starts the bot with required options.
 // Don't forget to call Stop() when you're done.
-func StartWithOptions(ctx context.Context, token string, opts Options) (*Bote, error) {
+func StartWithOptions(ctx context.Context, token string, opts Options) (*Bot, error) {
 	if token == "" {
 		return nil, errm.New("token cannot be empty")
 	}
@@ -59,7 +59,7 @@ func StartWithOptions(ctx context.Context, token string, opts Options) (*Bote, e
 		return nil, errm.Wrap(err, "start bot")
 	}
 
-	bote := &Bote{
+	bote := &Bot{
 		bot:  b,
 		um:   um,
 		msgs: opts.Msgs,
@@ -82,37 +82,37 @@ func StartWithOptions(ctx context.Context, token string, opts Options) (*Bote, e
 }
 
 // Stop gracefully shuts the poller down.
-func (b *Bote) Stop() {
+func (b *Bot) Stop() {
 	b.bot.bot.Stop()
 }
 
 // Bot returns the underlying *tele.Bot.
-func (b *Bote) Bot() *tele.Bot {
+func (b *Bot) Bot() *tele.Bot {
 	return b.bot.bot
 }
 
 // GetUser returns user by its ID.
-func (b *Bote) GetUser(userID int64) User {
+func (b *Bot) GetUser(userID int64) User {
 	return b.um.getUser(userID)
 }
 
 // GetAllUsers returns all users.
-func (b *Bote) GetAllUsers() []User {
+func (b *Bot) GetAllUsers() []User {
 	return b.um.getAllUsers()
 }
 
 // AddMiddleware adds middleware functions that will be called on each update.
-func (b *Bote) AddMiddleware(f ...MiddlewareFunc) {
+func (b *Bot) AddMiddleware(f ...MiddlewareFunc) {
 	b.middlewares.Append(f...)
 }
 
 // HandleText sets handler for text messages.
-func (b *Bote) HandleText(h HandlerFunc) {
+func (b *Bot) HandleText(h HandlerFunc) {
 	b.Handle(tele.OnText, h)
 }
 
 // HandleStart sets handler for start command.
-func (b *Bote) HandleStart(h HandlerFunc, commands ...string) {
+func (b *Bot) HandleStart(h HandlerFunc, commands ...string) {
 	if len(commands) > 0 {
 		for _, c := range commands {
 			b.Handle(c, h)
@@ -123,7 +123,7 @@ func (b *Bote) HandleStart(h HandlerFunc, commands ...string) {
 }
 
 // Handle sets handler for any endpoint. Endpoint can be string or callback button.
-func (b *Bote) Handle(endpoint any, f HandlerFunc) {
+func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 	b.bot.handle(endpoint, func(c tele.Context) (err error) {
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
 
@@ -139,7 +139,7 @@ func (b *Bote) Handle(endpoint any, f HandlerFunc) {
 	})
 }
 
-func (b *Bote) masterMiddleware(upd *tele.Update) bool {
+func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	defer lang.Recover(b.bot.log)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -159,7 +159,7 @@ func (b *Bote) masterMiddleware(upd *tele.Update) bool {
 	})
 }
 
-func (b *Bote) cleanMiddleware(upd *tele.Update, user User) bool {
+func (b *Bot) cleanMiddleware(upd *tele.Update, user User) bool {
 	msgIDs := user.Messages()
 	if msgIDs.ErrorID > 0 {
 		b.bot.delete(user.ID(), msgIDs.ErrorID)
@@ -176,7 +176,7 @@ func (b *Bote) cleanMiddleware(upd *tele.Update, user User) bool {
 
 var cbackRx = regexp.MustCompile(`^\f([-\w]+)(\|(.+))?$`)
 
-func (b *Bote) logMiddleware(upd *tele.Update, user User) bool {
+func (b *Bot) logMiddleware(upd *tele.Update, user User) bool {
 	fields := make([]any, 0, 7)
 	fields = append(fields,
 		"user_id", user.ID(),

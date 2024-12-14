@@ -40,7 +40,7 @@ var (
 // Btn creates button and registers handler for it. You can provide data for the button.
 // Data items will be separated by '|' in a single data string.
 // Button unique value is generated from hexing button name with 10 random bytes at the end.
-func (b *Bote) Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn {
+func (b *Bot) Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn {
 	btn := tele.Btn{
 		Text:   name,
 		Unique: getBtnUnique(name),

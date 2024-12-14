@@ -84,7 +84,7 @@ type Context interface {
 	DeleteHistory(lastMessageID int)
 }
 
-func (b *Bote) newContext(c tele.Context) *contextImpl {
+func (b *Bot) newContext(c tele.Context) *contextImpl {
 	return &contextImpl{
 		bt: b,
 		ct: c,
@@ -92,7 +92,7 @@ func (b *Bote) newContext(c tele.Context) *contextImpl {
 }
 
 type contextImpl struct {
-	bt *Bote
+	bt *Bot
 	ct tele.Context
 }
 
