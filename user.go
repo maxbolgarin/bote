@@ -3,9 +3,9 @@ package bote
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 	"github.com/maypok86/otter"
@@ -56,8 +56,6 @@ type User interface {
 	PopTextState() (State, int)
 	// PushTextState pushes text state to the end of stack.
 	PushTextState(state State, msgID int)
-	// RemoveTextState removes text state from any position in stack.
-	RemoveTextState(state State, msgID int)
 	// Messages returns all message IDs.
 	Messages() UserMessages
 	// SetMessages sets the given message IDs.
@@ -85,17 +83,19 @@ type User interface {
 	// HandleSend makes three user updates that usually happen after Send new message in one request:
 	//SetState, SetMessages, AddHistoryMessage.
 	HandleSend(s State, mainMsgID, headMsgID int)
+	// String returns user string representation in format '[@username|id]'.
+	String() string
 }
 
-// UserStorage is a storage for users.
+// UsersStorage is a storage for users.
 // You should implement it in your application if you want to persist users between applicataion restarts.
-type UserStorage interface {
+type UsersStorage interface {
 	// Insert inserts user in storage.
 	Insert(ctx context.Context, userModel UserModel) error
-	// Get returns user from storage. It returns true as a second argument if user was found without error.
-	Get(ctx context.Context, id int64) (UserModel, bool, error)
-	// GetAll returns all users from storage. It retutns empty slice if there are no users without error.
-	GetAll(ctx context.Context) ([]UserModel, error)
+	// Find returns user from storage. It returns true as a second argument if user was found without error.
+	Find(ctx context.Context, id int64) (UserModel, bool, error)
+	// FindAll returns all users from storage. It retutns empty slice if there are no users without error.
+	FindAll(ctx context.Context) ([]UserModel, error)
 
 	// Update updates user model in storage. The idea of that method is that it calls on every user action
 	// (e.g. to update state), so it should be async to make it faster or user (without lags).
@@ -108,128 +108,144 @@ type UserStorage interface {
 	Update(id int64, userModel *UserModelDiff)
 }
 
+// UserIDDBFieldName is a field name for user ID in DB.
+const UserIDDBFieldName = "id"
+
 // UserModel is a structure that represents user in DB.
 type UserModel struct {
+	// ID is Telegram user ID.
+	ID int64 `bson:"id" json:"id" db:"id"`
 	// Info contains user info, that can be obtained from Telegram.
-	Info UserInfo `bson:"info"`
+	Info UserInfo `bson:"info" json:"info" db:"info"`
 	// Messages contains IDs of user messages.
-	Messages UserMessages `bson:"messages"`
+	Messages UserMessages `bson:"messages" json:"messages" db:"messages"`
 	// State contains state for every user's message.
-	State UserState `bson:"state"`
+	State UserState `bson:"state" json:"state" db:"state"`
 	// LastSeen is the last time user interacted with the bot.
-	LastSeen time.Time `bson:"last_seen"`
+	LastSeen time.Time `bson:"last_seen" json:"last_seen" db:"last_seen"`
 	// Created is the time when user was created.
-	Created time.Time `bson:"created"`
+	Created time.Time `bson:"created" json:"created" db:"created"`
 	// Registered is the time when user was registered.
-	Registered time.Time `bson:"registered"`
+	Registered time.Time `bson:"registered" json:"registered" db:"registered"`
 	// Disabled is the time when user was disabled.
-	Disabled time.Time `bson:"disabled"`
+	Disabled time.Time `bson:"disabled" json:"disabled" db:"disabled"`
 	// IsDisabled returns true if user is disabled.
-	IsDisabled bool `bson:"is_disabled"`
+	IsDisabled bool `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
 }
 
 // UserInfo contains user info, that can be obtained from Telegram.
 type UserInfo struct {
-	// ID is Telegram user ID.
-	ID int64 `bson:"id"`
 	// FirstName is Telegram user first name.
-	FirstName string `bson:"first_name"`
+	FirstName string `bson:"first_name" json:"first_name" db:"first_name"`
 	// LastName is Telegram user last name.
-	LastName string `bson:"last_name"`
+	LastName string `bson:"last_name" json:"last_name" db:"last_name"`
 	// Username is Telegram username (without @).
-	Username string `bson:"username"`
+	Username string `bson:"username" json:"username" db:"username"`
 	// LanguageCode is Telegram user language code.
-	LanguageCode string `bson:"language_code"`
+	LanguageCode string `bson:"language_code" json:"language_code" db:"language_code"`
 	// IsBot is true if Telegram user is a bot.
-	IsBot bool `bson:"is_bot"`
+	IsBot bool `bson:"is_bot" json:"is_bot" db:"is_bot"`
 	// IsPremium is true if Telegram user has Telegram Premium.
-	IsPremium bool `bson:"is_premium"`
+	IsPremium bool `bson:"is_premium" json:"is_premium" db:"is_premium"`
 }
 
 // UserMessages contains IDs of user messages.
 type UserMessages struct {
 	// Main message is the last and primary one in the chat.
-	MainID int `bson:"main_id"`
+	MainID int `bson:"main_id" json:"main_id" db:"main_id"`
 	// Head message is sent right before main message for making bot more interactive.
-	HeadID int `bson:"head_id"`
+	HeadID int `bson:"head_id" json:"head_id" db:"head_id"`
 	// Notification message can be sent in any time and deleted after some time.
-	NotificationID int `bson:"notification_id"`
+	NotificationID int `bson:"notification_id" json:"notification_id" db:"notification_id"`
 	// Error message can be sent in any time in case of error and deleted automically after next action.
-	ErrorID int `bson:"error_id"`
+	ErrorID int `bson:"error_id" json:"error_id" db:"error_id"`
 	// History message is the previous main messages. Main message becomes History message after new Main sending.
-	HistoryIDs []int `bson:"history_ids"`
+	HistoryIDs []int `bson:"history_ids" json:"history_ids" db:"history_ids"`
 	// LastActions contains time of last interaction of user with every message.
-	LastActions map[int]time.Time `bson:"last_actions"`
+	LastActions map[int]time.Time `bson:"last_actions" json:"last_actions" db:"last_actions"`
 }
 
 // UserState contains current user state and state history.
 // State connects to message, every Main and Info message has its own state.
 type UserState struct {
 	// Main is the main state of the user, state of the Main message.
-	Main State `bson:"main"`
+	Main State `bson:"main" json:"main" db:"main"`
 	// MessageStates contains all states of the user for all messages. It is a map of message_id -> state.
-	MessageStates map[int]State `bson:"message_states"`
+	MessageStates map[int]State `bson:"message_states" json:"message_states" db:"message_states"`
 	// TextStates contains all text states of the user.
 	// Every message can produce text state and they should be handled as LIFO.
-	TextStates *abstract.UniqueStack[TextStateWithMessage] `bson:"text_states"`
+	TextStates []StateWithMessage `bson:"text_states" json:"text_states" db:"text_states"`
+
+	// ind is used to handle text states as a unique stack (swap in push)
+	textStatesInd map[StateWithMessage]int `bson:"-" json:"-" db:"-"`
 }
 
-// TextStateWithMessage contains text state and message ID.
+// StateWithMessage contains text state and message ID.
 // It is used for storing text states in stack.
-type TextStateWithMessage struct {
-	// MessageID is the ID of the message that produced this text state.
-	MessageID int `bson:"message_id"`
-	// State is the text state.
-	State State `bson:"state"`
+type StateWithMessage string
+
+// NewStateWithMessage returns new state with message.
+func NewStateWithMessage(msgID int, state State) StateWithMessage {
+	return StateWithMessage(state.String() + "_" + strconv.Itoa(msgID))
+}
+
+// MessageID returns message ID from state with message.
+func (t StateWithMessage) MessageID() int {
+	out, _ := strconv.Atoi(strings.Split(string(t), "_")[1])
+	return out
+}
+
+// State returns state from state with message.
+func (t StateWithMessage) State() State {
+	return State(strings.Split(string(t), "_")[0])
 }
 
 // UserModelDiff contains changes that should be applied to user.
 type UserModelDiff struct {
-	Info       *UserInfoDiff     `bson:"info"`
-	Messages   *UserMessagesDiff `bson:"messages"`
-	State      *UserStateDiff    `bson:"state"`
-	LastSeen   *time.Time        `bson:"last_seen"`
-	Registered *time.Time        `bson:"registered"`
-	Disabled   *time.Time        `bson:"disabled"`
-	IsDisabled *bool             `bson:"is_disabled"`
+	Info       *UserInfoDiff     `bson:"info" json:"info" db:"info"`
+	Messages   *UserMessagesDiff `bson:"messages" json:"messages" db:"messages"`
+	State      *UserStateDiff    `bson:"state" json:"state" db:"state"`
+	LastSeen   *time.Time        `bson:"last_seen" json:"last_seen" db:"last_seen"`
+	Registered *time.Time        `bson:"registered" json:"registered" db:"registered"`
+	Disabled   *time.Time        `bson:"disabled" json:"disabled" db:"disabled"`
+	IsDisabled *bool             `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
 }
 
 // UserInfoDiff contains changes that should be applied to user info.
 type UserInfoDiff struct {
-	FirstName    *string `bson:"first_name"`
-	LastName     *string `bson:"last_name"`
-	Username     *string `bson:"username"`
-	LanguageCode *string `bson:"language_code"`
-	IsBot        *bool   `bson:"is_bot"`
-	IsPremium    *bool   `bson:"is_premium"`
+	FirstName    *string `bson:"first_name" json:"first_name" db:"first_name"`
+	LastName     *string `bson:"last_name" json:"last_name" db:"last_name"`
+	Username     *string `bson:"username" json:"username" db:"username"`
+	LanguageCode *string `bson:"language_code" json:"language_code" db:"language_code"`
+	IsBot        *bool   `bson:"is_bot" json:"is_bot" db:"is_bot"`
+	IsPremium    *bool   `bson:"is_premium" json:"is_premium" db:"is_premium"`
 }
 
 // UserMessagesDiff contains changes that should be applied to user messages.
 type UserMessagesDiff struct {
-	MainID         *int              `bson:"main_id"`
-	HeadID         *int              `bson:"head_id"`
-	NotificationID *int              `bson:"notification_id"`
-	ErrorID        *int              `bson:"error_id"`
-	HistoryIDs     []int             `bson:"history_ids"`
-	LastActions    map[int]time.Time `bson:"last_actions"`
+	MainID         *int              `bson:"main_id" json:"main_id" db:"main_id"`
+	HeadID         *int              `bson:"head_id" json:"head_id" db:"head_id"`
+	NotificationID *int              `bson:"notification_id" json:"notification_id" db:"notification_id"`
+	ErrorID        *int              `bson:"error_id" json:"error_id" db:"error_id"`
+	HistoryIDs     []int             `bson:"history_ids" json:"history_ids" db:"history_ids"`
+	LastActions    map[int]time.Time `bson:"last_actions" json:"last_actions" db:"last_actions"`
 }
 
 // UserStateDiff contains changes that should be applied to user state.
 type UserStateDiff struct {
-	Main          *State                                      `bson:"main"`
-	MessageStates map[int]State                               `bson:"message_states"`
-	TextStates    *abstract.UniqueStack[TextStateWithMessage] `bson:"text_states"`
+	Main          *State             `bson:"main" json:"main" db:"main"`
+	MessageStates map[int]State      `bson:"message_states" json:"message_states" db:"message_states"`
+	TextStates    []StateWithMessage `bson:"text_states" json:"text_states" db:"text_states"`
 }
 
 // userContextImpl implements User interface.
 type userContextImpl struct {
 	user UserModel
-	db   UserStorage
+	db   UsersStorage
 }
 
-// IDString returns user ID as string.
-func (u UserInfo) IDString() string {
-	return strconv.FormatInt(u.ID, 10)
+func (u userContextImpl) String() string {
+	return "[@" + u.user.Info.Username + "|" + strconv.Itoa(int(u.user.ID)) + "]"
 }
 
 // Unknown returns true if state is Unknown.
@@ -242,12 +258,16 @@ func (s State) IsChanged() bool {
 	return s != NoChange
 }
 
+func (s State) String() string {
+	return string(s)
+}
+
 func (m *userManagerImpl) newUserContext(user UserModel) User {
 	return &userContextImpl{db: m.db, user: user}
 }
 
 func (u *userContextImpl) ID() int64 {
-	return u.user.Info.ID
+	return u.user.ID
 }
 
 func (u *userContextImpl) Info() UserInfo {
@@ -291,54 +311,78 @@ func (u *userContextImpl) SetState(state State, msgIDRaw ...int) {
 
 	upd.MessageStates = u.user.State.MessageStates
 
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		State:    &upd,
 		Messages: &UserMessagesDiff{LastActions: u.user.Messages.LastActions},
 		LastSeen: &u.user.LastSeen,
 	})
 }
 
+func (u *userContextImpl) prepareTextStates() {
+	if len(u.user.State.TextStates) != len(u.user.State.textStatesInd) {
+		u.user.State.textStatesInd = make(map[StateWithMessage]int, len(u.user.State.TextStates))
+		for i, v := range u.user.State.TextStates {
+			u.user.State.textStatesInd[v] = i
+		}
+	}
+}
+
 func (u *userContextImpl) HasTextStates() bool {
-	return u.user.State.TextStates.Len() > 0
+	u.prepareTextStates()
+	return len(u.user.State.TextStates) > 0
 }
 
 func (u *userContextImpl) LastTextState() (State, int) {
-	ts := u.user.State.TextStates.Last()
-	return ts.State, ts.MessageID
+	if len(u.user.State.TextStates) == 0 {
+		return Unknown, 0
+	}
+	u.prepareTextStates()
+
+	ts := u.user.State.TextStates[len(u.user.State.TextStates)-1]
+	return ts.State(), ts.MessageID()
 }
 
 func (u *userContextImpl) PopTextState() (State, int) {
-	ts := u.user.State.TextStates.Pop()
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	if len(u.user.State.TextStates) == 0 {
+		return Unknown, 0
+	}
+	u.prepareTextStates()
+
+	index := len(u.user.State.TextStates) - 1
+
+	item := u.user.State.TextStates[index]
+	u.user.State.TextStates = u.user.State.TextStates[:index]
+	delete(u.user.State.textStatesInd, item)
+
+	u.db.Update(u.user.ID, &UserModelDiff{
 		State: &UserStateDiff{
 			TextStates: u.user.State.TextStates,
 		},
 	})
 
-	return ts.State, ts.MessageID
+	return item.State(), item.MessageID()
 }
 
 func (u *userContextImpl) PushTextState(state State, msgID int) {
-	u.user.State.TextStates.Push(TextStateWithMessage{
-		MessageID: msgID,
-		State:     state,
-	})
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
-		State: &UserStateDiff{
-			TextStates: u.user.State.TextStates,
-		},
-	})
-}
+	item := NewStateWithMessage(msgID, state)
+	if index, ok := u.user.State.textStatesInd[item]; ok {
+		last := len(u.user.State.TextStates) - 1
+		if index == last {
+			return // already pushed
+		}
+		u.user.State.textStatesInd[u.user.State.TextStates[last]] = index
+		u.user.State.textStatesInd[item] = last
 
-func (u *userContextImpl) RemoveTextState(state State, msgID int) {
-	ok := u.user.State.TextStates.Remove(TextStateWithMessage{
-		MessageID: msgID,
-		State:     state,
-	})
-	if !ok {
+		// swap with last
+		u.user.State.TextStates[index], u.user.State.TextStates[last] = u.user.State.TextStates[last], u.user.State.TextStates[index]
 		return
 	}
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+
+	// append new
+	u.user.State.textStatesInd[item] = len(u.user.State.TextStates)
+	u.user.State.TextStates = append(u.user.State.TextStates, item)
+
+	u.db.Update(u.user.ID, &UserModelDiff{
 		State: &UserStateDiff{
 			TextStates: u.user.State.TextStates,
 		},
@@ -357,7 +401,7 @@ func (u *userContextImpl) SetMessages(msgIDs ...int) {
 	u.user.Messages.NotificationID = msgs[2]
 	u.user.Messages.ErrorID = msgs[3]
 
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			MainID:         &u.user.Messages.MainID,
 			HeadID:         &u.user.Messages.HeadID,
@@ -369,7 +413,7 @@ func (u *userContextImpl) SetMessages(msgIDs ...int) {
 
 func (u *userContextImpl) SetMainMessage(msgID int) {
 	u.user.Messages.MainID = msgID
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			MainID: &u.user.Messages.MainID,
 		},
@@ -378,7 +422,7 @@ func (u *userContextImpl) SetMainMessage(msgID int) {
 
 func (u *userContextImpl) SetHeadMessage(msgID int) {
 	u.user.Messages.HeadID = msgID
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			HeadID: &u.user.Messages.HeadID,
 		},
@@ -387,7 +431,7 @@ func (u *userContextImpl) SetHeadMessage(msgID int) {
 
 func (u *userContextImpl) SetErrorMessage(msgID int) {
 	u.user.Messages.ErrorID = msgID
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			ErrorID: &u.user.Messages.ErrorID,
 		},
@@ -396,7 +440,7 @@ func (u *userContextImpl) SetErrorMessage(msgID int) {
 
 func (u *userContextImpl) SetNotificationMessage(msgID int) {
 	u.user.Messages.NotificationID = msgID
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			NotificationID: &u.user.Messages.NotificationID,
 		},
@@ -405,7 +449,7 @@ func (u *userContextImpl) SetNotificationMessage(msgID int) {
 
 func (u *userContextImpl) AddHistoryMessage(msgID int) {
 	u.user.Messages.HistoryIDs = append(u.user.Messages.HistoryIDs, msgID)
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			HistoryIDs: u.user.Messages.HistoryIDs,
 		},
@@ -414,7 +458,7 @@ func (u *userContextImpl) AddHistoryMessage(msgID int) {
 
 func (u *userContextImpl) Register() {
 	u.user.Registered = time.Now().UTC()
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		Registered: &u.user.Registered,
 	})
 }
@@ -429,7 +473,7 @@ func (u *userContextImpl) Update(user *tele.User) {
 		return
 	}
 	u.user.Info = newInfo
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		Info: &UserInfoDiff{
 			FirstName:    &u.user.Info.FirstName,
 			LastName:     &u.user.Info.LastName,
@@ -451,7 +495,7 @@ func (u *userContextImpl) Disable() {
 	u.user.IsDisabled = true
 	u.user.State.Main = Disabled
 
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		State: &UserStateDiff{
 			Main: &u.user.State.Main,
 		},
@@ -478,7 +522,7 @@ func (u *userContextImpl) HandleSend(newState State, mainMsgID, headMsgID int) {
 	u.user.Messages.MainID = mainMsgID
 	u.user.Messages.HeadID = headMsgID
 
-	u.db.Update(u.user.Info.ID, &UserModelDiff{
+	u.db.Update(u.user.ID, &UserModelDiff{
 		State: &UserStateDiff{
 			Main:          &u.user.State.Main,
 			MessageStates: u.user.State.MessageStates,
@@ -495,11 +539,11 @@ func (u *userContextImpl) HandleSend(newState State, mainMsgID, headMsgID int) {
 
 func newUserModel(tUser *tele.User) UserModel {
 	return UserModel{
+		ID:   tUser.ID,
 		Info: newUserInfo(tUser),
 		State: UserState{
 			Main:          FirstRequest,
 			MessageStates: make(map[int]State),
-			TextStates:    abstract.NewUniqueStack[TextStateWithMessage](),
 		},
 		Messages: UserMessages{
 			LastActions: make(map[int]time.Time),
@@ -511,7 +555,6 @@ func newUserModel(tUser *tele.User) UserModel {
 
 func newUserInfo(tUser *tele.User) UserInfo {
 	return UserInfo{
-		ID:           tUser.ID,
 		FirstName:    tUser.FirstName,
 		LastName:     tUser.LastName,
 		Username:     tUser.Username,
@@ -527,11 +570,11 @@ const (
 
 type userManagerImpl struct {
 	users otter.Cache[int64, User]
-	db    UserStorage
+	db    UsersStorage
 	log   Logger
 }
 
-func newUserManager(ctx context.Context, db UserStorage, log Logger) (*userManagerImpl, error) {
+func newUserManager(ctx context.Context, db UsersStorage, log Logger) (*userManagerImpl, error) {
 	c, err := otter.MustBuilder[int64, User](userCacheCapacity).Build()
 	if err != nil {
 		return nil, err
@@ -592,7 +635,7 @@ func (m *userManagerImpl) getAllUsers() []User {
 }
 
 func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (User, error) {
-	userModel, isFound, err := m.db.Get(ctx, tUser.ID)
+	userModel, isFound, err := m.db.Find(ctx, tUser.ID)
 	if err != nil {
 		return nil, errm.Wrap(err, "get")
 	}
@@ -612,7 +655,7 @@ func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (Use
 }
 
 func (m *userManagerImpl) initAllUsersFromDB(ctx context.Context) error {
-	users, err := m.db.GetAll(ctx)
+	users, err := m.db.FindAll(ctx)
 	switch {
 	case err == nil && len(users) == 0:
 		m.log.Info("no users in DB")
@@ -626,7 +669,7 @@ func (m *userManagerImpl) initAllUsersFromDB(ctx context.Context) error {
 		if u.IsDisabled {
 			continue
 		}
-		m.users.Set(u.Info.ID, m.newUserContext(u))
+		m.users.Set(u.ID, m.newUserContext(u))
 	}
 
 	m.log.Info("init users", "count", m.users.Size())
@@ -642,7 +685,7 @@ type inMemoryUserStorage struct {
 	cache otter.Cache[int64, UserModel]
 }
 
-func newInMemoryUserStorage() (UserStorage, error) {
+func newInMemoryUserStorage() (UsersStorage, error) {
 	s, err := otter.MustBuilder[int64, UserModel](100).Build()
 	if err != nil {
 		return nil, err
@@ -653,11 +696,11 @@ func newInMemoryUserStorage() (UserStorage, error) {
 }
 
 func (m *inMemoryUserStorage) Insert(ctx context.Context, user UserModel) error {
-	m.cache.Set(user.Info.ID, user)
+	m.cache.Set(user.ID, user)
 	return nil
 }
 
-func (m *inMemoryUserStorage) Get(ctx context.Context, id int64) (UserModel, bool, error) {
+func (m *inMemoryUserStorage) Find(ctx context.Context, id int64) (UserModel, bool, error) {
 	user, found := m.cache.Get(id)
 	if !found {
 		return UserModel{}, false, nil
@@ -665,7 +708,7 @@ func (m *inMemoryUserStorage) Get(ctx context.Context, id int64) (UserModel, boo
 	return user, true, nil
 }
 
-func (m *inMemoryUserStorage) GetAll(ctx context.Context) ([]UserModel, error) {
+func (m *inMemoryUserStorage) FindAll(ctx context.Context) ([]UserModel, error) {
 	out := make([]UserModel, 0, m.cache.Size())
 	m.cache.Range(func(key int64, value UserModel) bool {
 		out = append(out, value)
@@ -682,7 +725,6 @@ func (m *inMemoryUserStorage) Update(id int64, diff *UserModelDiff) {
 
 	if diff.Info != nil {
 		user.Info = UserInfo{
-			ID:           user.Info.ID,
 			FirstName:    lang.Check(lang.Deref(diff.Info.FirstName), user.Info.FirstName),
 			LastName:     lang.Check(lang.Deref(diff.Info.LastName), user.Info.LastName),
 			Username:     lang.Check(lang.Deref(diff.Info.Username), user.Info.Username),

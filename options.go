@@ -44,7 +44,7 @@ type (
 
 		// UserDB is a storage for users. It uses in-memory storage by default.
 		// You should implement it in your application if you want to persist users between applicataion restarts.
-		UserDB UserStorage
+		UserDB UsersStorage
 
 		// Msgs is a message provider. It uses default messages by default.
 		// You should implement it in your application if you want to use custom messages.
@@ -123,7 +123,7 @@ func WithConfig(cfg Config) func(opts *Options) {
 }
 
 // WithUserDB returns an option that sets the user storage.
-func WithUserDB(db UserStorage) func(opts *Options) {
+func WithUserDB(db UsersStorage) func(opts *Options) {
 	return func(opts *Options) {
 		opts.UserDB = db
 	}
