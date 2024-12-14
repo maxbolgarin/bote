@@ -2,6 +2,7 @@ package bote
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +21,8 @@ import (
 // States is generally changes in response to user actions inside handlers,
 // but also can be changed in other places in case of any action.
 type State interface {
-	String() string
-	IsChanged() bool
+	fmt.Stringer
+	Is(...State) bool
 }
 
 // User is an interface that represents user context in the bot.
@@ -268,7 +269,7 @@ func (u *userContextImpl) State(msgID ...int) State {
 }
 
 func (u *userContextImpl) SetState(state State, msgIDRaw ...int) {
-	if !state.IsChanged() {
+	if state.Is(NoChange) {
 		return
 	}
 
@@ -492,7 +493,7 @@ func (u *userContextImpl) HandleSend(newState State, mainMsgID, headMsgID int) {
 
 	u.user.Messages.HistoryIDs = append(u.user.Messages.HistoryIDs, u.user.Messages.MainID)
 
-	if newState.IsChanged() {
+	if !newState.Is(NoChange) {
 		u.user.State.Main = newState
 		u.user.State.MessageStates[mainMsgID] = newState
 	}
@@ -754,4 +755,13 @@ func (s state) IsChanged() bool {
 
 func (s state) String() string {
 	return string(s)
+}
+
+func (s state) Is(s2 ...State) bool {
+	for _, v := range s2 {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
