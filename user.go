@@ -37,10 +37,10 @@ type User interface {
 	Model() UserModel
 	// Info returns user info.
 	Info() UserInfo
-	// MainState returns state for the Main message.
-	MainState() State
 	// State returns current state for the given message ID.
 	State(msgID int) (State, bool)
+	// StateMain returns state for the Main message.
+	StateMain() State
 	// Messages returns all message IDs.
 	Messages() UserMessages
 	// LastSeenTime returns the time when user interacts with provided message.
@@ -213,13 +213,13 @@ func (u *userContextImpl) Info() UserInfo {
 	return u.user.Info
 }
 
-func (u *userContextImpl) MainState() State {
-	return u.user.State.Main
-}
-
 func (u *userContextImpl) State(msgID int) (State, bool) {
 	st, ok := u.user.State.MessageStates[msgID]
 	return st, ok
+}
+
+func (u *userContextImpl) StateMain() State {
+	return u.user.State.Main
 }
 
 func (u *userContextImpl) Messages() UserMessages {

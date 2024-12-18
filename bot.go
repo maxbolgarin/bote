@@ -198,7 +198,7 @@ func (b *Bot) logMiddleware(upd *tele.Update, userRaw User) bool {
 
 	switch {
 	case upd.Message != nil:
-		fields = append(fields, "state", user.MainState(), "msg_id", upd.Message.ID, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
+		fields = append(fields, "state", user.StateMain(), "msg_id", upd.Message.ID, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
 		if user.hasTextMessages() {
 			msgID := user.lastTextMessage()
 			ts, _ := user.State(msgID)
@@ -215,7 +215,7 @@ func (b *Bot) logMiddleware(upd *tele.Update, userRaw User) bool {
 			st, _ := user.State(upd.Callback.Message.ID)
 			fields = append(fields, "state", st, "msg_id", upd.Callback.Message.ID)
 		} else {
-			fields = append(fields, "state", user.MainState())
+			fields = append(fields, "state", user.StateMain())
 		}
 
 		if match := cbackRx.FindAllStringSubmatch(payload, -1); match != nil {
@@ -234,7 +234,7 @@ func (b *Bot) logMiddleware(upd *tele.Update, userRaw User) bool {
 
 func userFields(user User, fields ...any) []any {
 	f := make([]any, 0, len(fields)+6)
-	f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.MainState())
+	f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.StateMain())
 	return append(f, fields...)
 }
 
