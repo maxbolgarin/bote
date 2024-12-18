@@ -106,9 +106,35 @@ func (b *Bot) AddMiddleware(f ...MiddlewareFunc) {
 	b.middlewares.Append(f...)
 }
 
+// Handle sets handler for any endpoint. Endpoint can be string or callback button.
+func (b *Bot) Handle(endpoint any, f HandlerFunc) {
+	b.bot.handle(endpoint, func(c tele.Context) (err error) {
+		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
+
+		ctx := b.newContext(c)
+		if err = f(ctx); err != nil {
+			return ctx.handleError(err)
+		}
+		if c.Callback() != nil {
+			c.Respond(&tele.CallbackResponse{})
+		}
+		return nil
+	})
+}
+
 // HandleText sets handler for text messages.
-func (b *Bot) HandleText(h HandlerFunc) {
-	b.Handle(tele.OnText, h)
+// You should provide a single handler for all text messages, that will call another handlers based on the state.
+func (b *Bot) HandleText(f HandlerFunc) {
+	b.bot.handle(tele.OnText, func(c tele.Context) (err error) {
+		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
+
+		ctx := b.newContext(c)
+		if !ctx.user.hasTextMessages() {
+			return nil
+		}
+		ctx.textMsgID = ctx.user.lastTextMessage()
+		return ctx.handleError(f(ctx))
+	})
 }
 
 // HandleStart sets handler for start command.
@@ -120,23 +146,6 @@ func (b *Bot) HandleStart(h HandlerFunc, commands ...string) {
 		return
 	}
 	b.Handle("/start", h)
-}
-
-// Handle sets handler for any endpoint. Endpoint can be string or callback button.
-func (b *Bot) Handle(endpoint any, f HandlerFunc) {
-	b.bot.handle(endpoint, func(c tele.Context) (err error) {
-		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
-
-		ctx := b.newContext(c)
-		err = f(ctx)
-		if err != nil {
-			return ctx.handleError(err)
-		}
-		if c.Callback() != nil {
-			c.Respond(&tele.CallbackResponse{})
-		}
-		return nil
-	})
 }
 
 func (b *Bot) masterMiddleware(upd *tele.Update) bool {
@@ -159,11 +168,13 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	})
 }
 
-func (b *Bot) cleanMiddleware(upd *tele.Update, user User) bool {
+func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
+	user := userRaw.(*userContextImpl)
+
 	msgIDs := user.Messages()
 	if msgIDs.ErrorID > 0 {
 		b.bot.delete(user.ID(), msgIDs.ErrorID)
-		user.SetErrorMessage(0)
+		user.setErrorMessage(0)
 	}
 	if upd.Message != nil && b.deleteMessages {
 		b.bot.delete(user.ID(), upd.Message.ID)
@@ -176,7 +187,9 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, user User) bool {
 
 var cbackRx = regexp.MustCompile(`^\f([-\w]+)(\|(.+))?$`)
 
-func (b *Bot) logMiddleware(upd *tele.Update, user User) bool {
+func (b *Bot) logMiddleware(upd *tele.Update, userRaw User) bool {
+	user := userRaw.(*userContextImpl)
+
 	fields := make([]any, 0, 7)
 	fields = append(fields,
 		"user_id", user.ID(),
@@ -185,9 +198,10 @@ func (b *Bot) logMiddleware(upd *tele.Update, user User) bool {
 
 	switch {
 	case upd.Message != nil:
-		fields = append(fields, "state", user.State(), "msg_id", upd.Message.ID, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
-		if user.HasTextStates() {
-			ts, msgID := user.LastTextState()
+		fields = append(fields, "state", user.MainState(), "msg_id", upd.Message.ID, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
+		if user.hasTextMessages() {
+			msgID := user.lastTextMessage()
+			ts, _ := user.State(msgID)
 			fields = append(fields, "text_state", ts, "text_state_msg_id", msgID)
 		}
 		b.rlog.Log(MessageUpdate, fields...)
@@ -198,9 +212,10 @@ func (b *Bot) logMiddleware(upd *tele.Update, user User) bool {
 			button  string
 		)
 		if upd.Callback.Message != nil {
-			fields = append(fields, "state", user.State(upd.Callback.Message.ID), "msg_id", upd.Callback.Message.ID)
+			st, _ := user.State(upd.Callback.Message.ID)
+			fields = append(fields, "state", st, "msg_id", upd.Callback.Message.ID)
 		} else {
-			fields = append(fields, "state", user.State())
+			fields = append(fields, "state", user.MainState())
 		}
 
 		if match := cbackRx.FindAllStringSubmatch(payload, -1); match != nil {
@@ -219,7 +234,7 @@ func (b *Bot) logMiddleware(upd *tele.Update, user User) bool {
 
 func userFields(user User, fields ...any) []any {
 	f := make([]any, 0, len(fields)+6)
-	f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.State())
+	f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.MainState())
 	return append(f, fields...)
 }
 
@@ -348,7 +363,8 @@ func (b *baseBot) delete(userID int64, msgIDs ...int) error {
 	return errSet.Err()
 }
 
-func (b *baseBot) deleteHistory(userID int64, lastMessageID int) {
+func (b *baseBot) deleteHistory(userID int64, lastMessageID int) map[int]struct{} {
+	deleted := map[int]struct{}{}
 	var counter int
 	for msgID := lastMessageID - 1; msgID > 1; msgID-- {
 		err := b.delete(userID, msgID)
@@ -356,12 +372,14 @@ func (b *baseBot) deleteHistory(userID int64, lastMessageID int) {
 			counter += 1
 		} else {
 			counter = 0
+			deleted[msgID] = struct{}{}
 		}
 		if counter == 5 {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	return deleted
 }
 
 func (b *baseBot) middleware(upd *tele.Update) bool {

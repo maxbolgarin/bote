@@ -25,7 +25,7 @@ func main() {
 	}
 
 	b.HandleStart(func(ctx bote.Context) error {
-		kb := bote.InlineBuilderKB(3, bote.OneBytePerRune,
+		kb := bote.InlineBuilder(3, bote.OneBytePerRune,
 			b.Btn("1", nil),
 			b.Btn("2", nil),
 			b.Btn("3", nil),

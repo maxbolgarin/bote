@@ -27,7 +27,7 @@ const (
 
 var (
 	EmptyBtn      tele.Btn
-	EmptyKeyboard = InlineKB()
+	EmptyKeyboard = Inline()
 
 	// TODO: make length depends on number of buttons
 	runesInRow = map[RuneSizeType]int{
@@ -36,6 +36,12 @@ var (
 		FourBytesPerRune: 16,
 	}
 )
+
+// ButtonBuilder is an interface for creating buttons.
+// Use this interface to provide [Bot] to handlers without "admin" methods like [Bot.AddMiddleware] or [Bot.Stop].
+type ButtonBuilder interface {
+	Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn
+}
 
 // Btn creates button and registers handler for it. You can provide data for the button.
 // Data items will be separated by '|' in a single data string.
@@ -177,8 +183,8 @@ func (k *Keyboard) CreateReplyMarkup(oneTime bool) *tele.ReplyMarkup {
 	return &selector
 }
 
-// InlineKB creates inline keyboard from provided rows of buttons.
-func InlineKB(rows ...[]tele.Btn) *tele.ReplyMarkup {
+// Inline creates inline keyboard from provided rows of buttons.
+func Inline(rows ...[]tele.Btn) *tele.ReplyMarkup {
 	keyboard := NewKeyboard()
 	for _, line := range rows {
 		keyboard.AddRow(line...)
@@ -186,8 +192,8 @@ func InlineKB(rows ...[]tele.Btn) *tele.ReplyMarkup {
 	return keyboard.CreateInlineMarkup()
 }
 
-// InlineBuilderKB creates inline keyboard from provided buttons and columns count.
-func InlineBuilderKB(columns int, runesTypes RuneSizeType, btns ...tele.Btn) *tele.ReplyMarkup {
+// InlineBuilder creates inline keyboard from provided buttons and columns count.
+func InlineBuilder(columns int, runesTypes RuneSizeType, btns ...tele.Btn) *tele.ReplyMarkup {
 	keyboard := NewKeyboardWithLength(runesTypes)
 	for i, btn := range btns {
 		if i%columns == 0 && i != 0 {
@@ -198,8 +204,8 @@ func InlineBuilderKB(columns int, runesTypes RuneSizeType, btns ...tele.Btn) *te
 	return keyboard.CreateInlineMarkup()
 }
 
-// SingleRowKB creates inline keyboard from provided buttons with a single row.
-func SingleRowKB(btn ...tele.Btn) *tele.ReplyMarkup {
+// SingleRow creates inline keyboard from provided buttons with a single row.
+func SingleRow(btn ...tele.Btn) *tele.ReplyMarkup {
 	keyboard := NewKeyboard()
 	keyboard.Add(btn...)
 	return keyboard.CreateInlineMarkup()

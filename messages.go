@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/lang"
 )
 
@@ -15,8 +16,12 @@ type MessageProvider interface {
 
 // Messages is a collection of messages for a specific language.
 type Messages interface {
-	// GeneralError returns the general error message that sends when an unhandled error occurs.
+	// GeneralError is a general error message that sends when an unhandled error occurs.
 	GeneralError() string
+
+	// FatalError is a fatal error message that sends when bot cannot work further and must be restarted.
+	// It generally offers the user to press /start to restart the bot.
+	FatalError() string
 
 	// PrepareMainMessage calls before every Send or Edit of the main message.
 	PrepareMainMessage(main string, u User) string
@@ -60,6 +65,13 @@ func F(msg string, formats ...Format) string {
 		}
 	}
 	return msg
+}
+
+// Max possible length of entity ID (telegram bot constraint)
+const entityIDLength = 12
+
+func NewID() string {
+	return abstract.GetRandomString(entityIDLength)
 }
 
 // Builder is a wrapper for strings.Builder with additional methods.
@@ -127,26 +139,45 @@ func GetFilledMessage(left, right, sep, fill string, maxLeft, maxRight, maxLen i
 }
 
 func newDefaultMessageProvider() MessageProvider {
-	return &defaultMessageProvider{GeneralError: "Произошла ошибка"}
+	return &defaultMessageProvider{}
 }
 
-type defaultMessageProvider struct {
-	GeneralError string
-}
+type defaultMessageProvider struct{}
 
 func (d defaultMessageProvider) Messages(languageCode string) Messages {
-	return &defaultMessages{generalError: d.GeneralError}
+	switch languageCode {
+	case "ru":
+		return &ruMessages{}
+	default:
+		return &ruMessages{}
+	}
 }
 
-type defaultMessages struct {
-	generalError string
+type ruMessages struct{}
+
+func (d ruMessages) GeneralError() string {
+	return "Произошла внутренняя ошибка"
 }
 
-func (d defaultMessages) GeneralError() string {
-	return d.generalError
+func (d ruMessages) FatalError() string {
+	return "Произошла внутренняя ошибка!\nНажмите /start, чтобы восстановить бота"
 }
 
-func (d defaultMessages) PrepareMainMessage(main string, u User) string {
+func (d ruMessages) PrepareMainMessage(main string, u User) string {
+	return main
+}
+
+type enMessages struct{}
+
+func (d enMessages) GeneralError() string {
+	return "There is an error"
+}
+
+func (d enMessages) FatalError() string {
+	return "There is an internal error!\nPress /start to recover"
+}
+
+func (d enMessages) PrepareMainMessage(main string, u User) string {
 	return main
 }
 
