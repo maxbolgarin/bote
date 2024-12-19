@@ -77,30 +77,35 @@ func NewID() string {
 	return abstract.GetRandomString(entityIDLength)
 }
 
-// Builder is a wrapper for strings.Builder with additional methods.
-// You should not copy it. Empty
-// Empty value of Builder is ready to use.
-type Builder struct {
+// MessageBuilder is a wrapper for [strings.Builder] with additional methods.
+// You should not copy it. Empty value of [MessageBuilder] is ready to use.
+type MessageBuilder struct {
 	strings.Builder
 }
 
 // NewBuilder creates a new Builder instance.
-func NewBuilder() *Builder {
-	return &Builder{}
+func NewBuilder() *MessageBuilder {
+	return &MessageBuilder{}
+}
+
+// Write writes a string to the builder.
+// It is an alias for [strings.Builder.WriteString].
+func (b *MessageBuilder) Write(msg string) {
+	b.WriteString(msg)
 }
 
 // Writef writes a formatted string to the builder using fmt.Sprintf.
-func (b *Builder) Writef(format string, args ...any) {
+func (b *MessageBuilder) Writef(format string, args ...any) {
 	b.WriteString(fmt.Sprintf(format, args...))
 }
 
 // Writeln writes a string to the builder and adds a newline at the end.
-func (b *Builder) Writeln(s string) {
+func (b *MessageBuilder) Writeln(s string) {
 	b.WriteString(s + "\n")
 }
 
 // WriteIf writes either msgIf or msgElse depending on the value of first argument.
-func (b *Builder) WriteIf(toWrite bool, msgIf, msgElse string) {
+func (b *MessageBuilder) WriteIf(toWrite bool, msgIf, msgElse string) {
 	if toWrite {
 		b.WriteString(msgIf)
 	} else {
@@ -108,8 +113,14 @@ func (b *Builder) WriteIf(toWrite bool, msgIf, msgElse string) {
 	}
 }
 
+// WriteBytes writes a byte slice to the builder.
+// It is an alias for [strings.Builder.Write].
+func (b *MessageBuilder) WriteBytes(data []byte) {
+	b.Builder.Write(data)
+}
+
 // IsEmpty returns true if the builder's length is 0.
-func (b *Builder) IsEmpty() bool {
+func (b *MessageBuilder) IsEmpty() bool {
 	return b.Builder.Len() == 0
 }
 
