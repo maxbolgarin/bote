@@ -23,8 +23,11 @@ type Messages interface {
 	// It generally offers the user to press /start to restart the bot.
 	FatalError() string
 
-	// PrepareMainMessage calls before every Send or Edit of the main message.
-	PrepareMainMessage(main string, u User) string
+	// PrepareMainMessage calls before every Send, SendMain, Edit or EditMain for the main message.
+	PrepareMainMessage(main string, u User, newState State) string
+
+	// PrepareHistoryMessage calls before every EditHistory for the history message.
+	PrepareHistoryMessage(main string, u User, newState State, msgID int) string
 }
 
 // Format is a type of message formatting in Telegram in HTML format.
@@ -149,7 +152,7 @@ func (d defaultMessageProvider) Messages(languageCode string) Messages {
 	case "ru":
 		return &ruMessages{}
 	default:
-		return &ruMessages{}
+		return &enMessages{}
 	}
 }
 
@@ -163,7 +166,11 @@ func (d ruMessages) FatalError() string {
 	return "Произошла внутренняя ошибка!\nНажмите /start, чтобы восстановить бота"
 }
 
-func (d ruMessages) PrepareMainMessage(main string, u User) string {
+func (d ruMessages) PrepareMainMessage(main string, u User, newState State) string {
+	return main
+}
+
+func (d ruMessages) PrepareHistoryMessage(main string, u User, newState State, msgID int) string {
 	return main
 }
 
@@ -177,7 +184,11 @@ func (d enMessages) FatalError() string {
 	return "There is an internal error!\nPress /start to recover"
 }
 
-func (d enMessages) PrepareMainMessage(main string, u User) string {
+func (d enMessages) PrepareMainMessage(main string, u User, newState State) string {
+	return main
+}
+
+func (d enMessages) PrepareHistoryMessage(main string, u User, newState State, msgID int) string {
 	return main
 }
 

@@ -73,11 +73,11 @@ type Context interface {
 	// opts are additional options for editing message.
 	EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error
 
-	// EditAny edits any message of the user.
+	// EditHistory edits message of the user by provided ID.
 	// newState is a state of the user which will be set after editing message.
 	// msgID is the ID of the message to edit.
 	// opts are additional options for editing message.
-	EditAny(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error
+	EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error
 
 	// EditHead edits head message of the user.
 	// opts are additional options for editing message.
@@ -172,7 +172,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 		return nil
 	}
 
-	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(mainMsg, c.user)
+	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(mainMsg, c.user, newState)
 
 	var headMsgID int
 	if headMsg != "" {
@@ -208,7 +208,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 		return nil
 	}
 
-	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(msg, c.user)
+	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(msg, c.user, newState)
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, kb)...)
 	if err != nil {
 		return c.handleError(err, msgID)
@@ -267,7 +267,7 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 		return c.handleError(err, msgIDs.HeadID)
 	}
 
-	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(mainMsg, c.user)
+	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(mainMsg, c.user, newState)
 	if err := c.edit(msgIDs.MainID, mainMsg, mainKb, opts...); err != nil {
 		return c.handleError(err, msgIDs.MainID)
 	}
@@ -285,7 +285,7 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 
 	msgIDs := c.user.Messages()
 
-	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(msg, c.user)
+	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(msg, c.user, newState)
 	if err := c.edit(msgIDs.MainID, msg, kb, opts...); err != nil {
 		return c.handleError(err, msgIDs.MainID)
 	}
@@ -310,17 +310,18 @@ func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 	return nil
 }
 
-func (c *contextImpl) EditAny(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
+func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" && kb == nil {
 		c.bt.bot.log.Error("message cannot be empty", userFields(c.User())...)
 		return nil
 	}
 
+	msg = c.bt.msgs.Messages(c.user.Language()).PrepareHistoryMessage(msg, c.user, newState, msgID)
 	if err := c.edit(msgID, msg, kb, opts...); err != nil {
 		return c.handleError(err, msgID)
 	}
 
-	c.user.setState(newState)
+	c.user.setState(newState, msgID)
 
 	return nil
 }
