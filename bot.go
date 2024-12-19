@@ -86,6 +86,11 @@ func (b *Bot) Stop() {
 	b.bot.bot.Stop()
 }
 
+// SetMessageProvider sets message provider.
+func (b *Bot) SetMessageProvider(msgs MessageProvider) {
+	b.msgs = msgs
+}
+
 // Bot returns the underlying *tele.Bot.
 func (b *Bot) Bot() *tele.Bot {
 	return b.bot.bot
