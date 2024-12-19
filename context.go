@@ -15,6 +15,12 @@ type Context interface {
 	// Tele returns underlying telebot context.
 	Tele() tele.Context
 
+	// MessageID returns message ID.
+	// If handler was called from callback button, message is the one with keyboard.
+	// If handler was called from text message, message is the one with text sended by user (deleted by default).
+	// Use message ID from [Context.Text] in text handlers.
+	MessageID() int
+
 	// Data returns button data. If there are many items in data, they will be separated by '|'.
 	Data() string
 
@@ -117,6 +123,10 @@ func (c *contextImpl) User() User {
 
 func (c *contextImpl) Tele() tele.Context {
 	return c.ct
+}
+
+func (c *contextImpl) MessageID() int {
+	return lang.Deref(c.ct.Message()).ID
 }
 
 func (c *contextImpl) Data() string {
