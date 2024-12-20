@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/maxbolgarin/abstract"
+	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -63,27 +64,32 @@ type Keyboard struct {
 	buttons    [][]tele.Btn
 	currentRow []tele.Btn
 
+	optionalRowLen int
+
 	runesInCurrentRow int
 	maxRunesInRow     int
 	isCountRunes      bool
 }
 
 // NewKeyboard creates new keyboard builder.
-func NewKeyboard() *Keyboard {
+func NewKeyboard(optionalRowLen ...int) *Keyboard {
 	return &Keyboard{
 		buttons:    make([][]tele.Btn, 0),
 		currentRow: make([]tele.Btn, 0),
+
+		optionalRowLen: lang.First(optionalRowLen),
 	}
 }
 
 // NewKeyboardWithLength creates new keyboard builder with max runes in a row.
 // It creates a new row in Add if number of runes is greater than max runes in row for selected rune type.
-func NewKeyboardWithLength(runeType RuneSizeType) *Keyboard {
+func NewKeyboardWithLength(runeType RuneSizeType, optionalRowLen ...int) *Keyboard {
 	return &Keyboard{
-		buttons:       make([][]tele.Btn, 0),
-		currentRow:    make([]tele.Btn, 0, maxButtonsInRow),
-		maxRunesInRow: runesInRow[runeType],
-		isCountRunes:  runesInRow[runeType] > 0,
+		buttons:        make([][]tele.Btn, 0),
+		currentRow:     make([]tele.Btn, 0, maxButtonsInRow),
+		maxRunesInRow:  runesInRow[runeType],
+		isCountRunes:   runesInRow[runeType] > 0,
+		optionalRowLen: lang.First(optionalRowLen),
 	}
 }
 
@@ -93,6 +99,9 @@ func NewKeyboardWithLength(runeType RuneSizeType) *Keyboard {
 func (k *Keyboard) Add(btns ...tele.Btn) {
 	for _, btn := range btns {
 		if len(k.currentRow) == maxButtonsInRow {
+			k.StartNewRow()
+		}
+		if k.optionalRowLen > 0 && len(k.currentRow) == k.optionalRowLen {
 			k.StartNewRow()
 		}
 
