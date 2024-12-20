@@ -28,7 +28,7 @@ const (
 
 var (
 	EmptyBtn      tele.Btn
-	EmptyKeyboard = Inline()
+	EmptyKeyboard = Inline(maxButtonsInRow)
 
 	// TODO: make length depends on number of buttons
 	runesInRow = map[RuneSizeType]int{
@@ -96,7 +96,7 @@ func NewKeyboardWithLength(runeType RuneSizeType, optionalRowLen ...int) *Keyboa
 // Add adds buttons to the current row.
 // It creates a new row in Add if number of buttons is greater than max buttons in row.
 // It creates a new row in Add if number of runes is greater than max runes in row for selected rune type.
-func (k *Keyboard) Add(btns ...tele.Btn) {
+func (k *Keyboard) Add(btns ...tele.Btn) *Keyboard {
 	for _, btn := range btns {
 		if len(k.currentRow) == maxButtonsInRow {
 			k.StartNewRow()
@@ -124,25 +124,31 @@ func (k *Keyboard) Add(btns ...tele.Btn) {
 
 		k.currentRow = append(k.currentRow, btn)
 	}
+
+	return k
 }
 
 // AddRow adds buttons to the current row.
 // It creates a new row if there is buttons in the current row after Add.
-func (k *Keyboard) AddRow(btns ...tele.Btn) {
+func (k *Keyboard) AddRow(btns ...tele.Btn) *Keyboard {
 	if len(k.currentRow) > 0 {
 		k.StartNewRow()
 	}
 	k.buttons = append(k.buttons, btns)
+
+	return k
 }
 
 // StartNewRow creates a new row.
-func (k *Keyboard) StartNewRow() {
+func (k *Keyboard) StartNewRow() *Keyboard {
 	if len(k.currentRow) == 0 {
-		return
+		return k
 	}
 	k.buttons = append(k.buttons, k.currentRow)
 	k.currentRow = make([]tele.Btn, 0, maxButtonsInRow)
 	k.runesInCurrentRow = 0
+
+	return k
 }
 
 // CreateInlineMarkup creates inline keyboard from the current keyboard builder.
@@ -193,10 +199,10 @@ func (k *Keyboard) CreateReplyMarkup(oneTime bool) *tele.ReplyMarkup {
 }
 
 // Inline creates inline keyboard from provided rows of buttons.
-func Inline(rows ...[]tele.Btn) *tele.ReplyMarkup {
-	keyboard := NewKeyboard()
-	for _, line := range rows {
-		keyboard.AddRow(line...)
+func Inline(rowLength int, btns ...tele.Btn) *tele.ReplyMarkup {
+	keyboard := NewKeyboard(rowLength)
+	for _, btn := range btns {
+		keyboard.Add(btn)
 	}
 	return keyboard.CreateInlineMarkup()
 }
