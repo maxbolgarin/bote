@@ -15,13 +15,12 @@ type Context interface {
 	// Tele returns underlying telebot context.
 	Tele() tele.Context
 
-	// MessageID returns message ID.
-	// If handler was called from callback button, message is the one with keyboard.
-	// If handler was called from text message, message is the one with text sended by user (deleted by default).
-	// Use message ID from [Context.Text] in text handlers.
+	// MessageID returns an ID of the active message.
+	// If handler was called from a callback button, message is the one with keyboard.
+	// If handler was called from a text message, message is the one with an active text handler (not sent message!).
 	MessageID() int
 
-	// Data returns button data. If there are many items in data, they will be separated by '|'.
+	// Data returns callback button data. If there are many items in data, they will be separated by '|'.
 	Data() string
 
 	// DataParsed returns all items of button data.
@@ -30,8 +29,11 @@ type Context interface {
 	// DataDouble returns two first items of button data.
 	DataDouble() (string, string)
 
-	// Text returns a text sended by the user and the message ID with the related textstate.
-	Text() (string, int)
+	// Text returns a text sended by the user.
+	Text() string
+
+	// TextWithMessage returns a text sended by the user and the ID of this message (deleted by default).
+	TextWithMessage() (string, int)
 
 	// Set sets custom data for the current context.
 	Set(key, value string)
@@ -126,15 +128,15 @@ func (c *contextImpl) Tele() tele.Context {
 }
 
 func (c *contextImpl) MessageID() int {
+	if c.textMsgID != 0 {
+		return c.textMsgID
+	}
 	return lang.Deref(c.ct.Message()).ID
 }
 
 func (c *contextImpl) Data() string {
 	if cb := c.ct.Callback(); cb != nil {
 		return cb.Data
-	}
-	if msg := c.ct.Message(); msg != nil {
-		return msg.Text
 	}
 	return ""
 }
@@ -151,11 +153,16 @@ func (c *contextImpl) DataDouble() (string, string) {
 	return spl[0], spl[1]
 }
 
-func (c *contextImpl) Text() (string, int) {
+func (c *contextImpl) Text() string {
+	msg, _ := c.TextWithMessage()
+	return msg
+}
+
+func (c *contextImpl) TextWithMessage() (string, int) {
 	if msg := c.ct.Message(); msg != nil {
-		return msg.Text, c.textMsgID
+		return msg.Text, msg.ID
 	}
-	return "", c.textMsgID
+	return "", 0
 }
 
 func (c *contextImpl) Set(key, value string) {
