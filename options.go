@@ -14,6 +14,9 @@ import (
 const (
 	// MaxTextLenInLogs is the maximum length of the text in message logs.
 	MaxTextLenInLogs = 64
+
+	// maxInitTasksPerSecond is the maximum number of init users per second.
+	maxInitTasksPerSecond = 20
 )
 
 type (

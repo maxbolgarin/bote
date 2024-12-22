@@ -603,6 +603,15 @@ func (m *userManagerImpl) getAllUsers() []User {
 	return out
 }
 
+func (m *userManagerImpl) getAllUsersContexts() []*userContextImpl {
+	out := make([]*userContextImpl, 0, m.users.Size())
+	m.users.Range(func(key int64, value *userContextImpl) bool {
+		out = append(out, value)
+		return true
+	})
+	return out
+}
+
 func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (*userContextImpl, error) {
 	userModel, isFound, err := m.db.Find(ctx, tUser.ID)
 	if err != nil {
@@ -647,7 +656,7 @@ func (m *userManagerImpl) initAllUsersFromDB(ctx context.Context) error {
 		m.users.Set(u.ID, m.newUserContext(u))
 	}
 
-	m.log.Info("init users", "count", m.users.Size())
+	m.log.Info("load users", "count", m.users.Size())
 
 	return nil
 }

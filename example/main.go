@@ -19,7 +19,7 @@ func main() {
 
 	cfg := bote.Config{}
 
-	b, err := bote.Start(ctx, token, bote.WithConfig(cfg))
+	b, err := bote.New(ctx, token, bote.WithConfig(cfg))
 	if err != nil {
 		panic(err)
 	}

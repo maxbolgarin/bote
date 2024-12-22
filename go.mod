@@ -4,7 +4,7 @@ go 1.23.0
 
 require (
 	github.com/caarlos0/env/v11 v11.2.2
-	github.com/maxbolgarin/abstract v1.1.0
+	github.com/maxbolgarin/abstract v1.6.0
 	github.com/maxbolgarin/errm v1.0.1
 	github.com/maxbolgarin/lang v1.6.0
 	github.com/maypok86/otter v1.2.4

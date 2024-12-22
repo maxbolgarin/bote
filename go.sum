@@ -289,6 +289,8 @@ github.com/mattn/go-isatty v0.0.14/go.mod h1:7GGIvUiUoEMVVmxf/4nioHXj79iQHKdU27k
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/maxbolgarin/abstract v1.1.0 h1:wga5KN/pvdbF0IKkOuSh8XgR0m1RoljT23ON9cdodfI=
 github.com/maxbolgarin/abstract v1.1.0/go.mod h1:TLMZ+xRag917RJEs/w1w8EG67dvyWR9GYPuW2OVJnfE=
+github.com/maxbolgarin/abstract v1.6.0 h1:Fia7Ib3V6PXQ3JglP6iYN2VYXtdNP3ql6QYKBcygsnc=
+github.com/maxbolgarin/abstract v1.6.0/go.mod h1:TLMZ+xRag917RJEs/w1w8EG67dvyWR9GYPuW2OVJnfE=
 github.com/maxbolgarin/errm v1.0.1 h1:G5aJvW3Q1ZCyjSL005IRgttEpOE40tkxUxCvkxxEsg0=
 github.com/maxbolgarin/errm v1.0.1/go.mod h1:LnWsu1KC3e3QIh5GqjQGRr3Fe33HYEKqisU4Qoo5QpY=
 github.com/maxbolgarin/lang v1.6.0 h1:hH8vwzyOmpjidfvqr7FJtI1h/yTHY8JnotcYDRDMyFw=

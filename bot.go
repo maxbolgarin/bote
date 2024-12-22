@@ -2,6 +2,7 @@ package bote
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -13,6 +14,23 @@ import (
 	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
+
+// InitBundle is a struct for initing users of the bot. You should provide it to [Bot.Start] method.
+// You should create a mapping of every [State] to the corresponding [HandlerFunc].
+type InitBundle struct {
+	// Handler is a handler for [State]. It will be called for initing user.
+	// It is required.
+	Handler HandlerFunc
+	// Data is a callback data, that can be obtained from [Context.Data] inside [HandlerFunc].
+	// It is optional and shoud be provided if you use [Context.Data] in your [InitBundle.Handler].
+	Data string
+	// Text is a text of simulating message, that can be obtained from [Context.Text] inside [HandlerFunc].
+	// It is optional and shoud be provided if you use [Context.Text] in your [InitBundle.Handler].
+	Text string
+	// State is a state, that will be set for user after [InitBundle.Handler] is called.
+	// It is optional and shoud be provided if you don't want to live with the state that will be set in [InitBundle.Handler].
+	State State
+}
 
 // Bot is a main struct of this package. It contains all necessary components for working with Telegram bot.
 type Bot struct {
@@ -27,20 +45,17 @@ type Bot struct {
 	deleteMessages bool
 }
 
-// Start starts the bot with optional options.
-// All that you need is to pass your bot token to start it with default options.
-// Don't forget to call Stop() when you're done.
-func Start(ctx context.Context, token string, optsFuncs ...func(*Options)) (*Bot, error) {
+// New creates the bot with optional options.
+func New(ctx context.Context, token string, optsFuncs ...func(*Options)) (*Bot, error) {
 	var opts Options
 	for _, f := range optsFuncs {
 		f(&opts)
 	}
-	return StartWithOptions(ctx, token, opts)
+	return NewWithOptions(ctx, token, opts)
 }
 
-// StartWithOptions starts the bot with required options.
-// Don't forget to call Stop() when you're done.
-func StartWithOptions(ctx context.Context, token string, opts Options) (*Bot, error) {
+// NewWithOptions starts the bot with options.
+func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, error) {
 	if token == "" {
 		return nil, errm.New("token cannot be empty")
 	}
@@ -54,7 +69,7 @@ func StartWithOptions(ctx context.Context, token string, opts Options) (*Bot, er
 		return nil, errm.Wrap(err, "new user manager")
 	}
 
-	b, err := startBot(token, opts.Config, opts.Logger)
+	b, err := newBaseBot(token, opts.Config, opts.Logger)
 	if err != nil {
 		return nil, errm.Wrap(err, "start bot")
 	}
@@ -81,19 +96,43 @@ func StartWithOptions(ctx context.Context, token string, opts Options) (*Bot, er
 	return bote, nil
 }
 
-// Stop gracefully shuts the poller down.
-func (b *Bot) Stop() {
-	b.bot.bot.Stop()
+// Start inits all users of the bot with provided stateMap. Then it starts the bot in a separate goroutine.
+// It logs an error if something went wrong.
+// Context is used to handle init process, it is not using by the bot.
+// Don't forget to call Stop() to gracefully shutdown the bot.
+func (b *Bot) Start(ctx context.Context, stateMap map[State]InitBundle, startHandler InitBundle) {
+	tm := abstract.StartTimer()
+
+	rp := abstract.NewRateProcessor(ctx, maxInitTasksPerSecond)
+
+	users := b.um.getAllUsersContexts()
+	for _, user := range users {
+		rp.AddTask(func(ctx context.Context) error {
+			err := b.initUser(user, stateMap, startHandler)
+			if err != nil {
+				return errm.Wrap(err, "init", "user_id", user.ID())
+			}
+			return nil
+		})
+	}
+	errs := rp.Wait()
+	if len(errs) > 0 {
+		b.bot.log.Error("there are errors in user init", "errors", errs)
+	}
+
+	b.bot.log.Info(fmt.Sprintf("inited %d/%d users", len(users)-len(errs), len(users)), "elapsed_time", tm.ElapsedTime())
+
+	b.bot.start()
 }
 
-// SetMessageProvider sets message provider.
-func (b *Bot) SetMessageProvider(msgs MessageProvider) {
-	b.msgs = msgs
+// Stop gracefully shuts the poller down.
+func (b *Bot) Stop() {
+	b.bot.stop()
 }
 
 // Bot returns the underlying *tele.Bot.
 func (b *Bot) Bot() *tele.Bot {
-	return b.bot.bot
+	return b.bot.tbot
 }
 
 // GetUser returns user by its ID.
@@ -104,6 +143,11 @@ func (b *Bot) GetUser(userID int64) User {
 // GetAllUsers returns all users.
 func (b *Bot) GetAllUsers() []User {
 	return b.um.getAllUsers()
+}
+
+// SetMessageProvider sets message provider.
+func (b *Bot) SetMessageProvider(msgs MessageProvider) {
+	b.msgs = msgs
 }
 
 // AddMiddleware adds middleware functions that will be called on each update.
@@ -243,20 +287,105 @@ func userFields(user User, fields ...any) []any {
 	return append(f, fields...)
 }
 
+func (b *Bot) initUser(user *userContextImpl, stateMap map[State]InitBundle, startHandler InitBundle) error {
+	msgsToInit := append(user.Messages().HistoryIDs, user.Messages().MainID)
+	for i, j := 0, len(msgsToInit)-1; i < j; i, j = i+1, j-1 {
+		msgsToInit[i], msgsToInit[j] = msgsToInit[j], msgsToInit[i] // reverse to init from first in msg list
+	}
+
+	errs := errm.NewList()
+
+	var msgWithoutState []int
+	for _, msgID := range msgsToInit {
+		st, ok := user.State(msgID)
+		if !ok {
+			msgWithoutState = append(msgWithoutState, msgID)
+			continue
+		}
+
+		bundle, foundBundle := stateMap[st]
+		if !ok {
+			bundle = startHandler
+		}
+
+		firstError := b.init(bundle, user, msgID, st)
+		if firstError != nil {
+			if !foundBundle {
+				errs.Wrap(firstError, "start handler", "msg_id", msgID, "state", st)
+				continue
+			}
+			secondError := b.init(startHandler, user, msgID, st)
+			if secondError != nil {
+				errs.Wrap(secondError, "start handler", "msg_id", msgID, "state", st, "first_error", firstError)
+				continue
+			}
+		}
+		b.bot.log.Debug("init", "user_id", user.ID(), "msg_id", msgID, "state", st)
+	}
+
+	for _, msgID := range msgWithoutState {
+		b.bot.log.Debug("forget history message", "user_id", user.ID(), "msg_id", msgID)
+		user.forgetHistoryMessage(msgID)
+	}
+
+	return errs.Err()
+}
+
+func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expectedState State) error {
+	// Minimum update to handle all possible methods in [Context]
+	upd := tele.Update{
+		Message: &tele.Message{
+			Text: bundle.Text,
+			Sender: &tele.User{
+				ID: user.ID(),
+			},
+		},
+		Callback: &tele.Callback{
+			Message: &tele.Message{ID: msgID},
+			Data:    bundle.Data,
+		},
+	}
+
+	err := bundle.Handler(&contextImpl{
+		bt:   b,
+		ct:   b.bot.tbot.NewContext(upd),
+		user: user,
+	})
+	if err != nil {
+		return errm.Wrap(err, "run handler")
+	}
+
+	// Expected state not changed after running handler
+	if bundle.State.NotChanged() {
+		newState, ok := user.State(msgID)
+		if !ok {
+			return errm.New("new state not found")
+		}
+		if newState != expectedState {
+			return errm.New("unexpected", "state", newState)
+		}
+		return nil
+	}
+
+	user.setState(bundle.State, msgID)
+
+	return nil
+}
+
 var (
 	errEmptyUserID = errm.New("empty user id")
 	errEmptyMsgID  = errm.New("empty msg id")
 )
 
 type baseBot struct {
-	bot *tele.Bot
-	log Logger
+	tbot *tele.Bot
+	log  Logger
 
 	defaultOptions []any
 	middlewares    []func(upd *tele.Update) bool
 }
 
-func startBot(token string, cfg Config, log Logger) (*baseBot, error) {
+func newBaseBot(token string, cfg Config, log Logger) (*baseBot, error) {
 	b := &baseBot{
 		log:            log,
 		defaultOptions: []any{cfg.ParseMode},
@@ -283,13 +412,19 @@ func startBot(token string, cfg Config, log Logger) (*baseBot, error) {
 	if err != nil {
 		return nil, errm.Wrap(err, "new telebot")
 	}
-	b.bot = bot
-
-	b.log.Info("bot is starting")
-
-	lang.Go(b.log, b.bot.Start)
+	b.tbot = bot
 
 	return b, nil
+}
+
+func (b *baseBot) start() {
+	b.log.Info("bot is starting")
+	lang.Go(b.log, b.tbot.Start)
+}
+
+func (b *baseBot) stop() {
+	b.log.Info("bot is stopping")
+	b.tbot.Stop()
 }
 
 func (b *baseBot) addMiddleware(f func(upd *tele.Update) bool) {
@@ -297,7 +432,7 @@ func (b *baseBot) addMiddleware(f func(upd *tele.Update) bool) {
 }
 
 func (b *baseBot) handle(endpoint any, handler tele.HandlerFunc) {
-	b.bot.Handle(endpoint, handler)
+	b.tbot.Handle(endpoint, handler)
 }
 
 func (b *baseBot) send(userID int64, msg string, options ...any) (int, error) {
@@ -305,7 +440,7 @@ func (b *baseBot) send(userID int64, msg string, options ...any) (int, error) {
 		return 0, errEmptyUserID
 	}
 
-	m, err := b.bot.Send(userIDWrapper(userID), msg, append(options, b.defaultOptions...)...)
+	m, err := b.tbot.Send(userIDWrapper(userID), msg, append(options, b.defaultOptions...)...)
 	if err != nil {
 		return 0, err
 	}
@@ -321,7 +456,7 @@ func (b *baseBot) edit(userID int64, msgID int, what any, options ...any) error 
 		return errEmptyMsgID
 	}
 
-	_, err := b.bot.Edit(getEditable(userID, msgID), what, append(options, b.defaultOptions...)...)
+	_, err := b.tbot.Edit(getEditable(userID, msgID), what, append(options, b.defaultOptions...)...)
 	if err != nil {
 		if strings.Contains(err.Error(), "message is not modified") {
 			b.log.Warn("message is not modified", "msg_id", msgID, "user_id", userID)
@@ -341,7 +476,7 @@ func (b *baseBot) editReplyMarkup(userID int64, msgID int, markup *tele.ReplyMar
 		return errEmptyMsgID
 	}
 
-	_, err := b.bot.EditReplyMarkup(getEditable(userID, msgID), markup)
+	_, err := b.tbot.EditReplyMarkup(getEditable(userID, msgID), markup)
 	if err != nil {
 		return err
 	}
@@ -360,7 +495,7 @@ func (b *baseBot) delete(userID int64, msgIDs ...int) error {
 		if msgID == 0 {
 			return errEmptyMsgID
 		}
-		if err := b.bot.Delete(getEditable(userID, msgID)); err != nil {
+		if err := b.tbot.Delete(getEditable(userID, msgID)); err != nil {
 			errSet.Add(err)
 		}
 	}
