@@ -51,12 +51,33 @@ func (b *Bot) Btn(name string, callback HandlerFunc, dataList ...string) tele.Bt
 	btn := tele.Btn{
 		Text:   name,
 		Unique: getBtnUnique(name),
-		Data:   createBtnData(dataList...),
+		Data:   CreateBtnData(dataList...),
 	}
 	if callback != nil {
 		b.Handle(&btn, callback)
 	}
 	return btn
+}
+
+// CreateBtnData creates data string from dataList, that should be passed as data to callback button.
+// This method can be useful when creating [InitBundle] with providing [InitBundle.Data].
+func CreateBtnData(dataList ...string) string {
+	switch len(dataList) {
+	case 0:
+		return ""
+	case 1:
+		return dataList[0]
+	}
+
+	var b strings.Builder
+	b.WriteString(dataList[0])
+	for _, s := range dataList[1:] {
+		if s == "" {
+			continue
+		}
+		b.WriteString("|" + s)
+	}
+	return b.String()
 }
 
 // Keyboard is a ReplyMarkup (keyboard) builder.
@@ -232,25 +253,6 @@ func RemoveKeyboard() *tele.ReplyMarkup {
 		RemoveKeyboard: true,
 	}
 	return &selector
-}
-
-func createBtnData(dataList ...string) string {
-	switch len(dataList) {
-	case 0:
-		return ""
-	case 1:
-		return dataList[0]
-	}
-
-	var b strings.Builder
-	b.WriteString(dataList[0])
-	for _, s := range dataList[1:] {
-		if s == "" {
-			continue
-		}
-		b.WriteString("|" + s)
-	}
-	return b.String()
 }
 
 const (
