@@ -81,6 +81,10 @@ type Context interface {
 	// opts are additional options for editing message.
 	EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error
 
+	// EditHistoryReplyMarkup edits reply markup of the history message.
+	// opts are additional options for editing message.
+	EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, opts ...any) error
+
 	// EditHead edits head message of the user.
 	// opts are additional options for editing message.
 	EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) error
@@ -329,6 +333,19 @@ func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tel
 	}
 
 	c.user.setState(newState, msgID)
+
+	return nil
+}
+
+func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, opts ...any) error {
+	if kb == nil {
+		c.bt.bot.log.Error("history keyboard cannot be empty", userFields(c.User())...)
+		return nil
+	}
+
+	if err := c.edit(msgID, "", kb, opts...); err != nil {
+		return c.handleError(err, msgID)
+	}
 
 	return nil
 }
