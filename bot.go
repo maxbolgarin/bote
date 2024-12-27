@@ -117,10 +117,10 @@ func (b *Bot) Start(ctx context.Context, stateMap map[State]InitBundle, startHan
 	}
 	errs := rp.Wait()
 	if len(errs) > 0 {
-		b.bot.log.Error("there are errors in user init", "errors", errs)
+		b.bot.log.Error(fmt.Sprintf("there are errors for %d users in init", len(errs)), "errors", errs)
 	}
 
-	b.bot.log.Info(fmt.Sprintf("inited %d/%d users", len(users)-len(errs), len(users)), "elapsed_time", tm.ElapsedTime())
+	b.bot.log.Info(fmt.Sprintf("inited %d users at startup, elapsed_time: %s", len(users)-len(errs), tm.ElapsedTime()))
 
 	b.bot.start()
 }
@@ -293,6 +293,11 @@ func (b *Bot) initUser(user *userContextImpl, stateMap map[State]InitBundle, sta
 		msgsToInit[i], msgsToInit[j] = msgsToInit[j], msgsToInit[i] // reverse to init from first in msg list
 	}
 
+	preparedMap := make(map[string]InitBundle, len(stateMap)+1)
+	for k, v := range stateMap {
+		preparedMap[k.String()] = v
+	}
+
 	errs := errm.NewList()
 
 	var msgWithoutState []int
@@ -303,8 +308,9 @@ func (b *Bot) initUser(user *userContextImpl, stateMap map[State]InitBundle, sta
 			continue
 		}
 
-		bundle, foundBundle := stateMap[st]
-		if !ok {
+		bundle, foundBundle := preparedMap[st.String()]
+		if !foundBundle {
+			b.bot.log.Warn("init bundle not found", "user_id", user.ID(), "msg_id", msgID, "state", st)
 			bundle = startHandler
 		}
 
@@ -320,7 +326,7 @@ func (b *Bot) initUser(user *userContextImpl, stateMap map[State]InitBundle, sta
 				continue
 			}
 		}
-		b.bot.log.Debug("init", "user_id", user.ID(), "msg_id", msgID, "state", st)
+		b.bot.log.Debug("init user", "user_id", user.ID(), "msg_id", msgID, "state", st)
 	}
 
 	for _, msgID := range msgWithoutState {
@@ -356,7 +362,7 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 	}
 
 	// Expected state not changed after running handler
-	if bundle.State.NotChanged() {
+	if bundle.State == nil || bundle.State.NotChanged() {
 		newState, ok := user.State(msgID)
 		if !ok {
 			return errm.New("new state not found")
