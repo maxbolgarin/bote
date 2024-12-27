@@ -115,6 +115,29 @@ func (b *Bot) newContext(c tele.Context) *contextImpl {
 	}
 }
 
+// NewContext creates a new context for the given, user, callback message ID, callback data, and text.
+// Is creates a minimal update to handle all possible methods in [Context].
+// It can be useful if you want to start a handler without user action (by some ecternal event).
+func NewContext(b *Bot, userID int64, callbackMsgID int, callbackData, text string) Context {
+	upd := tele.Update{
+		Message: &tele.Message{
+			Text: text,
+			Sender: &tele.User{
+				ID: userID,
+			},
+		},
+		Callback: &tele.Callback{
+			Message: &tele.Message{ID: callbackMsgID},
+			Data:    callbackData,
+		},
+	}
+	return &contextImpl{
+		bt:   b,
+		ct:   b.bot.tbot.NewContext(upd),
+		user: b.um.getUser(userID),
+	}
+}
+
 type contextImpl struct {
 	bt   *Bot
 	ct   tele.Context
