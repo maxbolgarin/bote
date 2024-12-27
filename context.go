@@ -115,20 +115,36 @@ func (b *Bot) newContext(c tele.Context) *contextImpl {
 	}
 }
 
-// NewContext creates a new context for the given, user, callback message ID, callback data, and text.
-// Is creates a minimal update to handle all possible methods in [Context].
+// NewContext creates a new context for the given user simulationg that callback button was pressed.
+// It creates a minimal update to handle all possible methods in [Context] without panics.
 // It can be useful if you want to start a handler without user action (by some ecternal event).
-func NewContext(b *Bot, userID int64, callbackMsgID int, callbackData, text string) Context {
+// Warning! IT WON'T WORK WITH TEXT HANDLERS. Use [NewContextText] instead.
+func NewContext(b *Bot, userID int64, callbackMsgID int, data ...string) Context {
+	upd := tele.Update{
+		Callback: &tele.Callback{
+			Message: &tele.Message{ID: callbackMsgID, Sender: &tele.User{ID: userID}},
+			Data:    CreateBtnData(data...),
+		},
+	}
+	return &contextImpl{
+		bt:   b,
+		ct:   b.bot.tbot.NewContext(upd),
+		user: b.um.getUser(userID),
+	}
+}
+
+// NewContextText creates a new context for the given user simulationg that text message was received.
+// It creates a minimal update to handle all possible methods in [Context] without panics.
+// It can be useful if you want to start a handler without user action (by some ecternal event).
+// Warning! IT WON'T WORK WITH CALLBACK HANDLERS. Use [NewContext] instead.
+func NewContextText(b *Bot, userID int64, textMsgID int, text string) Context {
 	upd := tele.Update{
 		Message: &tele.Message{
+			ID:   textMsgID,
 			Text: text,
 			Sender: &tele.User{
 				ID: userID,
 			},
-		},
-		Callback: &tele.Callback{
-			Message: &tele.Message{ID: callbackMsgID},
-			Data:    callbackData,
 		},
 	}
 	return &contextImpl{
@@ -157,6 +173,9 @@ func (c *contextImpl) Tele() tele.Context {
 func (c *contextImpl) MessageID() int {
 	if c.textMsgID != 0 {
 		return c.textMsgID
+	}
+	if cb := c.ct.Callback(); cb != nil {
+		return cb.Message.ID
 	}
 	return lang.Deref(c.ct.Message()).ID
 }
