@@ -183,6 +183,18 @@ type UserStateDiff struct {
 	MessagesAwaitingText []int          `bson:"messages_awaiting_text" json:"messages_awaiting_text" db:"messages_awaiting_text"`
 }
 
+func (u *UserModel) prepareAfterDB() {
+	if u.Messages.LastActions == nil {
+		u.Messages.LastActions = make(map[int]time.Time)
+	}
+	if u.State.MessageStates == nil {
+		u.State.MessageStates = make(map[int]string)
+	}
+	if u.State.messagesStackInd == nil {
+		u.State.messagesStackInd = make(map[int]int)
+	}
+}
+
 // userContextImpl implements User interface.
 type userContextImpl struct {
 	user UserModel
@@ -190,6 +202,7 @@ type userContextImpl struct {
 }
 
 func (m *userManagerImpl) newUserContext(user UserModel) *userContextImpl {
+	user.prepareAfterDB()
 	return &userContextImpl{db: m.db, user: user}
 }
 
