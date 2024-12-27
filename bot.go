@@ -465,7 +465,7 @@ func (b *baseBot) edit(userID int64, msgID int, what any, options ...any) error 
 	_, err := b.tbot.Edit(getEditable(userID, msgID), what, append(options, b.defaultOptions...)...)
 	if err != nil {
 		if strings.Contains(err.Error(), "message is not modified") {
-			b.log.Warn("message is not modified", "msg_id", msgID, "user_id", userID)
+			b.log.Debug("message is not modified", "msg_id", msgID, "user_id", userID)
 			return nil
 		}
 		return err
