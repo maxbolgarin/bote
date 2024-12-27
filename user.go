@@ -135,9 +135,9 @@ type UserMessages struct {
 // State connects to message, every Main and Info message has its own state.
 type UserState struct {
 	// Main is the main state of the user, state of the Main message.
-	Main State `bson:"main" json:"main" db:"main"`
+	Main string `bson:"main" json:"main" db:"main"`
 	// MessageStates contains all states of the user for all messages. It is a map of message_id -> state.
-	MessageStates map[int]State `bson:"message_states" json:"message_states" db:"message_states"`
+	MessageStates map[int]string `bson:"message_states" json:"message_states" db:"message_states"`
 	// MessagesAwaitingText is a unique stack that contains all messages IDs that awaits text.
 	// Every message can produce text state and they should be handled as LIFO.
 	MessagesAwaitingText []int `bson:"messages_awaiting_text" json:"messages_awaiting_text" db:"messages_awaiting_text"`
@@ -178,9 +178,9 @@ type UserMessagesDiff struct {
 
 // UserStateDiff contains changes that should be applied to user state.
 type UserStateDiff struct {
-	Main                 *State        `bson:"main" json:"main" db:"main"`
-	MessageStates        map[int]State `bson:"message_states" json:"message_states" db:"message_states"`
-	MessagesAwaitingText []int         `bson:"messages_awaiting_text" json:"messages_awaiting_text" db:"messages_awaiting_text"`
+	Main                 *string        `bson:"main" json:"main" db:"main"`
+	MessageStates        map[int]string `bson:"message_states" json:"message_states" db:"message_states"`
+	MessagesAwaitingText []int          `bson:"messages_awaiting_text" json:"messages_awaiting_text" db:"messages_awaiting_text"`
 }
 
 // userContextImpl implements User interface.
@@ -215,11 +215,11 @@ func (u *userContextImpl) Info() UserInfo {
 
 func (u *userContextImpl) State(msgID int) (State, bool) {
 	st, ok := u.user.State.MessageStates[msgID]
-	return st, ok
+	return state(st), ok
 }
 
 func (u *userContextImpl) StateMain() State {
-	return u.user.State.Main
+	return state(u.user.State.Main)
 }
 
 func (u *userContextImpl) Messages() UserMessages {
@@ -252,7 +252,7 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	)
 
 	currentState, ok := u.user.State.MessageStates[msgID]
-	if ok && newState != currentState && currentState.IsText() {
+	if ok && newState != state(currentState) && state(currentState).IsText() {
 		// If we got new state we should remove current pending text state
 		u.removeTextMessage(msgID)
 		upd.MessagesAwaitingText = u.user.State.MessagesAwaitingText
@@ -265,12 +265,12 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	}
 
 	if msgID == u.user.Messages.MainID {
-		u.user.State.Main = newState
-		upd.Main = &newState
+		u.user.State.Main = newState.String()
+		upd.Main = &u.user.State.Main
 	}
 
 	u.user.LastSeenTime = time.Now().UTC()
-	u.user.State.MessageStates[msgID] = newState
+	u.user.State.MessageStates[msgID] = newState.String()
 	u.user.Messages.LastActions[msgID] = u.user.LastSeenTime
 
 	upd.MessageStates = u.user.State.MessageStates
@@ -444,8 +444,8 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 	u.user.Messages.HistoryIDs = append(u.user.Messages.HistoryIDs, u.user.Messages.MainID)
 
 	if !newState.NotChanged() {
-		u.user.State.Main = newState
-		u.user.State.MessageStates[mainMsgID] = newState
+		u.user.State.Main = newState.String()
+		u.user.State.MessageStates[mainMsgID] = newState.String()
 	}
 
 	u.user.Messages.MainID = mainMsgID
@@ -473,8 +473,8 @@ func (u *userContextImpl) disable() {
 
 	u.user.DisabledTime = time.Now().UTC()
 	u.user.IsDisabled = true
-	u.user.State.Main = Disabled
-	u.user.State.MessageStates[u.user.Messages.MainID] = Disabled
+	u.user.State.Main = Disabled.String()
+	u.user.State.MessageStates[u.user.Messages.MainID] = Disabled.String()
 
 	u.db.Update(u.user.ID, &UserModelDiff{
 		State: &UserStateDiff{
@@ -493,8 +493,8 @@ func (u *userContextImpl) enable() {
 
 	u.user.DisabledTime = time.Time{}
 	u.user.IsDisabled = false
-	u.user.State.Main = FirstRequest
-	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest
+	u.user.State.Main = FirstRequest.String()
+	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest.String()
 
 	u.db.Update(u.user.ID, &UserModelDiff{
 		State: &UserStateDiff{
@@ -511,8 +511,8 @@ func newUserModel(tUser *tele.User) UserModel {
 		ID:   tUser.ID,
 		Info: newUserInfo(tUser),
 		State: UserState{
-			Main:          FirstRequest,
-			MessageStates: make(map[int]State),
+			Main:          FirstRequest.String(),
+			MessageStates: make(map[int]string),
 		},
 		Messages: UserMessages{
 			LastActions: make(map[int]time.Time),
