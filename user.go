@@ -568,7 +568,7 @@ func newUserManager(ctx context.Context, db UsersStorage, log Logger) (*userMana
 		log:   log,
 	}
 
-	err = m.initAllUsersFromDB(ctx)
+	err = m.loadAllUsersFromDB(ctx)
 	if err != nil {
 		return nil, errm.Wrap(err, "init all users")
 	}
@@ -651,7 +651,7 @@ func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (*us
 	return user, nil
 }
 
-func (m *userManagerImpl) initAllUsersFromDB(ctx context.Context) error {
+func (m *userManagerImpl) loadAllUsersFromDB(ctx context.Context) error {
 	users, err := m.db.FindAll(ctx)
 	switch {
 	case err == nil && len(users) == 0:
@@ -669,7 +669,7 @@ func (m *userManagerImpl) initAllUsersFromDB(ctx context.Context) error {
 		m.users.Set(u.ID, m.newUserContext(u))
 	}
 
-	m.log.Info("load users", "count", m.users.Size())
+	m.log.Info(fmt.Sprintf("load %d users from DB", m.users.Size()))
 
 	return nil
 }
