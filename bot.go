@@ -145,11 +145,6 @@ func (b *Bot) GetAllUsers() []User {
 	return b.um.getAllUsers()
 }
 
-// SetMessageProvider sets message provider.
-func (b *Bot) SetMessageProvider(msgs MessageProvider) {
-	b.msgs = msgs
-}
-
 // AddMiddleware adds middleware functions that will be called on each update.
 func (b *Bot) AddMiddleware(f ...MiddlewareFunc) {
 	b.middlewares.Append(f...)
@@ -171,9 +166,9 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 	})
 }
 
-// HandleText sets handler for text messages.
+// SetTextHandler sets handler for text messages.
 // You should provide a single handler for all text messages, that will call another handlers based on the state.
-func (b *Bot) HandleText(f HandlerFunc) {
+func (b *Bot) SetTextHandler(f HandlerFunc) {
 	b.bot.handle(tele.OnText, func(c tele.Context) (err error) {
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
 
@@ -186,8 +181,8 @@ func (b *Bot) HandleText(f HandlerFunc) {
 	})
 }
 
-// HandleStart sets handler for start command.
-func (b *Bot) HandleStart(h HandlerFunc, commands ...string) {
+// SetStartHandler sets handler for start command.
+func (b *Bot) SetStartHandler(h HandlerFunc, commands ...string) {
 	if len(commands) > 0 {
 		for _, c := range commands {
 			b.Handle(c, h)
@@ -195,6 +190,11 @@ func (b *Bot) HandleStart(h HandlerFunc, commands ...string) {
 		return
 	}
 	b.Handle("/start", h)
+}
+
+// SetMessageProvider sets message provider.
+func (b *Bot) SetMessageProvider(msgs MessageProvider) {
+	b.msgs = msgs
 }
 
 func (b *Bot) masterMiddleware(upd *tele.Update) bool {

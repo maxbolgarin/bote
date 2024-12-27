@@ -24,7 +24,7 @@ func main() {
 		panic(err)
 	}
 
-	b.HandleStart(func(ctx bote.Context) error {
+	b.SetStartHandler(func(ctx bote.Context) error {
 		kb := bote.InlineBuilder(3, bote.OneBytePerRune,
 			b.Btn("1", nil),
 			b.Btn("2", nil),
