@@ -465,9 +465,9 @@ func (c *contextImpl) DeleteAll(from int) {
 	if _, ok := deleted[msgs.ErrorID]; ok {
 		msgs.ErrorID = 0
 	}
-	for _, id := range msgs.HistoryIDs {
+	for ind, id := range msgs.HistoryIDs {
 		if _, ok := deleted[id]; ok {
-			msgs.HistoryIDs = append(msgs.HistoryIDs[:id], msgs.HistoryIDs[id+1:]...)
+			msgs.HistoryIDs = append(msgs.HistoryIDs[:ind], msgs.HistoryIDs[ind+1:]...)
 		}
 	}
 	c.user.setMessages(
