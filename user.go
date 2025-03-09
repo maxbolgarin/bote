@@ -14,7 +14,7 @@ import (
 
 // State is a user state in Telegram bot builded using this package.
 // User changes states when he makes actions, e.g. sends a message, clicks a button, etc.
-// State is connected to message, every Main and Info message has its own state.
+// State is connected to message, every Main and Info (history) message has its own state.
 // State is necessary for understanding user behavior and should be used in user init after bot restarting.
 // You should create states as constants in your application and pass it in Send or Edit methods as first argument.
 // States is generally changes in response to user actions inside handlers,

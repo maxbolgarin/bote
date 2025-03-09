@@ -115,9 +115,17 @@ func (b *Bot) newContext(c tele.Context) *contextImpl {
 	}
 }
 
-// NewContext creates a new context for the given user simulationg that callback button was pressed.
+func (b *Bot) newContextFromUpdate(upd tele.Update) *contextImpl {
+	return &contextImpl{
+		bt:   b,
+		ct:   b.bot.tbot.NewContext(upd),
+		user: b.um.getUser(getSender(&upd).ID),
+	}
+}
+
+// NewContext creates a new context for the given user simulating that callback button was pressed.
 // It creates a minimal update to handle all possible methods in [Context] without panics.
-// It can be useful if you want to start a handler without user action (by some ecternal event).
+// It can be useful if you want to start a handler without user action (by some external event).
 // Warning! IT WON'T WORK WITH TEXT HANDLERS. Use [NewContextText] instead.
 func NewContext(b *Bot, userID int64, callbackMsgID int, data ...string) Context {
 	upd := tele.Update{
@@ -133,9 +141,9 @@ func NewContext(b *Bot, userID int64, callbackMsgID int, data ...string) Context
 	}
 }
 
-// NewContextText creates a new context for the given user simulationg that text message was received.
+// NewContextText creates a new context for the given user simulating that text message was received.
 // It creates a minimal update to handle all possible methods in [Context] without panics.
-// It can be useful if you want to start a handler without user action (by some ecternal event).
+// It can be useful if you want to start a handler without user action (by some external event).
 // Warning! IT WON'T WORK WITH CALLBACK HANDLERS. Use [NewContext] instead.
 func NewContextText(b *Bot, userID int64, textMsgID int, text string) Context {
 	upd := tele.Update{

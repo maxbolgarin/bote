@@ -32,9 +32,9 @@ var (
 
 	// TODO: make length depends on number of buttons
 	runesInRow = map[RuneSizeType]int{
-		OneBytePerRune:   36,
-		TwoBytesPerRune:  20,
-		FourBytesPerRune: 16,
+		OneBytePerRune:   46,
+		TwoBytesPerRune:  40,
+		FourBytesPerRune: 32,
 	}
 )
 
@@ -140,7 +140,7 @@ func (k *Keyboard) Add(btns ...tele.Btn) *Keyboard {
 			if k.runesInCurrentRow+runesInBtn >= k.maxRunesInRow {
 				k.StartNewRow()
 			}
-			k.runesInCurrentRow = runesInBtn
+			k.runesInCurrentRow += runesInBtn
 		}
 
 		k.currentRow = append(k.currentRow, btn)

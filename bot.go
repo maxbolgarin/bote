@@ -42,6 +42,7 @@ type Bot struct {
 	defaultLanguageCode string
 
 	middlewares    *abstract.SafeSlice[MiddlewareFunc]
+	startHandler   HandlerFunc
 	deleteMessages bool
 }
 
@@ -93,6 +94,8 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 		bote.AddMiddleware(bote.logMiddleware)
 	}
 
+	bote.AddMiddleware(bote.startMiddleware)
+
 	return bote, nil
 }
 
@@ -100,15 +103,20 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 // It logs an error if something went wrong.
 // Context is used to handle init process, it is not using by the bot.
 // Don't forget to call Stop() to gracefully shutdown the bot.
-func (b *Bot) Start(ctx context.Context, stateMap map[State]InitBundle, startHandler InitBundle) {
+func (b *Bot) Start(ctx context.Context, startHandler InitBundle, stateMap map[State]InitBundle) {
 	tm := abstract.StartTimer()
 
 	rp := abstract.NewRateProcessor(ctx, maxInitTasksPerSecond)
 
 	users := b.um.getAllUsersContexts()
+	if len(users) == 0 {
+		b.bot.start()
+		return
+	}
+
 	for _, user := range users {
 		rp.AddTask(func(ctx context.Context) error {
-			err := b.initUser(user, stateMap, startHandler)
+			err := b.initUser(user, startHandler, stateMap)
 			if err != nil {
 				return errm.Wrap(err, "init", "user_id", user.ID())
 			}
@@ -183,6 +191,8 @@ func (b *Bot) SetTextHandler(f HandlerFunc) {
 
 // SetStartHandler sets handler for start command.
 func (b *Bot) SetStartHandler(h HandlerFunc, commands ...string) {
+	b.startHandler = h
+
 	if len(commands) > 0 {
 		for _, c := range commands {
 			b.Handle(c, h)
@@ -204,6 +214,10 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	defer cancel()
 
 	sender := getSender(upd)
+	if sender == nil {
+		b.bot.log.Error(fmt.Sprintf("cannot get sender from update: %+v", upd))
+		return false
+	}
 
 	user, err := b.um.prepareUser(ctx, sender)
 	if err != nil {
@@ -281,13 +295,24 @@ func (b *Bot) logMiddleware(upd *tele.Update, userRaw User) bool {
 	return true
 }
 
+func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
+	st := userRaw.StateMain()
+	switch st {
+	case FirstRequest:
+		if b.startHandler != nil {
+			b.startHandler(b.newContextFromUpdate(*upd))
+		}
+	}
+	return true
+}
+
 func userFields(user User, fields ...any) []any {
 	f := make([]any, 0, len(fields)+6)
 	f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.StateMain())
 	return append(f, fields...)
 }
 
-func (b *Bot) initUser(user *userContextImpl, stateMap map[State]InitBundle, startHandler InitBundle) error {
+func (b *Bot) initUser(user *userContextImpl, startHandler InitBundle, stateMap map[State]InitBundle) error {
 	msgsToInit := append(user.Messages().HistoryIDs, user.Messages().MainID)
 	for i, j := 0, len(msgsToInit)-1; i < j; i, j = i+1, j-1 {
 		msgsToInit[i], msgsToInit[j] = msgsToInit[j], msgsToInit[i] // reverse to init from first in msg list
@@ -314,15 +339,16 @@ func (b *Bot) initUser(user *userContextImpl, stateMap map[State]InitBundle, sta
 			bundle = startHandler
 		}
 
-		firstError := b.init(bundle, user, msgID, st)
-		if firstError != nil {
+		targetBundleErr := b.init(bundle, user, msgID, st)
+		if targetBundleErr != nil {
 			if !foundBundle {
-				errs.Wrap(firstError, "start handler", "msg_id", msgID, "state", st)
+				// start handler error here
+				errs.Wrap(targetBundleErr, "start handler", "msg_id", msgID, "state", st)
 				continue
 			}
-			secondError := b.init(startHandler, user, msgID, st)
-			if secondError != nil {
-				errs.Wrap(secondError, "start handler", "msg_id", msgID, "state", st, "first_error", firstError)
+			startHandlerErr := b.init(startHandler, user, msgID, st)
+			if startHandlerErr != nil {
+				errs.Wrap(startHandlerErr, "start handler", "msg_id", msgID, "state", st, "first_error", targetBundleErr)
 				continue
 			}
 		}
@@ -330,7 +356,7 @@ func (b *Bot) initUser(user *userContextImpl, stateMap map[State]InitBundle, sta
 	}
 
 	for _, msgID := range msgWithoutState {
-		b.bot.log.Debug("forget history message", "user_id", user.ID(), "msg_id", msgID)
+		b.bot.log.Debug("forget history message without state", "user_id", user.ID(), "msg_id", msgID)
 		user.forgetHistoryMessage(msgID)
 	}
 
