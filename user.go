@@ -3,6 +3,7 @@ package bote
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -197,8 +198,10 @@ func (u *UserModel) prepareAfterDB() {
 
 // userContextImpl implements User interface.
 type userContextImpl struct {
-	user UserModel
-	db   UsersStorage
+	user    UserModel
+	db      UsersStorage
+	btnName string
+	payload string
 }
 
 func (m *userManagerImpl) newUserContext(user UserModel) *userContextImpl {
@@ -373,7 +376,7 @@ func (u *userContextImpl) removeTextMessage(msgID int) {
 		return
 	}
 
-	u.user.State.MessagesAwaitingText = append(u.user.State.MessagesAwaitingText[:indexToRemove], u.user.State.MessagesAwaitingText[indexToRemove+1:]...)
+	u.user.State.MessagesAwaitingText = slices.Delete(u.user.State.MessagesAwaitingText, indexToRemove, indexToRemove+1)
 }
 
 func (u *userContextImpl) setMessages(msgIDs ...int) {
@@ -416,19 +419,37 @@ func (u *userContextImpl) setNotificationMessage(msgID int) {
 	})
 }
 
-func (u *userContextImpl) forgetHistoryMessage(msgID int) bool {
-	for i, id := range u.user.Messages.HistoryIDs {
-		if id == msgID {
-			u.user.Messages.HistoryIDs = append(u.user.Messages.HistoryIDs[:i], u.user.Messages.HistoryIDs[i+1:]...)
-			u.db.Update(u.user.ID, &UserModelDiff{
-				Messages: &UserMessagesDiff{
-					HistoryIDs: u.user.Messages.HistoryIDs,
-				},
-			})
-			return true
+func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
+	for _, msgIDToDelete := range msgIDs {
+		for i, historyID := range u.user.Messages.HistoryIDs {
+			if historyID != msgIDToDelete {
+				continue
+			}
+			u.user.Messages.HistoryIDs = slices.Delete(u.user.Messages.HistoryIDs, i, i+1)
+			delete(u.user.State.MessageStates, msgIDToDelete)
+			delete(u.user.Messages.LastActions, msgIDToDelete)
+
+			for j, textID := range u.user.State.MessagesAwaitingText {
+				if textID == msgIDToDelete {
+					u.user.State.MessagesAwaitingText = slices.Delete(u.user.State.MessagesAwaitingText, j, j+1)
+				}
+			}
+			found = true
 		}
 	}
-	return false
+	if found {
+		u.db.Update(u.user.ID, &UserModelDiff{
+			Messages: &UserMessagesDiff{
+				HistoryIDs:  u.user.Messages.HistoryIDs,
+				LastActions: u.user.Messages.LastActions,
+			},
+			State: &UserStateDiff{
+				MessageStates:        u.user.State.MessageStates,
+				MessagesAwaitingText: u.user.State.MessagesAwaitingText,
+			},
+		})
+	}
+	return found
 }
 
 func (u *userContextImpl) update(user *tele.User) {
@@ -517,6 +538,22 @@ func (u *userContextImpl) enable() {
 		DisabledTime: &u.user.DisabledTime,
 		IsDisabled:   &u.user.IsDisabled,
 	})
+}
+
+func (u *userContextImpl) getBtnName() string {
+	return u.btnName
+}
+
+func (u *userContextImpl) setBtnName(btnName string) {
+	u.btnName = btnName
+}
+
+func (u *userContextImpl) getPayload() string {
+	return u.payload
+}
+
+func (u *userContextImpl) setPayload(payload string) {
+	u.payload = payload
 }
 
 func newUserModel(tUser *tele.User) UserModel {

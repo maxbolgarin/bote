@@ -1,6 +1,7 @@
 package bote
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/maxbolgarin/lang"
@@ -233,23 +234,22 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 		return nil
 	}
 
+	if headMsg == "" {
+		return c.SendMain(newState, mainMsg, mainKb, opts...)
+	}
+
 	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(mainMsg, c.user, newState)
 
-	var headMsgID int
-	if headMsg != "" {
-		// Need copy to prevent from conflict in the next append because of using the same underlying array in opts
-		headOpts := lang.If(len(opts) > 0, append(lang.Copy(opts), headKb), []any{headKb})
-		headMsgID, err = c.bt.bot.send(c.user.ID(), headMsg, headOpts...)
-		if err != nil {
-			return c.handleError(err, headMsgID)
-		}
-	} else {
-		c.bt.bot.log.Warn("empty head message, use SendMain instead", userFields(c.user)...)
+	// Need copy to prevent from conflict in the next append because of using the same underlying array in opts
+	headOpts := lang.If(len(opts) > 0, append(lang.Copy(opts), headKb), []any{headKb})
+	headMsgID, err := c.bt.bot.send(c.user.ID(), headMsg, headOpts...)
+	if err != nil {
+		return c.prepareError(err, headMsgID)
 	}
 
 	mainMsgID, err := c.bt.bot.send(c.user.ID(), mainMsg, append(opts, mainKb)...)
 	if err != nil {
-		return c.handleError(err, mainMsgID)
+		return c.prepareError(err, mainMsgID)
 	}
 
 	if headMsgID := c.user.Messages().HeadID; headMsgID != 0 {
@@ -272,7 +272,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(msg, c.user, newState)
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, kb)...)
 	if err != nil {
-		return c.handleError(err, msgID)
+		return c.prepareError(err, msgID)
 	}
 
 	if headMsgID := c.user.Messages().HeadID; headMsgID != 0 {
@@ -294,7 +294,7 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, kb)...)
 	if err != nil {
-		return c.handleError(err, msgID)
+		return c.prepareError(err, msgID)
 	}
 	c.user.setNotificationMessage(msgID)
 
@@ -318,19 +318,19 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 		return nil
 	}
 	if headMsg == "" && headKb == nil {
-		c.bt.bot.log.Warn("empty head message, use EditMain instead", userFields(c.User())...)
+		return c.EditMain(newState, mainMsg, mainKb, opts...)
 	}
 
 	msgIDs := c.user.Messages()
 
 	headOpts := lang.If(len(opts) > 0, append(lang.Copy(opts), headKb), []any{headKb})
 	if err := c.edit(msgIDs.HeadID, headMsg, headKb, headOpts...); err != nil {
-		return c.handleError(err, msgIDs.HeadID)
+		return c.prepareEditError(err, msgIDs.HeadID)
 	}
 
 	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(mainMsg, c.user, newState)
 	if err := c.edit(msgIDs.MainID, mainMsg, mainKb, opts...); err != nil {
-		return c.handleError(err, msgIDs.MainID)
+		return c.prepareEditError(err, msgIDs.MainID)
 	}
 
 	c.user.setState(newState)
@@ -348,7 +348,7 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 
 	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(msg, c.user, newState)
 	if err := c.edit(msgIDs.MainID, msg, kb, opts...); err != nil {
-		return c.handleError(err, msgIDs.MainID)
+		return c.prepareEditError(err, msgIDs.MainID)
 	}
 
 	c.user.setState(newState)
@@ -365,7 +365,7 @@ func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 	msgIDs := c.user.Messages()
 
 	if err := c.edit(msgIDs.MainID, "", kb, opts...); err != nil {
-		return c.handleError(err, msgIDs.MainID)
+		return c.prepareEditError(err, msgIDs.MainID)
 	}
 
 	return nil
@@ -379,7 +379,7 @@ func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tel
 
 	msg = c.bt.msgs.Messages(c.user.Language()).PrepareHistoryMessage(msg, c.user, newState, msgID)
 	if err := c.edit(msgID, msg, kb, opts...); err != nil {
-		return c.handleError(err, msgID)
+		return c.prepareEditError(err, msgID)
 	}
 
 	c.user.setState(newState, msgID)
@@ -394,7 +394,7 @@ func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, op
 	}
 
 	if err := c.edit(msgID, "", kb, opts...); err != nil {
-		return c.handleError(err, msgID)
+		return c.prepareEditError(err, msgID)
 	}
 
 	return nil
@@ -409,7 +409,7 @@ func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) er
 	msgIDs := c.user.Messages()
 
 	if err := c.edit(msgIDs.HeadID, msg, kb, opts...); err != nil {
-		return c.handleError(err, msgIDs.HeadID)
+		return c.prepareEditError(err, msgIDs.HeadID)
 	}
 
 	return nil
@@ -424,7 +424,7 @@ func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 	msgIDs := c.user.Messages()
 
 	if err := c.edit(msgIDs.HeadID, "", kb, opts...); err != nil {
-		return c.handleError(err, msgIDs.HeadID)
+		return c.prepareEditError(err, msgIDs.HeadID)
 	}
 
 	return nil
@@ -434,7 +434,7 @@ func (c *contextImpl) DeleteHistory(msgID int) error {
 	for _, id := range c.User().Messages().HistoryIDs {
 		if id == msgID {
 			if err := c.bt.bot.delete(c.user.ID(), msgID); err != nil {
-				return c.handleError(err, msgID)
+				return c.prepareError(err, msgID)
 			}
 			c.user.forgetHistoryMessage(msgID)
 		}
@@ -444,7 +444,7 @@ func (c *contextImpl) DeleteHistory(msgID int) error {
 
 func (c *contextImpl) DeleteNotification() error {
 	if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
-		return c.handleError(err, c.user.Messages().NotificationID)
+		return c.prepareError(err, c.user.Messages().NotificationID)
 	}
 	c.user.setNotificationMessage(0)
 	return nil
@@ -452,7 +452,7 @@ func (c *contextImpl) DeleteNotification() error {
 
 func (c *contextImpl) DeleteError() error {
 	if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().ErrorID); err != nil {
-		return c.handleError(err, c.user.Messages().ErrorID)
+		return c.prepareError(err, c.user.Messages().ErrorID)
 	}
 	c.user.setErrorMessage(0)
 	return nil
@@ -473,11 +473,15 @@ func (c *contextImpl) DeleteAll(from int) {
 	if _, ok := deleted[msgs.ErrorID]; ok {
 		msgs.ErrorID = 0
 	}
-	for ind, id := range msgs.HistoryIDs {
+
+	historyIDsToDelete := make([]int, 0, len(msgs.HistoryIDs))
+	for _, id := range msgs.HistoryIDs {
 		if _, ok := deleted[id]; ok {
-			msgs.HistoryIDs = append(msgs.HistoryIDs[:ind], msgs.HistoryIDs[ind+1:]...)
+			historyIDsToDelete = append(historyIDsToDelete, id)
 		}
 	}
+	c.user.forgetHistoryMessage(historyIDsToDelete...)
+
 	c.user.setMessages(
 		append(
 			append(
@@ -486,7 +490,23 @@ func (c *contextImpl) DeleteAll(from int) {
 			msgs.HistoryIDs...)...)
 }
 
-func (c *contextImpl) handleError(err error, msgIDRaw ...int) error {
+func (c *contextImpl) prepareError(err error, msgID int) error {
+	c.Set("msg_id", strconv.Itoa(msgID))
+	return err
+}
+
+func (c *contextImpl) prepareEditError(err error, msgID int) error {
+	err = c.prepareError(err, msgID)
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "message is not modified") {
+		return nil
+	}
+	return err
+}
+
+func (c *contextImpl) handleError(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -496,16 +516,23 @@ func (c *contextImpl) handleError(err error, msgIDRaw ...int) error {
 		return nil
 	}
 
+	if strings.Contains(err.Error(), "is not modified") {
+		return nil
+	}
+
 	if strings.Contains(err.Error(), "message to edit not found") {
-		if len(msgIDRaw) == 0 {
+		msgIDRaw := c.Get("msg_id")
+		if msgIDRaw == "" {
 			c.bt.bot.log.Warn("message to edit not found", userFields(c.user)...)
 			return nil
 		}
 
-		msgID := msgIDRaw[0]
-		if c.user.forgetHistoryMessage(msgID) {
-			c.bt.bot.log.Warn("history message not found", userFields(c.user, "message_id", msgID)...)
-			return nil
+		msgID, err := strconv.Atoi(msgIDRaw)
+		if err == nil {
+			if c.user.forgetHistoryMessage(msgID) {
+				c.bt.bot.log.Warn("history message not found", userFields(c.user, "message_id", msgID)...)
+				return nil
+			}
 		}
 
 		msgs := c.user.Messages()
@@ -526,11 +553,19 @@ func (c *contextImpl) handleError(err error, msgIDRaw ...int) error {
 		return nil
 	}
 
+	if strings.Contains(err.Error(), "reset by peer") {
+		c.bt.bot.log.Warn("connection error", userFields(c.user, "error", err)...)
+		return nil
+	}
+
 	// TODO: handle other errors
 
 	c.bt.bot.log.Error("handler", userFields(c.user, "error", err)...)
 
 	errorMsgID, _ := c.bt.bot.send(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError())
+	if c.user.Messages().ErrorID != 0 {
+		c.bt.bot.delete(c.user.ID(), c.user.Messages().ErrorID)
+	}
 	c.user.setErrorMessage(errorMsgID)
 
 	return nil

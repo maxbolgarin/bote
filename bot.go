@@ -44,6 +44,7 @@ type Bot struct {
 	middlewares    *abstract.SafeSlice[MiddlewareFunc]
 	startHandler   HandlerFunc
 	deleteMessages bool
+	logUpdates     bool
 }
 
 // New creates the bot with optional options.
@@ -84,16 +85,12 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 		defaultLanguageCode: opts.Config.DefaultLanguageCode,
 		middlewares:         abstract.NewSafeSlice[MiddlewareFunc](),
 		deleteMessages:      *opts.Config.DeleteMessages,
+		logUpdates:          *opts.Config.LogUpdates,
 	}
 
 	b.addMiddleware(bote.masterMiddleware)
-
 	bote.AddMiddleware(bote.cleanMiddleware)
-
-	if *opts.Config.LogUpdates {
-		bote.AddMiddleware(bote.logMiddleware)
-	}
-
+	//bote.AddMiddleware(bote.logUpdate)
 	bote.AddMiddleware(bote.startMiddleware)
 
 	return bote, nil
@@ -164,12 +161,21 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
 
 		ctx := b.newContext(c)
+		defer func() {
+			if b.logUpdates {
+				upd := c.Update()
+				b.logUpdate(&upd, ctx.user)
+			}
+		}()
+
 		if err = f(ctx); err != nil {
 			return ctx.handleError(err)
 		}
+
 		if c.Callback() != nil {
 			c.Respond(&tele.CallbackResponse{})
 		}
+
 		return nil
 	})
 }
@@ -181,9 +187,17 @@ func (b *Bot) SetTextHandler(f HandlerFunc) {
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
 
 		ctx := b.newContext(c)
+		defer func() {
+			if b.logUpdates {
+				upd := c.Update()
+				b.logUpdate(&upd, ctx.user)
+			}
+		}()
+
 		if !ctx.user.hasTextMessages() {
 			return nil
 		}
+
 		ctx.textMsgID = ctx.user.lastTextMessage()
 		return ctx.handleError(f(ctx))
 	})
@@ -243,14 +257,21 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 		b.bot.delete(user.ID(), upd.Message.ID)
 	}
 
+	if upd.Callback != nil {
+		if match := cbackRx.FindAllStringSubmatch(upd.Callback.Data, -1); match != nil {
+			user.setBtnName(parseBtnUnique(match[0][1]))
+			user.setPayload(match[0][3])
+		}
+	}
+
 	// TODO: sanitize
 
 	return true
 }
 
-var cbackRx = regexp.MustCompile(`^\f([-\w]+)(\|(.+))?$`)
+var cbackRx = regexp.MustCompile(`([-\w]+)(\|(.+))?`)
 
-func (b *Bot) logMiddleware(upd *tele.Update, userRaw User) bool {
+func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
 	user := userRaw.(*userContextImpl)
 
 	fields := make([]any, 0, 7)
@@ -270,23 +291,18 @@ func (b *Bot) logMiddleware(upd *tele.Update, userRaw User) bool {
 		b.rlog.Log(MessageUpdate, fields...)
 
 	case upd.Callback != nil:
-		var (
-			payload = upd.Callback.Data
-			button  string
-		)
 		if upd.Callback.Message != nil {
 			st, _ := user.State(upd.Callback.Message.ID)
+			if st.NotChanged() {
+				st = user.StateMain()
+			}
 			fields = append(fields, "state", st, "msg_id", upd.Callback.Message.ID)
 		} else {
 			fields = append(fields, "state", user.StateMain())
 		}
 
-		if match := cbackRx.FindAllStringSubmatch(payload, -1); match != nil {
-			button, payload = match[0][1], match[0][3]
-			button = parseBtnUnique(button)
-			fields = lang.AppendIfAll(fields, "button", any(button))
-		}
-		fields = lang.AppendIfAll(fields, "payload", any(payload))
+		fields = append(fields, "button", any(user.getBtnName()))
+		fields = append(fields, "payload", any(user.getPayload()))
 
 		b.rlog.Log(CallbackUpdate, fields...)
 		return true
@@ -384,6 +400,10 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 		user: user,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "is not modified") {
+			b.bot.log.Debug("message is not modified in init", "user_id", user.ID(), "msg_id", msgID)
+			return nil
+		}
 		return errm.Wrap(err, "run handler")
 	}
 
