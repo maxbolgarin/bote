@@ -302,7 +302,7 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 }
 
 func (c *contextImpl) SendError(msg string, opts ...any) error {
-	msgID, err := c.bt.bot.send(c.user.ID(), msg, opts...)
+	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, tele.Silent)...)
 	if err != nil {
 		c.bt.bot.log.Error("failed to send error message", userFields(c.user)...)
 		return nil
@@ -443,6 +443,9 @@ func (c *contextImpl) DeleteHistory(msgID int) error {
 }
 
 func (c *contextImpl) DeleteNotification() error {
+	if c.user.Messages().NotificationID == 0 {
+		return nil
+	}
 	if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
 		return c.prepareError(err, c.user.Messages().NotificationID)
 	}
@@ -451,6 +454,9 @@ func (c *contextImpl) DeleteNotification() error {
 }
 
 func (c *contextImpl) DeleteError() error {
+	if c.user.Messages().ErrorID == 0 {
+		return nil
+	}
 	if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().ErrorID); err != nil {
 		return c.prepareError(err, c.user.Messages().ErrorID)
 	}
@@ -530,24 +536,24 @@ func (c *contextImpl) handleError(err error) error {
 		msgID, err := strconv.Atoi(msgIDRaw)
 		if err == nil {
 			if c.user.forgetHistoryMessage(msgID) {
-				c.bt.bot.log.Warn("history message not found", userFields(c.user, "message_id", msgID)...)
+				c.bt.bot.log.Warn("history message not found", userFields(c.user, "msg_id", msgID)...)
 				return nil
 			}
 		}
 
 		msgs := c.user.Messages()
 		if msgID == msgs.MainID || msgID == msgs.HeadID {
-			c.bt.bot.log.Warn("main/head message not found", userFields(c.user, "message_id", msgID)...)
+			c.bt.bot.log.Warn("main/head message not found", userFields(c.user, "msg_id", msgID)...)
 
 			errorMsgID, _ := c.bt.bot.send(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).FatalError())
 			c.user.setErrorMessage(errorMsgID)
 		}
 		if msgID == msgs.NotificationID {
-			c.bt.bot.log.Warn("notification message not found", userFields(c.user, "message_id", msgID)...)
+			c.bt.bot.log.Warn("notification message not found", userFields(c.user, "msg_id", msgID)...)
 			c.user.setNotificationMessage(0)
 		}
 		if msgID == msgs.ErrorID {
-			c.bt.bot.log.Warn("error message not found", userFields(c.user, "message_id", msgID)...)
+			c.bt.bot.log.Warn("error message not found", userFields(c.user, "msg_id", msgID)...)
 			c.user.setErrorMessage(0)
 		}
 		return nil
@@ -562,7 +568,7 @@ func (c *contextImpl) handleError(err error) error {
 
 	c.bt.bot.log.Error("handler", userFields(c.user, "error", err)...)
 
-	errorMsgID, _ := c.bt.bot.send(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError())
+	errorMsgID, _ := c.bt.bot.send(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError(), tele.Silent)
 	if c.user.Messages().ErrorID != 0 {
 		c.bt.bot.delete(c.user.ID(), c.user.Messages().ErrorID)
 	}

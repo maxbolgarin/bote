@@ -425,7 +425,9 @@ func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
 			if historyID != msgIDToDelete {
 				continue
 			}
-			u.user.Messages.HistoryIDs = slices.Delete(u.user.Messages.HistoryIDs, i, i+1)
+			if i < len(u.user.Messages.HistoryIDs) {
+				u.user.Messages.HistoryIDs = slices.Delete(u.user.Messages.HistoryIDs, i, i+1)
+			}
 			delete(u.user.State.MessageStates, msgIDToDelete)
 			delete(u.user.Messages.LastActions, msgIDToDelete)
 
