@@ -42,6 +42,7 @@ type Bot struct {
 	defaultLanguageCode string
 
 	middlewares    *abstract.SafeSlice[MiddlewareFunc]
+	stateMap       *abstract.SafeMap[string, InitBundle]
 	startHandler   HandlerFunc
 	deleteMessages bool
 	logUpdates     bool
@@ -66,7 +67,7 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 		return nil, errm.Wrap(err, "prepare opts")
 	}
 
-	um, err := newUserManager(ctx, opts.UserDB, opts.Logger)
+	um, err := newUserManager(opts.UserDB, opts.Logger)
 	if err != nil {
 		return nil, errm.Wrap(err, "new user manager")
 	}
@@ -84,49 +85,34 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 
 		defaultLanguageCode: opts.Config.DefaultLanguageCode,
 		middlewares:         abstract.NewSafeSlice[MiddlewareFunc](),
+		stateMap:            abstract.NewSafeMap[string, InitBundle](),
 		deleteMessages:      *opts.Config.DeleteMessages,
 		logUpdates:          *opts.Config.LogUpdates,
 	}
 
 	b.addMiddleware(bote.masterMiddleware)
 	bote.AddMiddleware(bote.cleanMiddleware)
-	//bote.AddMiddleware(bote.logUpdate)
 	bote.AddMiddleware(bote.startMiddleware)
+
+	// To trigger initUserHandler on callback (there is no registered handlers if user is not inited)
+	bote.Handle(tele.OnCallback, bote.emptyHandler)
 
 	return bote, nil
 }
 
-// Start inits all users of the bot with provided stateMap. Then it starts the bot in a separate goroutine.
-// It logs an error if something went wrong.
-// Context is used to handle init process, it is not using by the bot.
+// Start starts the bot in a separate goroutine.
+// StartHandler is a handler for /start command.
+// StateMap is a map for initing users after bot restart.
+// It runs an assigned handler for every active user message when user makes a request by message's state.
+// Inline buttons will trigger onCallback handler if you don't init them after bot restart.
+// You can pass nil map if you don't need to reinit messages.
 // Don't forget to call Stop() to gracefully shutdown the bot.
-func (b *Bot) Start(ctx context.Context, startHandler InitBundle, stateMap map[State]InitBundle) {
-	tm := abstract.StartTimer()
-
-	rp := abstract.NewRateProcessor(ctx, maxInitTasksPerSecond)
-
-	users := b.um.getAllUsersContexts()
-	if len(users) == 0 {
-		b.bot.start()
-		return
+func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[State]InitBundle) {
+	b.startHandler = startHandler
+	for k, v := range stateMap {
+		b.stateMap.Set(k.String(), v)
 	}
-
-	for _, user := range users {
-		rp.AddTask(func(ctx context.Context) error {
-			err := b.initUser(user, startHandler, stateMap)
-			if err != nil {
-				return errm.Wrap(err, "init", "user_id", user.ID())
-			}
-			return nil
-		})
-	}
-	errs := rp.Wait()
-	if len(errs) > 0 {
-		b.bot.log.Error(fmt.Sprintf("there are errors for %d users in init", len(errs)), "errors", errs)
-	}
-
-	b.bot.log.Info(fmt.Sprintf("inited %d users at startup, elapsed_time: %s", len(users)-len(errs), tm.ElapsedTime()))
-
+	b.Handle("/start", b.startHandler)
 	b.bot.start()
 }
 
@@ -145,7 +131,7 @@ func (b *Bot) GetUser(userID int64) User {
 	return b.um.getUser(userID)
 }
 
-// GetAllUsers returns all users.
+// GetAllUsers returns all loaded users.
 func (b *Bot) GetAllUsers() []User {
 	return b.um.getAllUsers()
 }
@@ -168,6 +154,19 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			}
 		}()
 
+		if !ctx.user.isInited.Load() && b.stateMap.Len() > 0 {
+			if err := b.initUserHandler(ctx); err != nil {
+				return ctx.handleError(err)
+			}
+		}
+
+		if ep, ok := endpoint.(string); ok && ep == tele.OnText {
+			if !ctx.user.hasTextMessages() {
+				return nil
+			}
+			ctx.textMsgID = ctx.user.lastTextMessage()
+		}
+
 		if err = f(ctx); err != nil {
 			return ctx.handleError(err)
 		}
@@ -182,43 +181,49 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 
 // SetTextHandler sets handler for text messages.
 // You should provide a single handler for all text messages, that will call another handlers based on the state.
-func (b *Bot) SetTextHandler(f HandlerFunc) {
-	b.bot.handle(tele.OnText, func(c tele.Context) (err error) {
-		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
-
-		ctx := b.newContext(c)
-		defer func() {
-			if b.logUpdates {
-				upd := c.Update()
-				b.logUpdate(&upd, ctx.user)
-			}
-		}()
-
-		if !ctx.user.hasTextMessages() {
-			return nil
-		}
-
-		ctx.textMsgID = ctx.user.lastTextMessage()
-		return ctx.handleError(f(ctx))
-	})
-}
-
-// SetStartHandler sets handler for start command.
-func (b *Bot) SetStartHandler(h HandlerFunc, commands ...string) {
-	b.startHandler = h
-
-	if len(commands) > 0 {
-		for _, c := range commands {
-			b.Handle(c, h)
-		}
-		return
-	}
-	b.Handle("/start", h)
+func (b *Bot) SetTextHandler(handler HandlerFunc) {
+	b.Handle(tele.OnText, handler)
 }
 
 // SetMessageProvider sets message provider.
 func (b *Bot) SetMessageProvider(msgs MessageProvider) {
 	b.msgs = msgs
+}
+
+func (b *Bot) initUserHandler(ctx *contextImpl) error {
+	defer ctx.user.isInited.Store(true)
+
+	if err := b.initUser(ctx.user); err != nil {
+		return err
+	}
+
+	btnID := ctx.ButtonID()
+	if btnID == "" {
+		return nil
+	}
+
+	targetHandler, ok := ctx.user.buttonMap.Lookup(btnID)
+	if !ok {
+		b.bot.log.Warn("button handler not found", "user_id", ctx.user.ID(), "button_id", btnID)
+		return nil
+	}
+
+	upd := tele.Update{
+		Callback: &tele.Callback{
+			Message: &tele.Message{ID: ctx.MessageID()},
+			Data:    targetHandler.Data,
+		},
+	}
+
+	return targetHandler.Handler(&contextImpl{
+		bt:   b,
+		ct:   b.bot.tbot.NewContext(upd),
+		user: ctx.user,
+	})
+}
+
+func (b *Bot) emptyHandler(ctx Context) error {
+	return nil
 }
 
 func (b *Bot) masterMiddleware(upd *tele.Update) bool {
@@ -259,7 +264,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 
 	if upd.Callback != nil {
 		if match := cbackRx.FindAllStringSubmatch(upd.Callback.Data, -1); match != nil {
-			user.setBtnName(parseBtnUnique(match[0][1]))
+			user.setBtnName(getNameFromUnique(match[0][1]))
 			user.setPayload(match[0][3])
 		}
 	}
@@ -328,15 +333,10 @@ func userFields(user User, fields ...any) []any {
 	return append(f, fields...)
 }
 
-func (b *Bot) initUser(user *userContextImpl, startHandler InitBundle, stateMap map[State]InitBundle) error {
+func (b *Bot) initUser(user *userContextImpl) error {
 	msgsToInit := append(user.Messages().HistoryIDs, user.Messages().MainID)
 	for i, j := 0, len(msgsToInit)-1; i < j; i, j = i+1, j-1 {
 		msgsToInit[i], msgsToInit[j] = msgsToInit[j], msgsToInit[i] // reverse to init from first in msg list
-	}
-
-	preparedMap := make(map[string]InitBundle, len(stateMap)+1)
-	for k, v := range stateMap {
-		preparedMap[k.String()] = v
 	}
 
 	errs := errm.NewList()
@@ -349,20 +349,24 @@ func (b *Bot) initUser(user *userContextImpl, startHandler InitBundle, stateMap 
 			continue
 		}
 
-		bundle, foundBundle := preparedMap[st.String()]
+		bundle, foundBundle := b.stateMap.Lookup(st.String())
 		if !foundBundle {
 			b.bot.log.Warn("init bundle not found", "user_id", user.ID(), "msg_id", msgID, "state", st)
-			bundle = startHandler
+			bundle = InitBundle{
+				Handler: b.startHandler,
+			}
 		}
 
 		targetBundleErr := b.init(bundle, user, msgID, st)
 		if targetBundleErr != nil {
 			if !foundBundle {
-				// start handler error here
+				// got error by startHandler
 				errs.Wrap(targetBundleErr, "start handler", "msg_id", msgID, "state", st)
 				continue
 			}
-			startHandlerErr := b.init(startHandler, user, msgID, st)
+			startHandlerErr := b.init(InitBundle{
+				Handler: b.startHandler,
+			}, user, msgID, st)
 			if startHandlerErr != nil {
 				errs.Wrap(startHandlerErr, "start handler", "msg_id", msgID, "state", st, "first_error", targetBundleErr)
 				continue

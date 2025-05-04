@@ -21,6 +21,9 @@ type Context interface {
 	// If handler was called from a text message, message is the one with an active text handler (not sent message!).
 	MessageID() int
 
+	// ButtonID returns an ID of the pressed callback button.
+	ButtonID() string
+
 	// Data returns callback button data. If there are many items in data, they will be separated by '|'.
 	Data() string
 
@@ -105,6 +108,11 @@ type Context interface {
 
 	// DeleteAll deletes all messages of the user from the specified ID.
 	DeleteAll(from int)
+
+	// Btn creates button and registers handler for it. You can provide data for the button.
+	// Data items will be separated by '|' in a single data string.
+	// Button unique value is generated from hexing button name with 10 random bytes at the end.
+	Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn
 }
 
 func (b *Bot) newContext(c tele.Context) *contextImpl {
@@ -189,6 +197,16 @@ func (c *contextImpl) MessageID() int {
 	return lang.Deref(c.ct.Message()).ID
 }
 
+func (c *contextImpl) ButtonID() string {
+	if cb := c.ct.Callback(); cb != nil {
+		if cb.Unique != "" {
+			return getIDFromUnique(cb.Unique)
+		}
+		return getIDFromUnparsedData(cb.Data)
+	}
+	return ""
+}
+
 func (c *contextImpl) Data() string {
 	if cb := c.ct.Callback(); cb != nil {
 		return cb.Data
@@ -238,7 +256,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 		return c.SendMain(newState, mainMsg, mainKb, opts...)
 	}
 
-	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(mainMsg, c.user, newState)
+	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMessage(mainMsg, c.user, newState, 0, false)
 
 	// Need copy to prevent from conflict in the next append because of using the same underlying array in opts
 	headOpts := lang.If(len(opts) > 0, append(lang.Copy(opts), headKb), []any{headKb})
@@ -269,7 +287,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 		return nil
 	}
 
-	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(msg, c.user, newState)
+	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMessage(msg, c.user, newState, 0, false)
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, kb)...)
 	if err != nil {
 		return c.prepareError(err, msgID)
@@ -328,7 +346,7 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 		return c.prepareEditError(err, msgIDs.HeadID)
 	}
 
-	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(mainMsg, c.user, newState)
+	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMessage(mainMsg, c.user, newState, msgIDs.MainID, false)
 	if err := c.edit(msgIDs.MainID, mainMsg, mainKb, opts...); err != nil {
 		return c.prepareEditError(err, msgIDs.MainID)
 	}
@@ -346,7 +364,7 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 
 	msgIDs := c.user.Messages()
 
-	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMainMessage(msg, c.user, newState)
+	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMessage(msg, c.user, newState, msgIDs.MainID, false)
 	if err := c.edit(msgIDs.MainID, msg, kb, opts...); err != nil {
 		return c.prepareEditError(err, msgIDs.MainID)
 	}
@@ -377,7 +395,7 @@ func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tel
 		return nil
 	}
 
-	msg = c.bt.msgs.Messages(c.user.Language()).PrepareHistoryMessage(msg, c.user, newState, msgID)
+	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMessage(msg, c.user, newState, msgID, true)
 	if err := c.edit(msgID, msg, kb, opts...); err != nil {
 		return c.prepareEditError(err, msgID)
 	}

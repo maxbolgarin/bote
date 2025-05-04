@@ -1,2 +1,3 @@
 # bote
-Golang Telebot.v3 wrapper for easy Telegram bot building 
+
+Golang Telebot.v4 wrapper for easy Telegram bot building 

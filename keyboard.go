@@ -39,7 +39,7 @@ var (
 )
 
 // ButtonBuilder is an interface for creating buttons.
-// Use this interface to provide [Bot] to handlers without "admin" methods like [Bot.AddMiddleware] or [Bot.Stop].
+// Use this interface to provide [Context] to handlers without other methods.
 type ButtonBuilder interface {
 	Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn
 }
@@ -47,14 +47,20 @@ type ButtonBuilder interface {
 // Btn creates button and registers handler for it. You can provide data for the button.
 // Data items will be separated by '|' in a single data string.
 // Button unique value is generated from hexing button name with 10 random bytes at the end.
-func (b *Bot) Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn {
+func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn {
+	id, unique := getBtnIDAndUnique(name)
+	data := CreateBtnData(dataList...)
 	btn := tele.Btn{
 		Text:   name,
-		Unique: getBtnUnique(name),
-		Data:   CreateBtnData(dataList...),
+		Unique: unique,
+		Data:   data,
 	}
 	if callback != nil {
-		b.Handle(&btn, callback)
+		ctx.bt.Handle(&btn, callback)
+		ctx.user.buttonMap.Set(id, InitBundle{
+			Handler: callback,
+			Data:    data,
+		})
 	}
 	return btn
 }
@@ -219,6 +225,35 @@ func (k *Keyboard) CreateReplyMarkup(oneTime bool) *tele.ReplyMarkup {
 	return &selector
 }
 
+type KeyboardWithContext struct {
+	*Keyboard
+	ctx Context
+}
+
+// NewKeyboardWithContext creates new keyboard builder with context.
+// With context you can create buttons using keyboard.
+func NewKeyboardWithContext(ctx Context, optionalRowLen ...int) *KeyboardWithContext {
+	return &KeyboardWithContext{
+		Keyboard: NewKeyboard(optionalRowLen...),
+		ctx:      ctx,
+	}
+}
+
+// Add creates and adds button to the current row.
+// It creates a new row in Add if number of buttons is greater than max buttons in row.
+// It creates a new row in Add if number of runes is greater than max runes in row for selected rune type.
+func (k *KeyboardWithContext) AddBtn(name string, callback HandlerFunc, dataList ...string) *Keyboard {
+	btn := k.ctx.Btn(name, callback, dataList...)
+	return k.Keyboard.Add(btn)
+}
+
+// AddRow creates and adds button to the current row.
+// It creates a new row if there is buttons in the current row after Add.
+func (k *KeyboardWithContext) AddBtnRow(name string, callback HandlerFunc, dataList ...string) *Keyboard {
+	btn := k.ctx.Btn(name, callback, dataList...)
+	return k.Keyboard.AddRow(btn)
+}
+
 // Inline creates inline keyboard from provided rows of buttons.
 func Inline(rowLength int, btns ...tele.Btn) *tele.ReplyMarkup {
 	keyboard := NewKeyboard(rowLength)
@@ -257,29 +292,48 @@ func RemoveKeyboard() *tele.ReplyMarkup {
 
 const (
 	// maxBytesInUnique is the maximum number of bytes that can be used in button unique value
-	maxBytesInUnique = 38
+	maxBytesInUnique = 28
 	// randBytesInUnique is the number of random bytes in unique button value
-	randBytesInUnique = 10
-	// nameBytesInUnique is the maximum length of name in unique button value
-	nameBytesInUnique = maxBytesInUnique - randBytesInUnique
+	randBytesInUnique = 4
+	// idBytesInUnique is the maximum length of name in unique button value
+	idBytesInUnique = maxBytesInUnique - randBytesInUnique
+
+	// Max bytes in data - 64
+	// Telebots makes "\f<callback_name>|<data>"
+	// So unique + data == 60 bytes
+	// Remain to data 32 bytes
 )
 
-func getBtnUnique(name string) string {
+func getBtnIDAndUnique(name string) (id string, unique string) {
 	var (
-		nameHex = hex.EncodeToString([]byte(name))
-		rnd     = abstract.GetRandomString(randBytesInUnique)
+		btnID = hex.EncodeToString([]byte(name))
+		rnd   = abstract.GetRandomString(randBytesInUnique)
 	)
-	if len(nameHex) > nameBytesInUnique {
-		nameHex = nameHex[:nameBytesInUnique]
+	if len(btnID) > idBytesInUnique {
+		btnID = btnID[:idBytesInUnique]
 	}
-	return nameHex + rnd
+	return btnID, btnID + rnd
 }
 
-func parseBtnUnique(unique string) string {
+func getNameFromUnique(unique string) string {
 	notRand := unique[:len(unique)-randBytesInUnique]
 	raw, err := hex.DecodeString(notRand)
 	if err != nil {
 		return unique
 	}
 	return string(raw)
+}
+
+func getIDFromUnique(unique string) string {
+	if len(unique) < randBytesInUnique {
+		return unique
+	}
+	return unique[:len(unique)-randBytesInUnique]
+}
+
+func getIDFromUnparsedData(data string) string {
+	if match := cbackRx.FindAllStringSubmatch(data, -1); match != nil {
+		return getIDFromUnique(match[0][1])
+	}
+	return getIDFromUnique(data)
 }

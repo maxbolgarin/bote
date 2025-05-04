@@ -23,11 +23,10 @@ type Messages interface {
 	// It generally offers the user to press /start to restart the bot.
 	FatalError() string
 
-	// PrepareMainMessage calls before every Send, SendMain, Edit or EditMain for the main message.
-	PrepareMainMessage(main string, u User, newState State) string
-
-	// PrepareHistoryMessage calls before every EditHistory for the history message.
-	PrepareHistoryMessage(main string, u User, newState State, msgID int) string
+	// PrepareMessage calls before every Send, SendMain, Edit, EditMain or EditHistory.
+	// Provide zero msgID in Send and SendMain methods.
+	// If isHistorical is true, it means that the message is a history message called by EditHistory.
+	PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string
 }
 
 // Format is a type of message formatting in Telegram in HTML format.
@@ -174,33 +173,25 @@ func (d ruMessages) GeneralError() string {
 }
 
 func (d ruMessages) FatalError() string {
-	return "Произошла внутренняя ошибка!\nНажмите /start, чтобы восстановить бота"
+	return "Произошла внутренняя ошибка!\nНажмите /start для восстановления бота"
 }
 
-func (d ruMessages) PrepareMainMessage(main string, u User, newState State) string {
-	return main
-}
-
-func (d ruMessages) PrepareHistoryMessage(main string, u User, newState State, msgID int) string {
-	return main
+func (d ruMessages) PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string {
+	return msg
 }
 
 type enMessages struct{}
 
 func (d enMessages) GeneralError() string {
-	return "There is an error"
+	return "There is an internal error"
 }
 
 func (d enMessages) FatalError() string {
 	return "There is an internal error!\nPress /start to recover"
 }
 
-func (d enMessages) PrepareMainMessage(main string, u User, newState State) string {
-	return main
-}
-
-func (d enMessages) PrepareHistoryMessage(main string, u User, newState State, msgID int) string {
-	return main
+func (d enMessages) PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string {
+	return msg
 }
 
 // String builders benchmark

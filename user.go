@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"time"
 
+	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 	"github.com/maypok86/otter"
@@ -60,8 +62,6 @@ type UsersStorage interface {
 	Insert(ctx context.Context, userModel UserModel) error
 	// Find returns user from storage. It returns true as a second argument if user was found without error.
 	Find(ctx context.Context, id int64) (UserModel, bool, error)
-	// FindAll returns all users from storage. It retutns empty slice if there are no users without error.
-	FindAll(ctx context.Context) ([]UserModel, error)
 
 	// Update updates user model in storage. The idea of that method is that it calls on every user action
 	// (e.g. to update state), so it should be async to make it faster for user (without IO latency).
@@ -198,15 +198,19 @@ func (u *UserModel) prepareAfterDB() {
 
 // userContextImpl implements User interface.
 type userContextImpl struct {
-	user    UserModel
-	db      UsersStorage
+	user UserModel
+	db   UsersStorage
+
 	btnName string
 	payload string
+
+	buttonMap *abstract.SafeMap[string, InitBundle]
+	isInited  atomic.Bool
 }
 
 func (m *userManagerImpl) newUserContext(user UserModel) *userContextImpl {
 	user.prepareAfterDB()
-	return &userContextImpl{db: m.db, user: user}
+	return &userContextImpl{db: m.db, user: user, buttonMap: abstract.NewSafeMap[string, InitBundle]()}
 }
 
 func (u *userContextImpl) ID() int64 {
@@ -253,7 +257,7 @@ func (u *userContextImpl) IsDisabled() bool {
 	return u.user.IsDisabled
 }
 
-func (u userContextImpl) String() string {
+func (u *userContextImpl) String() string {
 	return "[@" + u.user.Info.Username + "|" + strconv.Itoa(int(u.user.ID)) + "]"
 }
 
@@ -595,7 +599,7 @@ type userManagerImpl struct {
 	log   Logger
 }
 
-func newUserManager(ctx context.Context, db UsersStorage, log Logger) (*userManagerImpl, error) {
+func newUserManager(db UsersStorage, log Logger) (*userManagerImpl, error) {
 	c, err := otter.MustBuilder[int64, *userContextImpl](userCacheCapacity).Build()
 	if err != nil {
 		return nil, err
@@ -605,11 +609,6 @@ func newUserManager(ctx context.Context, db UsersStorage, log Logger) (*userMana
 		users: c,
 		db:    db,
 		log:   log,
-	}
-
-	err = m.loadAllUsersFromDB(ctx)
-	if err != nil {
-		return nil, errm.Wrap(err, "init all users")
 	}
 
 	return m, nil
@@ -655,15 +654,6 @@ func (m *userManagerImpl) getAllUsers() []User {
 	return out
 }
 
-func (m *userManagerImpl) getAllUsersContexts() []*userContextImpl {
-	out := make([]*userContextImpl, 0, m.users.Size())
-	m.users.Range(func(key int64, value *userContextImpl) bool {
-		out = append(out, value)
-		return true
-	})
-	return out
-}
-
 func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (*userContextImpl, error) {
 	userModel, isFound, err := m.db.Find(ctx, tUser.ID)
 	if err != nil {
@@ -688,29 +678,6 @@ func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (*us
 	}
 
 	return user, nil
-}
-
-func (m *userManagerImpl) loadAllUsersFromDB(ctx context.Context) error {
-	users, err := m.db.FindAll(ctx)
-	switch {
-	case err == nil && len(users) == 0:
-		m.log.Info("no users in DB")
-		return nil
-
-	case err != nil:
-		return errm.Wrap(err, "find all")
-	}
-
-	for _, u := range users {
-		if u.IsDisabled {
-			continue
-		}
-		m.users.Set(u.ID, m.newUserContext(u))
-	}
-
-	m.log.Info(fmt.Sprintf("load %d users from DB", m.users.Size()))
-
-	return nil
 }
 
 func (m *userManagerImpl) disableUser(userID int64) {
