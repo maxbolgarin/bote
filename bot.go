@@ -269,7 +269,10 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 		}
 	}
 
-	// TODO: sanitize
+	// Sanitize incoming message text to prevent injection attacks
+	if upd.Message != nil && upd.Message.Text != "" {
+		upd.Message.Text = sanitizeText(upd.Message.Text, 1e5)
+	}
 
 	return true
 }

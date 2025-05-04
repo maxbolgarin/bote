@@ -3,8 +3,10 @@ package bote
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -206,6 +208,9 @@ type userContextImpl struct {
 
 	buttonMap *abstract.SafeMap[string, InitBundle]
 	isInited  atomic.Bool
+
+	// Add mutex for protecting user state and message updates
+	mu sync.RWMutex
 }
 
 func (m *userManagerImpl) newUserContext(user UserModel) *userContextImpl {
@@ -218,35 +223,69 @@ func (u *userContextImpl) ID() int64 {
 }
 
 func (u *userContextImpl) Username() string {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	return u.user.Info.Username
 }
 
 func (u *userContextImpl) Language() string {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	return u.user.Info.LanguageCode
 }
 
 func (u *userContextImpl) Model() UserModel {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	// Return a copy to avoid race conditions if the caller modifies the model
 	return u.user
 }
 
 func (u *userContextImpl) Info() UserInfo {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	return u.user.Info
 }
 
 func (u *userContextImpl) State(msgID int) (State, bool) {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	st, ok := u.user.State.MessageStates[msgID]
 	return state(st), ok
 }
 
 func (u *userContextImpl) StateMain() State {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	return state(u.user.State.Main)
 }
 
 func (u *userContextImpl) Messages() UserMessages {
-	return u.user.Messages
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	// Return a copy to avoid race conditions
+	messages := u.user.Messages
+
+	// Deep copy the slices and maps to avoid race conditions
+	if len(messages.HistoryIDs) > 0 {
+		historyCopy := make([]int, len(messages.HistoryIDs))
+		copy(historyCopy, messages.HistoryIDs)
+		messages.HistoryIDs = historyCopy
+	}
+
+	if len(messages.LastActions) > 0 {
+		lastActionsCopy := make(map[int]time.Time, len(messages.LastActions))
+		maps.Copy(lastActionsCopy, messages.LastActions)
+		messages.LastActions = lastActionsCopy
+	}
+
+	return messages
 }
 
 func (u *userContextImpl) LastSeenTime(msgID ...int) time.Time {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+
 	if len(msgID) == 0 {
 		return u.user.LastSeenTime
 	}
@@ -254,10 +293,14 @@ func (u *userContextImpl) LastSeenTime(msgID ...int) time.Time {
 }
 
 func (u *userContextImpl) IsDisabled() bool {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	return u.user.IsDisabled
 }
 
 func (u *userContextImpl) String() string {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 	return "[@" + u.user.Info.Username + "|" + strconv.Itoa(int(u.user.ID)) + "]"
 }
 
@@ -265,6 +308,8 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	if newState.NotChanged() {
 		return
 	}
+
+	u.mu.Lock()
 
 	var (
 		msgID = lang.Check(lang.First(msgIDRaw), u.user.Messages.MainID)
@@ -274,13 +319,13 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	currentState, ok := u.user.State.MessageStates[msgID]
 	if ok && newState != state(currentState) && state(currentState).IsText() {
 		// If we got new state we should remove current pending text state
-		u.removeTextMessage(msgID)
+		u.removeTextMessageLocked(msgID)
 		upd.MessagesAwaitingText = u.user.State.MessagesAwaitingText
 	}
 
 	if newState.IsText() {
 		// If new state - text state, we shoudld add it
-		u.pushTextMessage(msgID)
+		u.pushTextMessageLocked(msgID)
 		upd.MessagesAwaitingText = u.user.State.MessagesAwaitingText
 	}
 
@@ -295,14 +340,25 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 
 	upd.MessageStates = u.user.State.MessageStates
 
-	u.db.Update(u.user.ID, &UserModelDiff{
+	// Make a copy of the data for the database update
+	userID := u.user.ID
+	lastActions := make(map[int]time.Time, len(u.user.Messages.LastActions))
+	maps.Copy(lastActions, u.user.Messages.LastActions)
+	lastSeenTime := u.user.LastSeenTime
+
+	// Release the lock before making DB calls to avoid holding it too long
+	u.mu.Unlock()
+
+	// Update the database
+	u.db.Update(userID, &UserModelDiff{
 		State:        &upd,
-		Messages:     &UserMessagesDiff{LastActions: u.user.Messages.LastActions},
-		LastSeenTime: &u.user.LastSeenTime,
+		Messages:     &UserMessagesDiff{LastActions: lastActions},
+		LastSeenTime: &lastSeenTime,
 	})
 }
 
 func (u *userContextImpl) prepareTextStates() {
+	// This method is always called with the lock held
 	if len(u.user.State.MessagesAwaitingText) != len(u.user.State.messagesStackInd) {
 		u.user.State.messagesStackInd = make(map[int]int, len(u.user.State.MessagesAwaitingText))
 		for i, v := range u.user.State.MessagesAwaitingText {
@@ -312,11 +368,17 @@ func (u *userContextImpl) prepareTextStates() {
 }
 
 func (u *userContextImpl) hasTextMessages() bool {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+
 	u.prepareTextStates()
 	return len(u.user.State.MessagesAwaitingText) > 0
 }
 
 func (u *userContextImpl) lastTextMessage() int {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+
 	if len(u.user.State.MessagesAwaitingText) == 0 {
 		return 0
 	}
@@ -325,7 +387,8 @@ func (u *userContextImpl) lastTextMessage() int {
 	return u.user.State.MessagesAwaitingText[len(u.user.State.MessagesAwaitingText)-1]
 }
 
-func (u *userContextImpl) pushTextMessage(msgID int) {
+// pushTextMessageLocked assumes the lock is already held
+func (u *userContextImpl) pushTextMessageLocked(msgID int) {
 	u.prepareTextStates()
 
 	if index, ok := u.user.State.messagesStackInd[msgID]; ok {
@@ -347,7 +410,8 @@ func (u *userContextImpl) pushTextMessage(msgID int) {
 	u.user.State.MessagesAwaitingText = append(u.user.State.MessagesAwaitingText, msgID)
 }
 
-func (u *userContextImpl) removeTextMessage(msgID int) {
+// removeTextMessageLocked assumes the lock is already held
+func (u *userContextImpl) removeTextMessageLocked(msgID int) {
 	u.prepareTextStates()
 
 	indexToRemove, ok := u.user.State.messagesStackInd[msgID]
@@ -384,46 +448,85 @@ func (u *userContextImpl) removeTextMessage(msgID int) {
 }
 
 func (u *userContextImpl) setMessages(msgIDs ...int) {
+	u.mu.Lock()
+
 	msgs := make([]int, 4)
 	copy(msgs, msgIDs)
 	u.user.Messages.MainID = msgs[0]
 	u.user.Messages.HeadID = msgs[1]
 	u.user.Messages.NotificationID = msgs[2]
 	u.user.Messages.ErrorID = msgs[3]
+
+	var historyIDs []int
 	if len(msgs) > 4 {
-		u.user.Messages.HistoryIDs = msgs[4:]
+		historyIDs = make([]int, len(msgs)-4)
+		copy(historyIDs, msgs[4:])
+		u.user.Messages.HistoryIDs = historyIDs
 	}
 
-	u.db.Update(u.user.ID, &UserModelDiff{
+	// Capture values for the DB update
+	userID := u.user.ID
+	mainID := u.user.Messages.MainID
+	headID := u.user.Messages.HeadID
+	notificationID := u.user.Messages.NotificationID
+	errorID := u.user.Messages.ErrorID
+
+	u.mu.Unlock()
+
+	u.db.Update(userID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
-			MainID:         &u.user.Messages.MainID,
-			HeadID:         &u.user.Messages.HeadID,
-			NotificationID: &u.user.Messages.NotificationID,
-			ErrorID:        &u.user.Messages.ErrorID,
-			HistoryIDs:     u.user.Messages.HistoryIDs,
+			MainID:         &mainID,
+			HeadID:         &headID,
+			NotificationID: &notificationID,
+			ErrorID:        &errorID,
+			HistoryIDs:     historyIDs,
 		},
 	})
 }
 
 func (u *userContextImpl) setErrorMessage(msgID int) {
+	u.mu.Lock()
 	u.user.Messages.ErrorID = msgID
-	u.db.Update(u.user.ID, &UserModelDiff{
+
+	// Capture values for the DB update
+	userID := u.user.ID
+	errorID := msgID
+	u.mu.Unlock()
+
+	u.db.Update(userID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
-			ErrorID: &u.user.Messages.ErrorID,
+			ErrorID: &errorID,
 		},
 	})
 }
 
 func (u *userContextImpl) setNotificationMessage(msgID int) {
+	u.mu.Lock()
 	u.user.Messages.NotificationID = msgID
-	u.db.Update(u.user.ID, &UserModelDiff{
+
+	// Capture values for the DB update
+	userID := u.user.ID
+	notificationID := msgID
+	u.mu.Unlock()
+
+	u.db.Update(userID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
-			NotificationID: &u.user.Messages.NotificationID,
+			NotificationID: &notificationID,
 		},
 	})
 }
 
 func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
+	u.mu.Lock()
+
+	var (
+		userID               = u.user.ID
+		updatedHistoryIDs    []int
+		updatedMessageStates map[int]string
+		updatedLastActions   map[int]time.Time
+		updatedAwaitingText  []int
+	)
+
 	for _, msgIDToDelete := range msgIDs {
 		for i, historyID := range u.user.Messages.HistoryIDs {
 			if historyID != msgIDToDelete {
@@ -443,91 +546,179 @@ func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
 			found = true
 		}
 	}
+
 	if found {
-		u.db.Update(u.user.ID, &UserModelDiff{
+		updatedHistoryIDs = make([]int, len(u.user.Messages.HistoryIDs))
+		copy(updatedHistoryIDs, u.user.Messages.HistoryIDs)
+
+		updatedMessageStates = make(map[int]string, len(u.user.State.MessageStates))
+		maps.Copy(updatedMessageStates, u.user.State.MessageStates)
+
+		updatedLastActions = make(map[int]time.Time, len(u.user.Messages.LastActions))
+		maps.Copy(updatedLastActions, u.user.Messages.LastActions)
+
+		updatedAwaitingText = make([]int, len(u.user.State.MessagesAwaitingText))
+		copy(updatedAwaitingText, u.user.State.MessagesAwaitingText)
+	}
+
+	u.mu.Unlock()
+
+	if found {
+		u.db.Update(userID, &UserModelDiff{
 			Messages: &UserMessagesDiff{
-				HistoryIDs:  u.user.Messages.HistoryIDs,
-				LastActions: u.user.Messages.LastActions,
+				HistoryIDs:  updatedHistoryIDs,
+				LastActions: updatedLastActions,
 			},
 			State: &UserStateDiff{
-				MessageStates:        u.user.State.MessageStates,
-				MessagesAwaitingText: u.user.State.MessagesAwaitingText,
+				MessageStates:        updatedMessageStates,
+				MessagesAwaitingText: updatedAwaitingText,
 			},
 		})
 	}
+
 	return found
 }
 
 func (u *userContextImpl) update(user *tele.User) {
-	newInfo := newUserInfo(user)
-	if newInfo == u.user.Info {
+	// Sanitize and validate the input user
+	sanitizedUser := sanitizeTelegramUser(user)
+	if sanitizedUser == nil {
 		return
 	}
+
+	// Create the new info outside the lock
+	newInfo := newUserInfo(sanitizedUser)
+
+	u.mu.Lock()
+
+	// Compare and early return if no changes
+	if newInfo == u.user.Info {
+		u.mu.Unlock()
+		return
+	}
+
+	// Update the info
 	u.user.Info = newInfo
-	u.db.Update(u.user.ID, &UserModelDiff{
-		Info: &UserInfoDiff{
-			FirstName:    &u.user.Info.FirstName,
-			LastName:     &u.user.Info.LastName,
-			Username:     &u.user.Info.Username,
-			LanguageCode: &u.user.Info.LanguageCode,
-			IsBot:        &u.user.Info.IsBot,
-			IsPremium:    &u.user.Info.IsPremium,
-		},
-	},
-	)
+
+	// Capture values for DB update
+	userID := u.user.ID
+	userInfoDiff := &UserInfoDiff{
+		FirstName:    &u.user.Info.FirstName,
+		LastName:     &u.user.Info.LastName,
+		Username:     &u.user.Info.Username,
+		LanguageCode: &u.user.Info.LanguageCode,
+		IsBot:        &u.user.Info.IsBot,
+		IsPremium:    &u.user.Info.IsPremium,
+	}
+
+	u.mu.Unlock()
+
+	// Update the database
+	u.db.Update(userID, &UserModelDiff{
+		Info: userInfoDiff,
+	})
 }
 
 func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
-	u.user.LastSeenTime = time.Now().UTC()
-	u.user.Messages.LastActions[mainMsgID] = u.user.LastSeenTime
+	u.mu.Lock()
 
-	u.user.Messages.HistoryIDs = append(u.user.Messages.HistoryIDs, u.user.Messages.MainID)
+	currentTime := time.Now().UTC()
+	u.user.LastSeenTime = currentTime
+	u.user.Messages.LastActions[mainMsgID] = currentTime
+
+	// Append to history IDs
+	historyIDs := make([]int, len(u.user.Messages.HistoryIDs)+1)
+	copy(historyIDs, u.user.Messages.HistoryIDs)
+	historyIDs[len(historyIDs)-1] = u.user.Messages.MainID
+	u.user.Messages.HistoryIDs = historyIDs
+
+	var stateMain *string
+	var messageStates map[int]string
 
 	if !newState.NotChanged() {
 		u.user.State.Main = newState.String()
 		u.user.State.MessageStates[mainMsgID] = newState.String()
+
+		stateMain = &u.user.State.Main
+		messageStates = make(map[int]string, len(u.user.State.MessageStates))
+		maps.Copy(messageStates, u.user.State.MessageStates)
 	}
 
 	u.user.Messages.MainID = mainMsgID
 	u.user.Messages.HeadID = headMsgID
 
-	u.db.Update(u.user.ID, &UserModelDiff{
-		State: &UserStateDiff{
-			Main:          &u.user.State.Main,
-			MessageStates: u.user.State.MessageStates,
-		},
+	// Capture values for DB update
+	userID := u.user.ID
+	lastSeenTime := u.user.LastSeenTime
+	mainID := mainMsgID
+	headID := headMsgID
+
+	lastActions := make(map[int]time.Time, len(u.user.Messages.LastActions))
+	maps.Copy(lastActions, u.user.Messages.LastActions)
+
+	u.mu.Unlock()
+
+	// Update DB
+	diff := &UserModelDiff{
 		Messages: &UserMessagesDiff{
-			MainID:      &u.user.Messages.MainID,
-			HeadID:      &u.user.Messages.HeadID,
-			HistoryIDs:  u.user.Messages.HistoryIDs,
-			LastActions: u.user.Messages.LastActions,
+			MainID:      &mainID,
+			HeadID:      &headID,
+			HistoryIDs:  historyIDs,
+			LastActions: lastActions,
 		},
-		LastSeenTime: &u.user.LastSeenTime,
-	})
+		LastSeenTime: &lastSeenTime,
+	}
+
+	if !newState.NotChanged() {
+		diff.State = &UserStateDiff{
+			Main:          stateMain,
+			MessageStates: messageStates,
+		}
+	}
+
+	u.db.Update(userID, diff)
 }
 
 func (u *userContextImpl) disable() {
+	u.mu.Lock()
+
 	if u.user.IsDisabled {
+		u.mu.Unlock()
 		return
 	}
 
-	u.user.DisabledTime = time.Now().UTC()
+	currentTime := time.Now().UTC()
+	u.user.DisabledTime = currentTime
 	u.user.IsDisabled = true
 	u.user.State.Main = Disabled.String()
 	u.user.State.MessageStates[u.user.Messages.MainID] = Disabled.String()
 
-	u.db.Update(u.user.ID, &UserModelDiff{
+	// Capture values for DB update
+	userID := u.user.ID
+	disabledTime := u.user.DisabledTime
+	isDisabled := u.user.IsDisabled
+	stateMain := u.user.State.Main
+
+	messageStates := make(map[int]string, len(u.user.State.MessageStates))
+	maps.Copy(messageStates, u.user.State.MessageStates)
+
+	u.mu.Unlock()
+
+	u.db.Update(userID, &UserModelDiff{
 		State: &UserStateDiff{
-			Main:          &u.user.State.Main,
-			MessageStates: u.user.State.MessageStates,
+			Main:          &stateMain,
+			MessageStates: messageStates,
 		},
-		DisabledTime: &u.user.DisabledTime,
-		IsDisabled:   &u.user.IsDisabled,
+		DisabledTime: &disabledTime,
+		IsDisabled:   &isDisabled,
 	})
 }
 
 func (u *userContextImpl) enable() {
+	u.mu.Lock()
+
 	if !u.user.IsDisabled {
+		u.mu.Unlock()
 		return
 	}
 
@@ -536,13 +727,24 @@ func (u *userContextImpl) enable() {
 	u.user.State.Main = FirstRequest.String()
 	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest.String()
 
-	u.db.Update(u.user.ID, &UserModelDiff{
+	// Capture values for DB update
+	userID := u.user.ID
+	disabledTime := u.user.DisabledTime
+	isDisabled := u.user.IsDisabled
+	stateMain := u.user.State.Main
+
+	messageStates := make(map[int]string, len(u.user.State.MessageStates))
+	maps.Copy(messageStates, u.user.State.MessageStates)
+
+	u.mu.Unlock()
+
+	u.db.Update(userID, &UserModelDiff{
 		State: &UserStateDiff{
-			Main:          &u.user.State.Main,
-			MessageStates: u.user.State.MessageStates,
+			Main:          &stateMain,
+			MessageStates: messageStates,
 		},
-		DisabledTime: &u.user.DisabledTime,
-		IsDisabled:   &u.user.IsDisabled,
+		DisabledTime: &disabledTime,
+		IsDisabled:   &isDisabled,
 	})
 }
 
@@ -579,11 +781,16 @@ func newUserModel(tUser *tele.User) UserModel {
 }
 
 func newUserInfo(tUser *tele.User) UserInfo {
+	// Safety check
+	if tUser == nil {
+		return UserInfo{}
+	}
+
 	return UserInfo{
-		FirstName:    tUser.FirstName,
-		LastName:     tUser.LastName,
-		Username:     tUser.Username,
-		LanguageCode: tUser.LanguageCode,
+		FirstName:    sanitizeText(tUser.FirstName, 1000),
+		LastName:     sanitizeText(tUser.LastName, 1000),
+		Username:     sanitizeText(tUser.Username, 1000),
+		LanguageCode: sanitizeText(tUser.LanguageCode, 1000),
 		IsBot:        tUser.IsBot,
 		IsPremium:    tUser.IsPremium,
 	}
@@ -591,6 +798,8 @@ func newUserInfo(tUser *tele.User) UserInfo {
 
 const (
 	userCacheCapacity = 1000
+	// Adding cache TTL for inactive users
+	userCacheTTL = 24 * time.Hour
 )
 
 type userManagerImpl struct {
@@ -600,7 +809,17 @@ type userManagerImpl struct {
 }
 
 func newUserManager(db UsersStorage, log Logger) (*userManagerImpl, error) {
-	c, err := otter.MustBuilder[int64, *userContextImpl](userCacheCapacity).Build()
+	// Configure otter cache with proper eviction settings and TTL
+	c, err := otter.MustBuilder[int64, *userContextImpl](userCacheCapacity).
+		// Add cost function to better manage memory
+		Cost(func(key int64, value *userContextImpl) uint32 {
+			// Cost is roughly based on the number of messages a user has
+			// This helps prioritize eviction of users with more stored messages
+			return uint32(1 + len(value.user.Messages.HistoryIDs))
+		}).
+		// Set TTL for inactive users to prevent memory leaks
+		WithTTL(userCacheTTL).
+		Build()
 	if err != nil {
 		return nil, err
 	}
@@ -615,12 +834,15 @@ func newUserManager(db UsersStorage, log Logger) (*userManagerImpl, error) {
 }
 
 func (m *userManagerImpl) prepareUser(ctx context.Context, tUser *tele.User) (*userContextImpl, error) {
-	user, found := m.users.Get(tUser.ID)
+	// Sanitize user input before processing
+	sanitizedUser := sanitizeTelegramUser(tUser)
+
+	user, found := m.users.Get(sanitizedUser.ID)
 	if found {
-		user.update(tUser)
+		user.update(sanitizedUser)
 		return user, nil
 	}
-	return m.createUser(ctx, tUser)
+	return m.createUser(ctx, sanitizedUser)
 }
 
 func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
@@ -694,7 +916,16 @@ type inMemoryUserStorage struct {
 }
 
 func newInMemoryUserStorage() (UsersStorage, error) {
-	s, err := otter.MustBuilder[int64, UserModel](userCacheCapacity).Build()
+	// Configure in-memory storage with proper eviction settings
+	s, err := otter.MustBuilder[int64, UserModel](userCacheCapacity).
+		// Add cost function to better manage memory
+		Cost(func(key int64, value UserModel) uint32 {
+			// Cost is roughly based on the number of messages a user has
+			return uint32(1 + len(value.Messages.HistoryIDs))
+		}).
+		// Set TTL for inactive users to prevent memory leaks
+		WithTTL(userCacheTTL).
+		Build()
 	if err != nil {
 		return nil, err
 	}
@@ -787,4 +1018,22 @@ func (s state) IsText() bool {
 
 func (s state) NotChanged() bool {
 	return s == NoChange
+}
+
+// sanitizeTelegramUser sanitizes fields in a Telegram user object
+func sanitizeTelegramUser(user *tele.User) *tele.User {
+	if user == nil {
+		return nil
+	}
+
+	// Create a copy to avoid modifying the original
+	sanitized := *user
+
+	// Sanitize text fields
+	sanitized.FirstName = sanitizeText(user.FirstName, 1000)
+	sanitized.LastName = sanitizeText(user.LastName, 1000)
+	sanitized.Username = sanitizeText(user.Username, 1000)
+	sanitized.LanguageCode = sanitizeText(user.LanguageCode, 1000)
+
+	return &sanitized
 }

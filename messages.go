@@ -2,6 +2,7 @@ package bote
 
 import (
 	"fmt"
+	"html"
 	"strings"
 
 	"github.com/maxbolgarin/abstract"
@@ -192,6 +193,31 @@ func (d enMessages) FatalError() string {
 
 func (d enMessages) PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string {
 	return msg
+}
+
+// sanitizeText sanitizes text inputs to prevent injection attacks
+func sanitizeText(text string, maxLength ...int) string {
+	if text == "" {
+		return ""
+	}
+
+	// HTML escape to prevent XSS
+	text = html.EscapeString(text)
+
+	// Trim whitespace
+	text = strings.TrimSpace(text)
+
+	// Additional protection against potentially malicious sequences
+	text = strings.ReplaceAll(text, "javascript:", "")
+	text = strings.ReplaceAll(text, "data:", "")
+
+	if len(maxLength) > 0 {
+		if len(text) > maxLength[0] {
+			text = text[:maxLength[0]]
+		}
+	}
+
+	return text
 }
 
 // String builders benchmark
