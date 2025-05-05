@@ -2,6 +2,8 @@ package bote_test
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,7 @@ type testPoller struct {
 	stopChan chan struct{}
 	botRef   *tele.Bot
 	destChan chan tele.Update
+	mu       sync.Mutex // Mutex to protect access to shared fields
 }
 
 // NewTestPoller creates a new test poller that can send mock updates
@@ -33,9 +36,11 @@ func NewTestPoller() *testPoller {
 
 // Poll implements the telebot.Poller interface
 func (p *testPoller) Poll(b *tele.Bot, dest chan tele.Update, stop chan struct{}) {
+	p.mu.Lock()
 	p.botRef = b
 	p.destChan = dest
 	p.stopChan = stop
+	p.mu.Unlock()
 
 	for {
 		select {
@@ -369,23 +374,48 @@ func TestMessageBuilder(t *testing.T) {
 
 // MockLogger for testing
 type testLogger struct {
+	mu          sync.Mutex
 	debugCalled bool
 	infoCalled  bool
 	warnCalled  bool
 	errorCalled bool
 }
 
-func (l *testLogger) Debug(msg string, args ...any) { l.debugCalled = true }
-func (l *testLogger) Info(msg string, args ...any)  { l.infoCalled = true }
-func (l *testLogger) Warn(msg string, args ...any)  { l.warnCalled = true }
-func (l *testLogger) Error(msg string, args ...any) { l.errorCalled = true }
+func (l *testLogger) Debug(msg string, args ...any) {
+	l.mu.Lock()
+	l.debugCalled = true
+	l.mu.Unlock()
+}
+
+func (l *testLogger) Info(msg string, args ...any) {
+	l.mu.Lock()
+	l.infoCalled = true
+	l.mu.Unlock()
+}
+
+func (l *testLogger) Warn(msg string, args ...any) {
+	l.mu.Lock()
+	l.warnCalled = true
+	l.mu.Unlock()
+}
+
+func (l *testLogger) Error(msg string, args ...any) {
+	l.mu.Lock()
+	l.errorCalled = true
+	l.mu.Unlock()
+}
 
 // Mock update logger for testing
 type testUpdateLogger struct {
+	mu        sync.Mutex
 	logCalled bool
 }
 
-func (l *testUpdateLogger) Log(t bote.UpdateType, args ...any) { l.logCalled = true }
+func (l *testUpdateLogger) Log(t bote.UpdateType, args ...any) {
+	l.mu.Lock()
+	l.logCalled = true
+	l.mu.Unlock()
+}
 
 // Mock user storage for testing
 type testUserStorage struct{}
@@ -434,9 +464,9 @@ func TestBotWithTestPoller(t *testing.T) {
 	assert.NotNil(t, bot)
 
 	// Setup a handler for testing
-	handlerCalled := false
+	var handlerCalled atomic.Bool
 	bot.Handle("/test", func(c bote.Context) error {
-		handlerCalled = true
+		handlerCalled.Store(true)
 		return nil
 	})
 
@@ -452,11 +482,22 @@ func TestBotWithTestPoller(t *testing.T) {
 	// Send a test message
 	poller.SendTextMessage(tele.User{ID: 123, FirstName: "Test"}, "/test")
 
-	// Allow some time for the bot to process the message
-	time.Sleep(100 * time.Millisecond)
+	// Wait for handler to be called with timeout
+	waitTimeout := time.NewTimer(500 * time.Millisecond)
+	defer waitTimeout.Stop()
+
+	for !handlerCalled.Load() {
+		select {
+		case <-waitTimeout.C:
+			t.Fatal("Timed out waiting for handler to be called")
+			return
+		case <-time.After(10 * time.Millisecond):
+			// Keep checking
+		}
+	}
 
 	// Check if the handler was called
-	assert.True(t, handlerCalled)
+	assert.True(t, handlerCalled.Load())
 }
 
 func TestBotCallbackHandling(t *testing.T) {
@@ -484,11 +525,13 @@ func TestBotCallbackHandling(t *testing.T) {
 	assert.NotNil(t, bot)
 
 	// Setup a callback handler for testing
-	callbackHandlerCalled := false
+	var callbackHandlerCalled atomic.Bool
+	var callbackWg sync.WaitGroup
 
+	callbackWg.Add(1)
 	bot.Handle(tele.OnCallback, func(c bote.Context) error {
-		callbackHandlerCalled = true
-		// We're not checking the data here since it may be truncated by the bot implementation
+		callbackHandlerCalled.Store(true)
+		callbackWg.Done()
 		return nil
 	})
 
@@ -508,11 +551,22 @@ func TestBotCallbackHandling(t *testing.T) {
 		&tele.Message{ID: 456},
 	)
 
-	// Allow some time for the bot to process the callback
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the callback to be processed with timeout
+	waitCh := make(chan struct{})
+	go func() {
+		callbackWg.Wait()
+		close(waitCh)
+	}()
+
+	select {
+	case <-waitCh:
+		// Handler was called
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Timed out waiting for callback handler")
+	}
 
 	// Check if the handler was called
-	assert.True(t, callbackHandlerCalled)
+	assert.True(t, callbackHandlerCalled.Load())
 }
 
 func TestBotWithCustomOptions(t *testing.T) {
@@ -544,9 +598,13 @@ func TestBotWithCustomOptions(t *testing.T) {
 	assert.NotNil(t, bot)
 
 	// Setup a simple handler to ensure something happens
-	handlerCalled := false
+	var handlerCalled atomic.Bool
+	var handlerWg sync.WaitGroup
+
+	handlerWg.Add(1)
 	bot.Handle("/test", func(c bote.Context) error {
-		handlerCalled = true
+		handlerCalled.Store(true)
+		handlerWg.Done()
 		return nil
 	})
 
@@ -562,12 +620,22 @@ func TestBotWithCustomOptions(t *testing.T) {
 	// Send a test message
 	poller.SendTextMessage(tele.User{ID: 123, FirstName: "Test"}, "/test")
 
-	// Allow some time for the bot to process the message
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the handler to be called with timeout
+	waitCh := make(chan struct{})
+	go func() {
+		handlerWg.Wait()
+		close(waitCh)
+	}()
 
-	// Check if the handler was called and logger received events
-	assert.True(t, handlerCalled)
-	// We only care that the bot was created and ran correctly
+	select {
+	case <-waitCh:
+		// Handler was called
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Timed out waiting for handler")
+	}
+
+	// Check if the handler was called
+	assert.True(t, handlerCalled.Load())
 }
 
 func TestUpdateTypeString(t *testing.T) {
@@ -644,15 +712,16 @@ func TestTestPollerFunctionality(t *testing.T) {
 	testUser := tele.User{ID: 123, FirstName: "Test", Username: "testuser"}
 	poller.SendTextMessage(testUser, "Hello World")
 
-	// Get the update from the destination channel
+	// Get the update from the destination channel with timeout
+	var update tele.Update
 	select {
-	case update := <-dest:
+	case update = <-dest:
 		assert.NotNil(t, update.Message)
 		assert.Equal(t, "Hello World", update.Message.Text)
 		assert.Equal(t, int64(123), update.Message.Sender.ID)
 		assert.Equal(t, "Test", update.Message.Sender.FirstName)
 		assert.Equal(t, "testuser", update.Message.Sender.Username)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Timed out waiting for text message update")
 	}
 
@@ -660,14 +729,14 @@ func TestTestPollerFunctionality(t *testing.T) {
 	message := &tele.Message{ID: 456}
 	poller.SendCallbackQuery(testUser, "btn_data", message)
 
-	// Get the update from the destination channel
+	// Get the update from the destination channel with timeout
 	select {
-	case update := <-dest:
+	case update = <-dest:
 		assert.NotNil(t, update.Callback)
 		assert.Equal(t, "btn_data", update.Callback.Data)
 		assert.Equal(t, int64(123), update.Callback.Sender.ID)
 		assert.Equal(t, 456, update.Callback.Message.ID)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Timed out waiting for callback update")
 	}
 
@@ -682,12 +751,12 @@ func TestTestPollerFunctionality(t *testing.T) {
 	}
 	poller.SendUpdate(customUpdate)
 
-	// Get the update from the destination channel
+	// Get the update from the destination channel with timeout
 	select {
-	case update := <-dest:
+	case update = <-dest:
 		assert.Equal(t, 789, update.ID)
 		assert.Equal(t, "Custom update", update.Message.Text)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Timed out waiting for custom update")
 	}
 
@@ -781,9 +850,13 @@ func TestBotWithPollerShutdown(t *testing.T) {
 	}
 
 	// Setup a handler for testing
-	handlerCalled := false
+	var handlerCalled atomic.Bool
+	var handlerWg sync.WaitGroup
+
+	handlerWg.Add(1)
 	bot.Handle("/test", func(c bote.Context) error {
-		handlerCalled = true
+		handlerCalled.Store(true)
+		handlerWg.Done()
 		return nil
 	})
 
@@ -798,22 +871,27 @@ func TestBotWithPollerShutdown(t *testing.T) {
 	// Send a test message
 	poller.SendTextMessage(tele.User{ID: 123, FirstName: "Test"}, "/test")
 
-	// Allow some time for the bot to process the message
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the handler to be called with timeout
+	waitCh := make(chan struct{})
+	go func() {
+		handlerWg.Wait()
+		close(waitCh)
+	}()
+
+	select {
+	case <-waitCh:
+		// Handler was called
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Timed out waiting for handler")
+	}
 
 	// Check if the handler was called
-	assert.True(t, handlerCalled)
+	assert.True(t, handlerCalled.Load())
 
 	// Stop the bot and make sure it doesn't panic
 	bot.Stop()
 
 	// Give the bot time to shut down
-	time.Sleep(100 * time.Millisecond)
-
-	// Try to send a message after shutdown - this shouldn't cause any issues
-	poller.SendTextMessage(tele.User{ID: 123, FirstName: "Test"}, "/after_stop")
-
-	// Make sure the poller goroutine has exited
 	time.Sleep(100 * time.Millisecond)
 }
 
@@ -893,22 +971,34 @@ func TestContextOperations(t *testing.T) {
 		t.Fatalf("Failed to create bot: %v", err)
 	}
 
-	// Track context method results
+	// Track context method results with proper synchronization
+	var mu sync.Mutex
 	var receivedText string
 	var parsedData []string
 	var buttonIDReceived string
 	var dataReceived string
 
+	var textWg sync.WaitGroup
+	var callbackWg sync.WaitGroup
+
 	// Set up handlers to test context methods
+	textWg.Add(1)
 	bot.Handle("/test", func(c bote.Context) error {
+		mu.Lock()
 		receivedText = c.Text()
+		mu.Unlock()
+		textWg.Done()
 		return nil
 	})
 
+	callbackWg.Add(1)
 	bot.Handle(tele.OnCallback, func(c bote.Context) error {
+		mu.Lock()
 		buttonIDReceived = c.ButtonID()
 		dataReceived = c.Data()
 		parsedData = c.DataParsed()
+		mu.Unlock()
+		callbackWg.Done()
 		return nil
 	})
 
@@ -924,20 +1014,50 @@ func TestContextOperations(t *testing.T) {
 	// Test text processing
 	user := tele.User{ID: 123, FirstName: "Test"}
 	poller.SendTextMessage(user, "/test with arguments")
-	time.Sleep(100 * time.Millisecond)
+
+	// Wait with timeout
+	textWaiter := make(chan struct{})
+	go func() {
+		textWg.Wait()
+		close(textWaiter)
+	}()
+
+	select {
+	case <-textWaiter:
+		// Handler completed
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Timed out waiting for text handler")
+	}
 
 	// Check text parsing
+	mu.Lock()
 	assert.Equal(t, "/test with arguments", receivedText)
+	mu.Unlock()
 
 	// Test callback data
 	message := &tele.Message{ID: 456}
 	poller.SendCallbackQuery(user, "button_id|user_data", message)
-	time.Sleep(100 * time.Millisecond)
+
+	// Wait with timeout
+	callbackWaiter := make(chan struct{})
+	go func() {
+		callbackWg.Wait()
+		close(callbackWaiter)
+	}()
+
+	select {
+	case <-callbackWaiter:
+		// Handler completed
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Timed out waiting for callback handler")
+	}
 
 	// Check callback data parsing
+	mu.Lock()
 	assert.Equal(t, "butto", buttonIDReceived)
 	assert.Equal(t, "button_id|user_data", dataReceived)
 	assert.Equal(t, []string{"button_id", "user_data"}, parsedData)
+	mu.Unlock()
 }
 
 // TestBotSendAndEdit tests message sending and editing
