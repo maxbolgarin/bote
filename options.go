@@ -60,6 +60,10 @@ type (
 		// It will log updates even if Debug==false. It will log updates even if EnableLogging == false.
 		// You should set LogUpdates == false to disable updates logging.
 		UpdateLogger UpdateLogger
+
+		// Poller is a poller for the bot. It uses default poller by default.
+		// You should implement it in your application if you want to use custom poller (e.g. for testing).
+		Poller tele.Poller
 	}
 
 	// UpdateType is a type of update that is using in update logging.
@@ -159,8 +163,12 @@ func WithUpdateLogger(logger UpdateLogger) func(opts *Options) {
 }
 
 // WithTestMode returns an option that sets the test mode.
-func WithTestMode() func(opts *Options) {
+// If poller is provided, it will be used instead of the default poller.
+func WithTestMode(poller ...tele.Poller) func(opts *Options) {
 	return func(opts *Options) {
+		if len(poller) > 0 {
+			opts.Poller = poller[0]
+		}
 		opts.Config.TestMode = true
 	}
 }

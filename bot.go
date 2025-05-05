@@ -72,7 +72,7 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 		return nil, errm.Wrap(err, "new user manager")
 	}
 
-	b, err := newBaseBot(token, opts.Config, opts.Logger)
+	b, err := newBaseBot(token, opts)
 	if err != nil {
 		return nil, errm.Wrap(err, "start bot")
 	}
@@ -444,22 +444,28 @@ type baseBot struct {
 	middlewares    []func(upd *tele.Update) bool
 }
 
-func newBaseBot(token string, cfg Config, log Logger) (*baseBot, error) {
+func newBaseBot(token string, opts Options) (*baseBot, error) {
 	b := &baseBot{
-		log:            log,
-		defaultOptions: []any{cfg.ParseMode},
+		log:            opts.Logger,
+		defaultOptions: []any{opts.Config.ParseMode},
 		middlewares:    make([]func(upd *tele.Update) bool, 0),
 	}
 
-	if cfg.NoPreview {
+	if opts.Config.NoPreview {
 		b.defaultOptions = append(b.defaultOptions, tele.NoPreview)
+	}
+
+	var poller tele.Poller
+	poller = &tele.LongPoller{Timeout: opts.Config.LPTimeout}
+	if opts.Poller != nil {
+		poller = opts.Poller
 	}
 
 	bot, err := tele.NewBot(tele.Settings{
 		Token:   token,
-		Poller:  tele.NewMiddlewarePoller(&tele.LongPoller{Timeout: cfg.LPTimeout}, b.middleware),
-		Client:  &http.Client{Timeout: 2 * cfg.LPTimeout},
-		Verbose: cfg.Debug,
+		Poller:  tele.NewMiddlewarePoller(poller, b.middleware),
+		Client:  &http.Client{Timeout: 2 * opts.Config.LPTimeout},
+		Verbose: opts.Config.Debug,
 		OnError: func(err error, ctx tele.Context) {
 			var userID int64
 			if ctx != nil && ctx.Chat() != nil {
@@ -467,7 +473,7 @@ func newBaseBot(token string, cfg Config, log Logger) (*baseBot, error) {
 			}
 			b.log.Error("error callback", "error", err, "user_id", userID)
 		},
-		Offline: cfg.TestMode,
+		Offline: opts.Config.TestMode,
 	})
 	if err != nil {
 		return nil, errm.Wrap(err, "new telebot")
