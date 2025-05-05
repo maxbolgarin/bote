@@ -116,6 +116,11 @@ type Config struct {
 	// Default: false.
 	// You can use environment variable BOTE_DEBUG.
 	Debug bool `yaml:"debug" json:"debug" env:"BOTE_DEBUG"`
+
+	// TestMode is a flag that enables test mode. It set log level to debug and bot to offline.
+	// Default: false.
+	// You can use environment variable BOTE_TEST_MODE.
+	TestMode bool `yaml:"test_mode" json:"test_mode" env:"BOTE_TEST_MODE"`
 }
 
 // WithConfig returns an option that sets the bot configuration.
@@ -153,6 +158,13 @@ func WithUpdateLogger(logger UpdateLogger) func(opts *Options) {
 	}
 }
 
+// WithTestMode returns an option that sets the test mode.
+func WithTestMode() func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.TestMode = true
+	}
+}
+
 func (cfg *Config) prepareAndValidate() error {
 	if err := env.Parse(cfg); err != nil {
 		return err
@@ -164,6 +176,7 @@ func (cfg *Config) prepareAndValidate() error {
 	cfg.DeleteMessages = lang.Check(cfg.DeleteMessages, lang.Ptr(true))
 	cfg.LogUpdates = lang.Check(cfg.LogUpdates, lang.Ptr(true))
 	cfg.EnableLogging = lang.Check(cfg.EnableLogging, lang.Ptr(true))
+	cfg.Debug = lang.Check(cfg.Debug, cfg.TestMode)
 
 	return nil
 }

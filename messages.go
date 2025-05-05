@@ -5,7 +5,6 @@ import (
 	"html"
 	"strings"
 
-	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/lang"
 )
 
@@ -68,13 +67,6 @@ func F(msg string, formats ...Format) string {
 		}
 	}
 	return msg
-}
-
-// Max possible length of entity ID (telegram bot constraint)
-const entityIDLength = 12
-
-func NewID() string {
-	return abstract.GetRandomString(entityIDLength)
 }
 
 // MessageBuilder is a wrapper for [strings.Builder] with additional methods.

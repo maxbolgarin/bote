@@ -467,6 +467,7 @@ func newBaseBot(token string, cfg Config, log Logger) (*baseBot, error) {
 			}
 			b.log.Error("error callback", "error", err, "user_id", userID)
 		},
+		Offline: cfg.TestMode,
 	})
 	if err != nil {
 		return nil, errm.Wrap(err, "new telebot")

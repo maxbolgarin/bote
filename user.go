@@ -305,6 +305,11 @@ func (u *userContextImpl) String() string {
 }
 
 func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
+	if newState == nil {
+		u.log().Warn("attempted to set nil state", "user_id", u.ID())
+		return
+	}
+
 	if newState.NotChanged() {
 		return
 	}
@@ -315,6 +320,11 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 		msgID = lang.Check(lang.First(msgIDRaw), u.user.Messages.MainID)
 		upd   UserStateDiff
 	)
+
+	if msgID <= 0 {
+		u.log().Warn("invalid message ID for setState", "user_id", u.ID(), "message_id", msgID)
+		msgID = u.user.Messages.MainID // Fallback to main message ID
+	}
 
 	currentState, ok := u.user.State.MessageStates[msgID]
 	if ok && newState != state(currentState) && state(currentState).IsText() {
@@ -349,7 +359,6 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	// Release the lock before making DB calls to avoid holding it too long
 	u.mu.Unlock()
 
-	// Update the database
 	u.db.Update(userID, &UserModelDiff{
 		State:        &upd,
 		Messages:     &UserMessagesDiff{LastActions: lastActions},
@@ -821,7 +830,7 @@ func newUserManager(db UsersStorage, log Logger) (*userManagerImpl, error) {
 		WithTTL(userCacheTTL).
 		Build()
 	if err != nil {
-		return nil, err
+		return nil, errm.Wrapf(err, "failed to create user cache with capacity %d", userCacheCapacity)
 	}
 
 	m := &userManagerImpl{
@@ -834,6 +843,10 @@ func newUserManager(db UsersStorage, log Logger) (*userManagerImpl, error) {
 }
 
 func (m *userManagerImpl) prepareUser(ctx context.Context, tUser *tele.User) (*userContextImpl, error) {
+	if tUser == nil {
+		return nil, errm.New("cannot prepare user: telegram user is nil")
+	}
+
 	// Sanitize user input before processing
 	sanitizedUser := sanitizeTelegramUser(tUser)
 
@@ -846,12 +859,19 @@ func (m *userManagerImpl) prepareUser(ctx context.Context, tUser *tele.User) (*u
 }
 
 func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
+	if userID == 0 {
+		m.log.Error("invalid user ID", "user_id", userID, "error", "userID cannot be zero")
+		tUser := &tele.User{ID: 1} // Fallback to a safe default
+		user := m.newUserContext(newUserModel(tUser))
+		return user
+	}
+
 	user, found := m.users.Get(userID)
 	if found {
 		return user
 	}
 
-	m.log.Warn("bug: not found in cache", "user_id", userID)
+	m.log.Warn("user not found in cache", "user_id", userID, "action", "attempting to create new user")
 
 	tUser := &tele.User{ID: userID}
 
@@ -860,7 +880,13 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 
 	user, err := m.createUser(ctx, tUser)
 	if err != nil {
-		m.log.Error("cannot create user after cache miss", "user_id", userID, "error", err)
+		m.log.Error("cannot create user after cache miss",
+			"user_id", userID,
+			"error", err,
+			"error_type", fmt.Sprintf("%T", err))
+
+		// Create an emergency fallback user
+		m.log.Info("creating fallback user object", "user_id", userID)
 		user = m.newUserContext(newUserModel(tUser))
 	}
 
@@ -877,26 +903,38 @@ func (m *userManagerImpl) getAllUsers() []User {
 }
 
 func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (*userContextImpl, error) {
+	if ctx == nil {
+		return nil, errm.New("cannot create user: context is nil")
+	}
+
+	if tUser == nil {
+		return nil, errm.New("cannot create user: telegram user is nil")
+	}
+
 	userModel, isFound, err := m.db.Find(ctx, tUser.ID)
 	if err != nil {
-		return nil, errm.Wrap(err, "get")
+		return nil, errm.Wrapf(err, "failed to find user %d in database", tUser.ID)
 	}
+
 	if !isFound {
 		userModel = newUserModel(tUser)
 		if err := m.db.Insert(ctx, userModel); err != nil {
-			return nil, errm.Wrap(err, "insert user")
+			return nil, errm.Wrapf(err, "failed to insert new user %d into database", tUser.ID)
 		}
 	}
+
 	user := m.newUserContext(userModel)
-	m.users.Set(user.ID(), user)
+	if ok := m.users.Set(user.ID(), user); !ok {
+		m.log.Warn("failed to add user to cache", "user_id", user.ID(), "username", user.Username())
+	}
 
 	// Disabled user -> user blocked bot
 	// If user gets here -> he makes request -> he unblock bot
 	if userModel.IsDisabled {
-		m.log.Info("new user, enable from disabled", "user_id", user.ID(), "username", user.Username())
+		m.log.Info("enabling previously disabled user", "user_id", user.ID(), "username", user.Username())
 		user.enable()
 	} else {
-		m.log.Info("new user", "user_id", user.ID(), "username", user.Username())
+		m.log.Info("new user created", "user_id", user.ID(), "username", user.Username())
 	}
 
 	return user, nil
@@ -927,7 +965,7 @@ func newInMemoryUserStorage() (UsersStorage, error) {
 		WithTTL(userCacheTTL).
 		Build()
 	if err != nil {
-		return nil, err
+		return nil, errm.Wrapf(err, "failed to create in-memory storage with capacity %d", userCacheCapacity)
 	}
 	return &inMemoryUserStorage{
 		cache: s,
@@ -935,11 +973,29 @@ func newInMemoryUserStorage() (UsersStorage, error) {
 }
 
 func (m *inMemoryUserStorage) Insert(ctx context.Context, user UserModel) error {
-	m.cache.Set(user.ID, user)
+	if ctx == nil {
+		return errm.New("cannot insert user: context is nil")
+	}
+
+	if user.ID == 0 {
+		return errm.New("cannot insert user: invalid user ID (zero)")
+	}
+
+	if !m.cache.Set(user.ID, user) {
+		return errm.Wrap(fmt.Errorf("cache rejected insertion"), fmt.Sprintf("failed to insert user %d into in-memory storage", user.ID))
+	}
 	return nil
 }
 
 func (m *inMemoryUserStorage) Find(ctx context.Context, id int64) (UserModel, bool, error) {
+	if ctx == nil {
+		return UserModel{}, false, errm.New("cannot find user: context is nil")
+	}
+
+	if id == 0 {
+		return UserModel{}, false, errm.New("cannot find user: invalid user ID (zero)")
+	}
+
 	user, found := m.cache.Get(id)
 	if !found {
 		return UserModel{}, false, nil
@@ -1036,4 +1092,32 @@ func sanitizeTelegramUser(user *tele.User) *tele.User {
 	sanitized.LanguageCode = sanitizeText(user.LanguageCode, 1000)
 
 	return &sanitized
+}
+
+// Helper method to get logger for user operations
+func (u *userContextImpl) log() Logger {
+	b := getBotFromUser(u)
+	if b == nil || b.bot == nil || b.bot.log == nil {
+		// Fallback if we can't get the bot's logger
+		return noopLogger{}
+	}
+	return b.bot.log
+}
+
+// getBotFromUser attempts to find the bot instance from a user context
+// This is used for error logging when we don't have direct access to the bot
+var botRegistry = map[int64]*Bot{} // Simple global registry for demonstration
+var botRegistryMu sync.RWMutex
+
+// This would be called when creating a new user
+func registerUserWithBot(userID int64, bot *Bot) {
+	botRegistryMu.Lock()
+	defer botRegistryMu.Unlock()
+	botRegistry[userID] = bot
+}
+
+func getBotFromUser(u *userContextImpl) *Bot {
+	botRegistryMu.RLock()
+	defer botRegistryMu.RUnlock()
+	return botRegistry[u.ID()]
 }
