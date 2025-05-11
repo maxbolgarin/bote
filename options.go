@@ -17,6 +17,8 @@ const (
 
 	// maxInitTasksPerSecond is the maximum number of init users per second.
 	maxInitTasksPerSecond = 20
+
+	startCommand = "/start"
 )
 
 type (

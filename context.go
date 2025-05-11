@@ -113,6 +113,11 @@ type Context interface {
 	// Data items will be separated by '|' in a single data string.
 	// Button unique value is generated from hexing button name with 10 random bytes at the end.
 	Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn
+
+	// DeleteUser deletes user from the memory and deletes all messages of the user.
+	// Returns true if all messages were deleted successfully, false otherwise.
+	// It doesn't delete user from the persistent database, so you should make it manually.
+	DeleteUser() bool
 }
 
 func (b *Bot) newContext(c tele.Context) *contextImpl {
@@ -512,6 +517,42 @@ func (c *contextImpl) DeleteAll(from int) {
 				make([]int, 0, len(msgs.HistoryIDs)+4),
 				msgs.MainID, msgs.HeadID, msgs.NotificationID, msgs.ErrorID),
 			msgs.HistoryIDs...)...)
+}
+
+func (c *contextImpl) DeleteUser() bool {
+	isOK := true
+	for _, id := range c.user.Messages().HistoryIDs {
+		if err := c.bt.bot.delete(c.user.ID(), id); err != nil {
+			c.bt.bot.log.Warn("cannot delete history message", userFields(c.user, "msg_id", id)...)
+			isOK = false
+		}
+	}
+	if c.user.Messages().NotificationID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
+			c.bt.bot.log.Warn("cannot delete notification message", userFields(c.user)...)
+			isOK = false
+		}
+	}
+	if c.user.Messages().ErrorID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().ErrorID); err != nil {
+			c.bt.bot.log.Warn("cannot delete error message", userFields(c.user)...)
+			isOK = false
+		}
+	}
+	if c.user.Messages().MainID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().MainID); err != nil {
+			c.bt.bot.log.Warn("cannot delete main message", userFields(c.user)...)
+			isOK = false
+		}
+	}
+	if c.user.Messages().HeadID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().HeadID); err != nil {
+			c.bt.bot.log.Warn("cannot delete head message", userFields(c.user)...)
+			isOK = false
+		}
+	}
+	c.bt.um.deleteUser(c.user.ID())
+	return isOK
 }
 
 func (c *contextImpl) prepareError(err error, msgID int) error {

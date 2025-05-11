@@ -112,7 +112,7 @@ func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[
 	for k, v := range stateMap {
 		b.stateMap.Set(k.String(), v)
 	}
-	b.Handle("/start", b.startHandler)
+	b.Handle(startCommand, b.startHandler)
 	b.bot.start()
 }
 
@@ -154,17 +154,22 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			}
 		}()
 
-		if !ctx.user.isInited.Load() && b.stateMap.Len() > 0 {
-			if err := b.initUserHandler(ctx); err != nil {
-				return ctx.handleError(err)
-			}
-		}
-
 		if ep, ok := endpoint.(string); ok && ep == tele.OnText {
 			if !ctx.user.hasTextMessages() {
 				return nil
 			}
 			ctx.textMsgID = ctx.user.lastTextMessage()
+
+			// /start was already handled
+			if ctx.ct.Text() == startCommand {
+				return nil
+			}
+		}
+
+		if !ctx.user.isInited.Load() && b.stateMap.Len() > 0 {
+			if err := b.initUserHandler(ctx); err != nil {
+				return ctx.handleError(err)
+			}
 		}
 
 		if err = f(ctx); err != nil {
@@ -192,6 +197,9 @@ func (b *Bot) SetMessageProvider(msgs MessageProvider) {
 
 func (b *Bot) initUserHandler(ctx *contextImpl) error {
 	defer ctx.user.isInited.Store(true)
+	if ctx.user.Messages().MainID == 0 || ctx.user.StateMain() == FirstRequest {
+		return nil
+	}
 
 	if err := b.initUser(ctx.user); err != nil {
 		return err
@@ -259,6 +267,9 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 		user.setErrorMessage(0)
 	}
 	if upd.Message != nil && b.deleteMessages {
+		if upd.Message.Text == startCommand && user.Messages().MainID == 0 {
+			return true
+		}
 		b.bot.delete(user.ID(), upd.Message.ID)
 	}
 
@@ -309,8 +320,12 @@ func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
 			fields = append(fields, "state", user.StateMain())
 		}
 
-		fields = append(fields, "button", any(user.getBtnName()))
-		fields = append(fields, "payload", any(user.getPayload()))
+		if btnName := user.getBtnName(); btnName != "" {
+			fields = append(fields, "button", any(btnName))
+		}
+		if payload := user.getPayload(); payload != "" {
+			fields = append(fields, "payload", any(payload))
+		}
 
 		b.rlog.Log(CallbackUpdate, fields...)
 		return true
@@ -320,6 +335,10 @@ func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
 }
 
 func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
+	if upd.Message != nil && upd.Message.Text == startCommand {
+		return true
+	}
+
 	st := userRaw.StateMain()
 	switch st {
 	case FirstRequest:
@@ -346,6 +365,9 @@ func (b *Bot) initUser(user *userContextImpl) error {
 
 	var msgWithoutState []int
 	for _, msgID := range msgsToInit {
+		if msgID == 0 {
+			continue
+		}
 		st, ok := user.State(msgID)
 		if !ok {
 			msgWithoutState = append(msgWithoutState, msgID)
@@ -359,6 +381,8 @@ func (b *Bot) initUser(user *userContextImpl) error {
 				Handler: b.startHandler,
 			}
 		}
+
+		b.bot.log.Debug("init user", "user_id", user.ID(), "msg_id", msgID, "state", st)
 
 		targetBundleErr := b.init(bundle, user, msgID, st)
 		if targetBundleErr != nil {
@@ -375,7 +399,6 @@ func (b *Bot) initUser(user *userContextImpl) error {
 				continue
 			}
 		}
-		b.bot.log.Debug("init user", "user_id", user.ID(), "msg_id", msgID, "state", st)
 	}
 
 	for _, msgID := range msgWithoutState {
@@ -401,6 +424,9 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 		},
 	}
 
+	mainBefore := user.Messages().MainID
+	headBefore := user.Messages().HeadID
+
 	err := bundle.Handler(&contextImpl{
 		bt:   b,
 		ct:   b.bot.tbot.NewContext(upd),
@@ -412,6 +438,25 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 			return nil
 		}
 		return errm.Wrap(err, "run handler")
+	}
+
+	newMainID := user.Messages().MainID
+	newHeadID := user.Messages().HeadID
+
+	if mainBefore != newMainID {
+		b.bot.log.Debug("main message id changed in init", "user_id", user.ID(), "msg_id", msgID)
+		if err := b.bot.delete(user.ID(), mainBefore); err != nil {
+			b.bot.log.Error("error deleting old main message", "user_id", user.ID(), "msg_id", mainBefore, "error", err)
+		}
+		user.forgetHistoryMessage(mainBefore)
+		msgID = newMainID
+	}
+	if headBefore != newHeadID {
+		b.bot.log.Debug("head message id changed in init", "user_id", user.ID(), "msg_id", msgID)
+		if err := b.bot.delete(user.ID(), headBefore); err != nil {
+			b.bot.log.Error("error deleting old head message", "user_id", user.ID(), "msg_id", headBefore, "error", err)
+		}
+		user.forgetHistoryMessage(headBefore)
 	}
 
 	// Expected state not changed after running handler
@@ -572,7 +617,7 @@ func (b *baseBot) delete(userID int64, msgIDs ...int) error {
 func (b *baseBot) deleteHistory(userID int64, lastMessageID int) map[int]struct{} {
 	deleted := map[int]struct{}{}
 	var counter int
-	for msgID := lastMessageID - 1; msgID > 1; msgID-- {
+	for msgID := lastMessageID; msgID > 1; msgID-- {
 		err := b.delete(userID, msgID)
 		if err != nil {
 			counter += 1

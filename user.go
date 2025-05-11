@@ -306,7 +306,6 @@ func (u *userContextImpl) String() string {
 
 func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	if newState == nil {
-		u.log().Warn("attempted to set nil state", "user_id", u.ID())
 		return
 	}
 
@@ -322,7 +321,6 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	)
 
 	if msgID <= 0 {
-		u.log().Warn("invalid message ID for setState", "user_id", u.ID(), "message_id", msgID)
 		msgID = u.user.Messages.MainID // Fallback to main message ID
 	}
 
@@ -636,10 +634,16 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 	u.user.Messages.LastActions[mainMsgID] = currentTime
 
 	// Append to history IDs
-	historyIDs := make([]int, len(u.user.Messages.HistoryIDs)+1)
-	copy(historyIDs, u.user.Messages.HistoryIDs)
-	historyIDs[len(historyIDs)-1] = u.user.Messages.MainID
-	u.user.Messages.HistoryIDs = historyIDs
+	var historyIDs []int
+	if u.user.Messages.MainID != 0 {
+		historyIDs = make([]int, len(u.user.Messages.HistoryIDs)+1)
+		copy(historyIDs, u.user.Messages.HistoryIDs)
+		historyIDs[len(historyIDs)-1] = u.user.Messages.MainID
+		u.user.Messages.HistoryIDs = historyIDs
+	} else {
+		historyIDs = make([]int, len(u.user.Messages.HistoryIDs))
+		copy(historyIDs, u.user.Messages.HistoryIDs)
+	}
 
 	var stateMain *string
 	var messageStates map[int]string
@@ -949,6 +953,10 @@ func (m *userManagerImpl) disableUser(userID int64) {
 	m.users.Delete(userID)
 }
 
+func (m *userManagerImpl) deleteUser(userID int64) {
+	m.users.Delete(userID)
+}
+
 type inMemoryUserStorage struct {
 	cache otter.Cache[int64, UserModel]
 }
@@ -1092,32 +1100,4 @@ func sanitizeTelegramUser(user *tele.User) *tele.User {
 	sanitized.LanguageCode = sanitizeText(user.LanguageCode, 1000)
 
 	return &sanitized
-}
-
-// Helper method to get logger for user operations
-func (u *userContextImpl) log() Logger {
-	b := getBotFromUser(u)
-	if b == nil || b.bot == nil || b.bot.log == nil {
-		// Fallback if we can't get the bot's logger
-		return noopLogger{}
-	}
-	return b.bot.log
-}
-
-// getBotFromUser attempts to find the bot instance from a user context
-// This is used for error logging when we don't have direct access to the bot
-var botRegistry = map[int64]*Bot{} // Simple global registry for demonstration
-var botRegistryMu sync.RWMutex
-
-// This would be called when creating a new user
-func registerUserWithBot(userID int64, bot *Bot) {
-	botRegistryMu.Lock()
-	defer botRegistryMu.Unlock()
-	botRegistry[userID] = bot
-}
-
-func getBotFromUser(u *userContextImpl) *Bot {
-	botRegistryMu.RLock()
-	defer botRegistryMu.RUnlock()
-	return botRegistry[u.ID()]
 }

@@ -69,6 +69,186 @@ func F(msg string, formats ...Format) string {
 	return msg
 }
 
+// FBold returns a string with bold formatting.
+func FBold(msg string) string {
+	return string(Bold) + msg + boldEnd
+}
+
+// FB returns a string with bold formatting.
+func FB(msg string) string {
+	return FBold(msg)
+}
+
+// FItalic returns a string with italic formatting.
+func FItalic(msg string) string {
+	return string(Italic) + msg + italicEnd
+}
+
+// FI returns a string with italic formatting.
+func FI(msg string) string {
+	return FItalic(msg)
+}
+
+// FCode returns a string with code formatting.
+func FCode(msg string) string {
+	return string(Code) + msg + codeEnd
+}
+
+// FC returns a string with code formatting.
+func FC(msg string) string {
+	return FCode(msg)
+}
+
+// FStrike returns a string with strike formatting.
+func FStrike(msg string) string {
+	return string(Strike) + msg + strikeEnd
+}
+
+// FS returns a string with strike formatting.
+func FS(msg string) string {
+	return FStrike(msg)
+}
+
+// FUnderline returns a string with underline formatting.
+func FUnderline(msg string) string {
+	return string(Underline) + msg + underlineEnd
+}
+
+// FU returns a string with underline formatting.
+func FU(msg string) string {
+	return FUnderline(msg)
+}
+
+// FPre returns a string with pre formatting.
+func FPre(msg string) string {
+	return string(Pre) + msg + preEnd
+}
+
+// FP returns a string with pre formatting.
+func FP(msg string) string {
+	return FPre(msg)
+}
+
+// FBoldf returns a string with bold formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FBoldf(msg string, args ...any) string {
+	if len(args) > 0 {
+		return string(Bold) + fmt.Sprintf(msg, args...) + boldEnd
+	}
+	return string(Bold) + msg + boldEnd
+}
+
+// FBf returns a string with bold formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FBf(msg string, args ...any) string {
+	return FBoldf(msg, args...)
+}
+
+// FItalicf returns a string with italic formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FItalicf(msg string, args ...any) string {
+	if len(args) > 0 {
+		return string(Italic) + fmt.Sprintf(msg, args...) + italicEnd
+	}
+	return string(Italic) + msg + italicEnd
+}
+
+// FI returns a string with italic formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FIf(msg string, args ...any) string {
+	return FItalicf(msg, args...)
+}
+
+// FCodef returns a string with code formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FCodef(msg string, args ...any) string {
+	if len(args) > 0 {
+		return string(Code) + fmt.Sprintf(msg, args...) + codeEnd
+	}
+	return string(Code) + msg + codeEnd
+}
+
+// FCf returns a string with code formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FCf(msg string, args ...any) string {
+	return FCodef(msg, args...)
+}
+
+// FStrikef returns a string with strike formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FStrikef(msg string, args ...any) string {
+	if len(args) > 0 {
+		return string(Strike) + fmt.Sprintf(msg, args...) + strikeEnd
+	}
+	return string(Strike) + msg + strikeEnd
+}
+
+// FSf returns a string with strike formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FSf(msg string, args ...any) string {
+	return FStrikef(msg, args...)
+}
+
+// FUnderlinef returns a string with underline formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FUnderlinef(msg string, args ...any) string {
+	if len(args) > 0 {
+		return string(Underline) + fmt.Sprintf(msg, args...) + underlineEnd
+	}
+	return string(Underline) + msg + underlineEnd
+}
+
+// FUf returns a string with underline formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FUf(msg string, args ...any) string {
+	return FUnderlinef(msg, args...)
+}
+
+// FPref returns a string with pre formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FPref(msg string, args ...any) string {
+	if len(args) > 0 {
+		return string(Pre) + fmt.Sprintf(msg, args...) + preEnd
+	}
+	return string(Pre) + msg + preEnd
+}
+
+// FPf returns a string with pre formatting.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func FPf(msg string, args ...any) string {
+	return FPref(msg, args...)
+}
+
+// FBoldUnderline returns a string with bold and underline formatting.
+func FBoldUnderline(msg string) string {
+	return FBold(FUnderline(msg))
+}
+
+// FBU is an alias for [FBoldUnderline].
+func FBU(msg string) string {
+	return FBoldUnderline(msg)
+}
+
+// FBoldCode returns a string with bold and code formatting.
+func FBoldCode(msg string) string {
+	return FBold(FCode(msg))
+}
+
+// FBC is an alias for [FBoldCode].
+func FBC(msg string) string {
+	return FBoldCode(msg)
+}
+
+// FBoldItalic returns a string with bold and italic formatting.
+func FBoldItalic(msg string) string {
+	return FBold(FItalic(msg))
+}
+
+// FBI is an alias for [FBoldItalic].
+func FBI(msg string) string {
+	return FBoldItalic(msg)
+}
+
 // MessageBuilder is a wrapper for [strings.Builder] with additional methods.
 // You should not copy it. Empty value of [MessageBuilder] is ready to use.
 type MessageBuilder struct {
@@ -82,33 +262,125 @@ func NewBuilder() *MessageBuilder {
 
 // Write writes a string to the builder.
 // It is an alias for [strings.Builder.WriteString].
-func (b *MessageBuilder) Write(msg string) {
-	b.WriteString(msg)
+func (b *MessageBuilder) Write(msg ...string) {
+	for _, s := range msg {
+		b.WriteString(s)
+	}
 }
 
-// Writef writes a formatted string to the builder using fmt.Sprintf.
-func (b *MessageBuilder) Writef(format string, args ...any) {
-	b.WriteString(fmt.Sprintf(format, args...))
+// Writef writes a string to the builder.
+// It is an alias for [strings.Builder.WriteString].
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func (b *MessageBuilder) Writef(msg string, args ...any) {
+	if len(args) > 0 {
+		b.WriteString(fmt.Sprintf(msg, args...))
+	} else {
+		b.WriteString(msg)
+	}
 }
 
 // Writeln writes a string to the builder and adds a newline at the end.
-func (b *MessageBuilder) Writeln(s string) {
-	b.WriteString(s + "\n")
+func (b *MessageBuilder) Writeln(s ...string) {
+	for _, s := range s {
+		b.WriteString(s + "\n")
+	}
 }
 
-// WriteIf writes either msgIf or msgElse depending on the value of first argument.
-func (b *MessageBuilder) WriteIf(toWrite bool, msgIf, msgElse string) {
-	if toWrite {
-		b.WriteString(msgIf)
+// Writeln writes a string to the builder and adds a newline at the end.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func (b *MessageBuilder) Writelnf(s string, args ...any) {
+	if len(args) > 0 {
+		b.WriteString(fmt.Sprintf(s, args...) + "\n")
 	} else {
-		b.WriteString(msgElse)
+		b.WriteString(s + "\n")
+	}
+}
+
+// Writelnn writes a string to the builder and adds two newlines at the end.
+func (b *MessageBuilder) Writelnn(s ...string) {
+	for _, s := range s {
+		b.WriteString(s + "\n\n")
+	}
+}
+
+// Writelnn writes a string to the builder and adds two newlines at the end.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func (b *MessageBuilder) Writelnnf(s string, args ...any) {
+	if len(args) > 0 {
+		b.WriteString(fmt.Sprintf(s, args...) + "\n\n")
+	} else {
+		b.WriteString(s + "\n\n")
+	}
+}
+
+// Writebn writes a string to the builder and adds a newline at the beginning.
+// It is an alias for [strings.Builder.WriteString].
+func (b *MessageBuilder) Writebn(msg ...string) {
+	for _, s := range msg {
+		b.WriteString("\n" + s)
+	}
+}
+
+// Writebnf writes a string to the builder and adds a newline at the beginning.
+// It is an alias for [strings.Builder.WriteString].
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func (b *MessageBuilder) Writebnf(msg string, args ...any) {
+	if len(args) > 0 {
+		b.WriteString("\n" + fmt.Sprintf(msg, args...))
+	} else {
+		b.WriteString("\n" + msg)
+	}
+}
+
+// Writebln writes a string to the builder and adds a newline at the beginning and a newline at the end.
+func (b *MessageBuilder) Writebln(msg ...string) {
+	for _, s := range msg {
+		b.WriteString("\n" + s + "\n")
+	}
+}
+
+// Writeblnf writes a string to the builder and adds a newline at the beginning and a newline at the end.
+// If args are provided, it uses [fmt.Sprintf] to format the string.
+func (b *MessageBuilder) Writeblnf(msg string, args ...any) {
+	if len(args) > 0 {
+		b.WriteString("\n" + fmt.Sprintf(msg, args...) + "\n")
+	} else {
+		b.WriteString("\n" + msg + "\n")
+	}
+}
+
+// WriteIf writes either writeTrue or writeFalse depending on the value of first argument.
+func (b *MessageBuilder) WriteIf(condition bool, writeTrue, writeFalse string) {
+	if condition {
+		b.WriteString(writeTrue)
+	} else {
+		b.WriteString(writeFalse)
+	}
+}
+
+// WriteIf writes either writeTrue or writeFalse depending on the value of first argument.
+func (b *MessageBuilder) WriteIfF(condition bool, writeTrue, writeFalse string, args ...any) {
+	if condition {
+		if len(args) > 0 {
+			b.WriteString(fmt.Sprintf(writeTrue, args...))
+		} else {
+			b.WriteString(writeTrue)
+		}
+	} else {
+		if len(args) > 0 {
+			b.WriteString(fmt.Sprintf(writeFalse, args...))
+		} else {
+			b.WriteString(writeFalse)
+		}
 	}
 }
 
 // WriteBytes writes a byte slice to the builder.
 // It is an alias for [strings.Builder.Write].
-func (b *MessageBuilder) WriteBytes(data []byte) {
-	b.Builder.Write(data)
+func (b *MessageBuilder) WriteBytes(data ...[]byte) {
+	for _, d := range data {
+		b.Builder.Write(d)
+	}
 }
 
 // IsEmpty returns true if the builder's length is 0.

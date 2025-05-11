@@ -90,6 +90,7 @@ func CreateBtnData(dataList ...string) string {
 type Keyboard struct {
 	buttons    [][]tele.Btn
 	currentRow []tele.Btn
+	footer     []tele.Btn
 
 	optionalRowLen int
 
@@ -166,6 +167,12 @@ func (k *Keyboard) AddRow(btns ...tele.Btn) *Keyboard {
 	return k
 }
 
+// AddFooter adds buttons to the footer row.
+func (k *Keyboard) AddFooter(btns ...tele.Btn) *Keyboard {
+	k.footer = append(k.footer, btns...)
+	return k
+}
+
 // StartNewRow creates a new row.
 func (k *Keyboard) StartNewRow() *Keyboard {
 	if len(k.currentRow) == 0 {
@@ -193,6 +200,14 @@ func (k *Keyboard) CreateInlineMarkup() *tele.ReplyMarkup {
 		out = append(out, rOut)
 	}
 
+	if len(k.footer) > 0 {
+		rOut := make([]tele.InlineButton, 0, len(k.footer))
+		for _, btn := range k.footer {
+			rOut = append(rOut, *btn.Inline())
+		}
+		out = append(out, rOut)
+	}
+
 	selector := tele.ReplyMarkup{
 		InlineKeyboard: out,
 	}
@@ -211,6 +226,14 @@ func (k *Keyboard) CreateReplyMarkup(oneTime bool) *tele.ReplyMarkup {
 		rOut := make([]tele.ReplyButton, 0, len(row))
 		for _, btn := range row {
 			btn.Unique = "" // I should do this thing because of nil coming from Reply() func
+			rOut = append(rOut, *btn.Reply())
+		}
+		out = append(out, rOut)
+	}
+
+	if len(k.footer) > 0 {
+		rOut := make([]tele.ReplyButton, 0, len(k.footer))
+		for _, btn := range k.footer {
 			rOut = append(rOut, *btn.Reply())
 		}
 		out = append(out, rOut)
