@@ -124,7 +124,7 @@ type UserMessages struct {
 	MainID int `bson:"main_id" json:"main_id" db:"main_id"`
 	// Head message is sent right before main message for making bot more interactive.
 	HeadID int `bson:"head_id" json:"head_id" db:"head_id"`
-	// Notification message can be sent in any time and deleted after some time.
+	// Notification message can be sent in any time. Old notification message will be deleted when new one is sent.
 	NotificationID int `bson:"notification_id" json:"notification_id" db:"notification_id"`
 	// Error message can be sent in any time in case of error and deleted automically after next action.
 	ErrorID int `bson:"error_id" json:"error_id" db:"error_id"`

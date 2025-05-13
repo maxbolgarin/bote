@@ -314,6 +314,11 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 		c.bt.bot.log.Error("notification message cannot be empty", userFields(c.User())...)
 		return nil
 	}
+	if c.user.Messages().NotificationID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
+			c.bt.bot.log.Warn("cannot delete previous notification message", userFields(c.user)...)
+		}
+	}
 
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, kb)...)
 	if err != nil {
