@@ -21,6 +21,9 @@ const (
 	startCommand = "/start"
 )
 
+// EmptyHandler is a handler that does nothing.
+var EmptyHandler = func(c Context) error { return nil }
+
 type (
 	// HandlerFunc represents a function that is used to handle user actions in bot.
 	HandlerFunc func(c Context) error
@@ -97,6 +100,16 @@ type Config struct {
 	// Default: "en".
 	// Environment variable: BOTE_DEFAULT_LANGUAGE_CODE.
 	DefaultLanguageCode string `yaml:"default_language_code" json:"default_language_code" env:"BOTE_DEFAULT_LANGUAGE_CODE"`
+
+	// UserCacheCapacity is the capacity of the user cache. Cache will evict users with least activity.
+	// Default: 10000.
+	// Environment variable: BOTE_USER_CACHE_CAPACITY.
+	UserCacheCapacity int `yaml:"user_cache_capacity" json:"user_cache_capacity" env:"BOTE_USER_CACHE_CAPACITY"`
+
+	// UserCacheTTL is the TTL of the user cache.
+	// Default: 24 hours.
+	// Environment variable: BOTE_USER_CACHE_TTL.
+	UserCacheTTL time.Duration `yaml:"user_cache_ttl" json:"user_cache_ttl" env:"BOTE_USER_CACHE_TTL"`
 
 	// NoPreview is a flag that disables link preview in bot messages.
 	// Default: false.
@@ -187,6 +200,8 @@ func (cfg *Config) prepareAndValidate() error {
 	cfg.LogUpdates = lang.Check(cfg.LogUpdates, lang.Ptr(true))
 	cfg.EnableLogging = lang.Check(cfg.EnableLogging, lang.Ptr(true))
 	cfg.Debug = lang.Check(cfg.Debug, cfg.TestMode)
+	cfg.UserCacheCapacity = lang.Check(cfg.UserCacheCapacity, 10000)
+	cfg.UserCacheTTL = lang.Check(cfg.UserCacheTTL, 24*time.Hour)
 
 	return nil
 }
@@ -218,7 +233,7 @@ func prepareOpts(opts Options) (Options, error) {
 	}
 
 	if opts.UserDB == nil {
-		opts.UserDB, err = newInMemoryUserStorage()
+		opts.UserDB, err = newInMemoryUserStorage(opts.Config.UserCacheCapacity, opts.Config.UserCacheTTL)
 		if err != nil {
 			return opts, errm.Wrap(err, "new user storage")
 		}

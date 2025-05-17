@@ -60,7 +60,7 @@ func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...strin
 		ctx.user.buttonMap.Set(id, InitBundle{
 			Handler: callback,
 			Data:    data,
-		})
+		}) 
 	}
 	return btn
 }

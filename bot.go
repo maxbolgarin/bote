@@ -67,7 +67,7 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 		return nil, errm.Wrap(err, "prepare opts")
 	}
 
-	um, err := newUserManager(opts.UserDB, opts.Logger)
+	um, err := newUserManager(opts.UserDB, opts.Logger, opts.Config.UserCacheCapacity, opts.Config.UserCacheTTL)
 	if err != nil {
 		return nil, errm.Wrap(err, "new user manager")
 	}
@@ -249,7 +249,7 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	user, err := b.um.prepareUser(ctx, sender)
 	if err != nil {
 		b.bot.log.Error("cannot prepare user", "error", err, "user_id", sender.ID, "username", sender.Username)
-		b.bot.send(sender.ID, b.msgs.Messages(b.defaultLanguageCode).GeneralError())
+		b.sendError(sender.ID, b.msgs.Messages(b.defaultLanguageCode).GeneralError())
 		return false
 	}
 
@@ -474,6 +474,40 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 	user.setState(bundle.State, msgID)
 
 	return nil
+}
+
+func (b *Bot) sendError(userID int64, msg string, opts ...any) {
+	user := b.GetUser(userID).(*userContextImpl)
+	if user == nil {
+		b.bot.log.Error("failed to send error message", "user_id", userID, "error", errEmptyUserID)
+		return
+	}
+	if user.Messages().ErrorID != 0 {
+		b.bot.delete(user.ID(), user.Messages().ErrorID)
+	}
+	closeBtn := b.msgs.Messages(user.Language()).CloseBtn()
+	if closeBtn != "" {
+		_, unique := getBtnIDAndUnique(closeBtn)
+		btn := tele.Btn{
+			Unique: unique,
+			Text:   closeBtn,
+		}
+		opts = append(opts, SingleRow(btn))
+		b.bot.handle(b, func(ctx tele.Context) error {
+			if user.Messages().ErrorID == 0 {
+				return nil
+			}
+			b.bot.delete(user.ID(), user.Messages().ErrorID)
+			user.setErrorMessage(0)
+			return nil
+		})
+	}
+	msgID, err := b.bot.send(user.ID(), msg, append(opts, tele.Silent)...)
+	if err != nil {
+		b.bot.log.Error("failed to send error message", "user_id", user.ID(), "error", err)
+		return
+	}
+	user.setErrorMessage(msgID)
 }
 
 var (

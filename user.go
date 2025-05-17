@@ -809,19 +809,13 @@ func newUserInfo(tUser *tele.User) UserInfo {
 	}
 }
 
-const (
-	userCacheCapacity = 1000
-	// Adding cache TTL for inactive users
-	userCacheTTL = 24 * time.Hour
-)
-
 type userManagerImpl struct {
 	users otter.Cache[int64, *userContextImpl]
 	db    UsersStorage
 	log   Logger
 }
 
-func newUserManager(db UsersStorage, log Logger) (*userManagerImpl, error) {
+func newUserManager(db UsersStorage, log Logger, userCacheCapacity int, userCacheTTL time.Duration) (*userManagerImpl, error) {
 	// Configure otter cache with proper eviction settings and TTL
 	c, err := otter.MustBuilder[int64, *userContextImpl](userCacheCapacity).
 		// Add cost function to better manage memory
@@ -961,7 +955,7 @@ type inMemoryUserStorage struct {
 	cache otter.Cache[int64, UserModel]
 }
 
-func newInMemoryUserStorage() (UsersStorage, error) {
+func newInMemoryUserStorage(userCacheCapacity int, userCacheTTL time.Duration) (UsersStorage, error) {
 	// Configure in-memory storage with proper eviction settings
 	s, err := otter.MustBuilder[int64, UserModel](userCacheCapacity).
 		// Add cost function to better manage memory

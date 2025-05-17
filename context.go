@@ -248,7 +248,11 @@ func (c *contextImpl) Set(key, value string) {
 }
 
 func (c *contextImpl) Get(key string) string {
-	return c.ct.Get(key).(string)
+	out, ok := c.ct.Get(key).(string)
+	if !ok {
+		return ""
+	}
+	return out
 }
 
 func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) (err error) {
@@ -330,6 +334,12 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 }
 
 func (c *contextImpl) SendError(msg string, opts ...any) error {
+	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()
+	if closeBtn != "" {
+		opts = append(opts, SingleRow(c.Btn(closeBtn, func(c Context) error {
+			return c.DeleteError()
+		})))
+	}
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, tele.Silent)...)
 	if err != nil {
 		c.bt.bot.log.Error("failed to send error message", userFields(c.user)...)
@@ -609,8 +619,7 @@ func (c *contextImpl) handleError(err error) error {
 		if msgID == msgs.MainID || msgID == msgs.HeadID {
 			c.bt.bot.log.Warn("main/head message not found", userFields(c.user, "msg_id", msgID)...)
 
-			errorMsgID, _ := c.bt.bot.send(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).FatalError())
-			c.user.setErrorMessage(errorMsgID)
+			c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError())
 		}
 		if msgID == msgs.NotificationID {
 			c.bt.bot.log.Warn("notification message not found", userFields(c.user, "msg_id", msgID)...)
@@ -632,11 +641,14 @@ func (c *contextImpl) handleError(err error) error {
 
 	c.bt.bot.log.Error("handler", userFields(c.user, "error", err)...)
 
-	errorMsgID, _ := c.bt.bot.send(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError(), tele.Silent)
-	if c.user.Messages().ErrorID != 0 {
-		c.bt.bot.delete(c.user.ID(), c.user.Messages().ErrorID)
+	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()
+	opts := []any{}
+	if closeBtn != "" {
+		opts = append(opts, SingleRow(c.Btn(closeBtn, func(c Context) error {
+			return c.DeleteError()
+		})))
 	}
-	c.user.setErrorMessage(errorMsgID)
+	c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError(), append(opts, tele.Silent)...)
 
 	return nil
 }

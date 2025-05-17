@@ -16,12 +16,12 @@ type MessageProvider interface {
 
 // Messages is a collection of messages for a specific language.
 type Messages interface {
+	// CloseBtn is a message on inline keyboard button that closes the error message.
+	// Remain it empty if you don't want to show this button.
+	CloseBtn() string
+
 	// GeneralError is a general error message that sends when an unhandled error occurs.
 	GeneralError() string
-
-	// FatalError is a fatal error message that sends when bot cannot work further and must be restarted.
-	// It generally offers the user to press /start to restart the bot.
-	FatalError() string
 
 	// PrepareMessage calls before every Send, SendMain, Edit, EditMain or EditHistory.
 	// Provide zero msgID in Send and SendMain methods.
@@ -433,12 +433,12 @@ func (d defaultMessageProvider) Messages(languageCode string) Messages {
 
 type ruMessages struct{}
 
-func (d ruMessages) GeneralError() string {
-	return "Произошла внутренняя ошибка"
+func (d ruMessages) CloseBtn() string {
+	return "Закрыть"
 }
 
-func (d ruMessages) FatalError() string {
-	return "Произошла внутренняя ошибка!\nНажмите /start для восстановления бота"
+func (d ruMessages) GeneralError() string {
+	return "Произошла внутренняя ошибка"
 }
 
 func (d ruMessages) PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string {
@@ -447,12 +447,12 @@ func (d ruMessages) PrepareMessage(msg string, u User, newState State, msgID int
 
 type enMessages struct{}
 
-func (d enMessages) GeneralError() string {
-	return "There is an internal error"
+func (d enMessages) CloseBtn() string {
+	return "Close"
 }
 
-func (d enMessages) FatalError() string {
-	return "There is an internal error!\nPress /start to recover"
+func (d enMessages) GeneralError() string {
+	return "There is an internal error"
 }
 
 func (d enMessages) PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string {

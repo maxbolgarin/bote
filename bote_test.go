@@ -446,8 +446,8 @@ func (p *testMessageProvider) Messages(languageCode string) bote.Messages {
 
 type testMessages struct{}
 
+func (m *testMessages) CloseBtn() string     { return "Close" }
 func (m *testMessages) GeneralError() string { return "error" }
-func (m *testMessages) FatalError() string   { return "fatal" }
 func (m *testMessages) PrepareMessage(msg string, u bote.User, newState bote.State, msgID int, isHistorical bool) string {
 	return msg
 }
