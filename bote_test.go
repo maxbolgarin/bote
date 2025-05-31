@@ -435,7 +435,7 @@ func (s *testUserStorage) Find(ctx context.Context, id int64) (bote.UserModel, b
 		CreatedTime:  now,
 	}, true, nil
 }
-func (s *testUserStorage) Update(id int64, userModel *bote.UserModelDiff) {}
+func (s *testUserStorage) UpdateAsync(id int64, userModel *bote.UserModelDiff) {}
 
 // Mock message provider for testing
 type testMessageProvider struct{}

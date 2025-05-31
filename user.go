@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/maxbolgarin/abstract"
@@ -65,8 +64,8 @@ type UsersStorage interface {
 	// Find returns user from storage. It returns true as a second argument if user was found without error.
 	Find(ctx context.Context, id int64) (UserModel, bool, error)
 
-	// Update updates user model in storage. The idea of that method is that it calls on every user action
-	// (e.g. to update state), so it should be async to make it faster for user (without IO latency).
+	// UpdateAsync updates user model in storage. The idea of that method is that it calls on every user action
+	// (e.g. for update state), so it should be async to make it faster for user (without IO latency).
 	// So this method doesn't accept context and doesn't return error because it should be called in async goroutine.
 	//
 	// Warning! You can't use simple worker pool, because updates should be ordered. If you don't want to
@@ -76,7 +75,7 @@ type UsersStorage interface {
 	//
 	// If you want stable work of bote package, don't update user model by yourself. Bote will do it for you.
 	// If you want to expand user model by your additional fields, create an another table/collection in your db.
-	Update(id int64, userModel *UserModelDiff)
+	UpdateAsync(id int64, userModel *UserModelDiff)
 }
 
 // UserIDDBFieldName is a field name for user ID in DB.
@@ -198,6 +197,14 @@ func (u *UserModel) prepareAfterDB() {
 	}
 }
 
+func (m UserMessages) HasMsgID(msgID int) bool {
+	return m.MainID == msgID ||
+		m.HeadID == msgID ||
+		m.NotificationID == msgID ||
+		m.ErrorID == msgID ||
+		slices.Contains(m.HistoryIDs, msgID)
+}
+
 // userContextImpl implements User interface.
 type userContextImpl struct {
 	user UserModel
@@ -206,8 +213,8 @@ type userContextImpl struct {
 	btnName string
 	payload string
 
-	buttonMap *abstract.SafeMap[string, InitBundle]
-	isInited  atomic.Bool
+	buttonMap   *abstract.SafeMap[string, InitBundle]
+	isInitedMsg *abstract.SafeMap[int, bool]
 
 	// Add mutex for protecting user state and message updates
 	mu sync.RWMutex
@@ -215,7 +222,12 @@ type userContextImpl struct {
 
 func (m *userManagerImpl) newUserContext(user UserModel) *userContextImpl {
 	user.prepareAfterDB()
-	return &userContextImpl{db: m.db, user: user, buttonMap: abstract.NewSafeMap[string, InitBundle]()}
+	return &userContextImpl{
+		db:          m.db,
+		user:        user,
+		buttonMap:   abstract.NewSafeMap[string, InitBundle](),
+		isInitedMsg: abstract.NewSafeMap[int, bool](),
+	}
 }
 
 func (u *userContextImpl) ID() int64 {
@@ -357,7 +369,7 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	// Release the lock before making DB calls to avoid holding it too long
 	u.mu.Unlock()
 
-	u.db.Update(userID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		State:        &upd,
 		Messages:     &UserMessagesDiff{LastActions: lastActions},
 		LastSeenTime: &lastSeenTime,
@@ -480,7 +492,7 @@ func (u *userContextImpl) setMessages(msgIDs ...int) {
 
 	u.mu.Unlock()
 
-	u.db.Update(userID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			MainID:         &mainID,
 			HeadID:         &headID,
@@ -500,7 +512,7 @@ func (u *userContextImpl) setErrorMessage(msgID int) {
 	errorID := msgID
 	u.mu.Unlock()
 
-	u.db.Update(userID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			ErrorID: &errorID,
 		},
@@ -516,7 +528,7 @@ func (u *userContextImpl) setNotificationMessage(msgID int) {
 	notificationID := msgID
 	u.mu.Unlock()
 
-	u.db.Update(userID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		Messages: &UserMessagesDiff{
 			NotificationID: &notificationID,
 		},
@@ -571,7 +583,7 @@ func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
 	u.mu.Unlock()
 
 	if found {
-		u.db.Update(userID, &UserModelDiff{
+		u.db.UpdateAsync(userID, &UserModelDiff{
 			Messages: &UserMessagesDiff{
 				HistoryIDs:  updatedHistoryIDs,
 				LastActions: updatedLastActions,
@@ -621,7 +633,7 @@ func (u *userContextImpl) update(user *tele.User) {
 	u.mu.Unlock()
 
 	// Update the database
-	u.db.Update(userID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		Info: userInfoDiff,
 	})
 }
@@ -689,7 +701,7 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 		}
 	}
 
-	u.db.Update(userID, diff)
+	u.db.UpdateAsync(userID, diff)
 }
 
 func (u *userContextImpl) disable() {
@@ -717,7 +729,7 @@ func (u *userContextImpl) disable() {
 
 	u.mu.Unlock()
 
-	u.db.Update(userID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		State: &UserStateDiff{
 			Main:          &stateMain,
 			MessageStates: messageStates,
@@ -751,7 +763,7 @@ func (u *userContextImpl) enable() {
 
 	u.mu.Unlock()
 
-	u.db.Update(userID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		State: &UserStateDiff{
 			Main:          &stateMain,
 			MessageStates: messageStates,
@@ -759,6 +771,20 @@ func (u *userContextImpl) enable() {
 		DisabledTime: &disabledTime,
 		IsDisabled:   &isDisabled,
 	})
+}
+
+func (u *userContextImpl) isMsgInited(msgID int) bool {
+	if msgID == 0 || !u.user.Messages.HasMsgID(msgID) {
+		return true
+	}
+	return u.isInitedMsg.Get(msgID)
+}
+
+func (u *userContextImpl) setMsgInited(msgID int) {
+	if msgID == 0 || !u.user.Messages.HasMsgID(msgID) {
+		return
+	}
+	u.isInitedMsg.Set(msgID, true)
 }
 
 func (u *userContextImpl) getBtnName() string {
@@ -1014,7 +1040,7 @@ func (m *inMemoryUserStorage) FindAll(ctx context.Context) ([]UserModel, error) 
 	return out, nil
 }
 
-func (m *inMemoryUserStorage) Update(id int64, diff *UserModelDiff) {
+func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 	user, found := m.cache.Get(id)
 	if !found {
 		return

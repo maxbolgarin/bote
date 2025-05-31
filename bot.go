@@ -154,6 +154,13 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			}
 		}()
 
+		msgID := ctx.MessageID()
+		if !ctx.user.isMsgInited(msgID) && b.stateMap.Len() > 0 {
+			if err := b.initUserHandler(ctx, msgID); err != nil {
+				return ctx.handleError(err)
+			}
+		}
+
 		if ep, ok := endpoint.(string); ok && ep == tele.OnText {
 			if !ctx.user.hasTextMessages() {
 				return nil
@@ -163,12 +170,6 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			// /start was already handled
 			if ctx.ct.Text() == startCommand {
 				return nil
-			}
-		}
-
-		if !ctx.user.isInited.Load() && b.stateMap.Len() > 0 {
-			if err := b.initUserHandler(ctx); err != nil {
-				return ctx.handleError(err)
 			}
 		}
 
@@ -195,13 +196,13 @@ func (b *Bot) SetMessageProvider(msgs MessageProvider) {
 	b.msgs = msgs
 }
 
-func (b *Bot) initUserHandler(ctx *contextImpl) error {
-	defer ctx.user.isInited.Store(true)
+func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
+	defer ctx.user.setMsgInited(msgID)
 	if ctx.user.Messages().MainID == 0 || ctx.user.StateMain() == FirstRequest {
 		return nil
 	}
 
-	if err := b.initUser(ctx.user); err != nil {
+	if err := b.initUserMsg(ctx.user, msgID); err != nil {
 		return err
 	}
 
@@ -355,58 +356,39 @@ func userFields(user User, fields ...any) []any {
 	return append(f, fields...)
 }
 
-func (b *Bot) initUser(user *userContextImpl) error {
-	msgsToInit := append(user.Messages().HistoryIDs, user.Messages().MainID)
-	for i, j := 0, len(msgsToInit)-1; i < j; i, j = i+1, j-1 {
-		msgsToInit[i], msgsToInit[j] = msgsToInit[j], msgsToInit[i] // reverse to init from first in msg list
-	}
-
-	errs := errm.NewList()
-
-	var msgWithoutState []int
-	for _, msgID := range msgsToInit {
-		if msgID == 0 {
-			continue
-		}
-		st, ok := user.State(msgID)
-		if !ok {
-			msgWithoutState = append(msgWithoutState, msgID)
-			continue
-		}
-
-		bundle, foundBundle := b.stateMap.Lookup(st.String())
-		if !foundBundle {
-			b.bot.log.Warn("init bundle not found", "user_id", user.ID(), "msg_id", msgID, "state", st)
-			bundle = InitBundle{
-				Handler: b.startHandler,
-			}
-		}
-
-		b.bot.log.Debug("init user", "user_id", user.ID(), "msg_id", msgID, "state", st)
-
-		targetBundleErr := b.init(bundle, user, msgID, st)
-		if targetBundleErr != nil {
-			if !foundBundle {
-				// got error by startHandler
-				errs.Wrap(targetBundleErr, "start handler", "msg_id", msgID, "state", st)
-				continue
-			}
-			startHandlerErr := b.init(InitBundle{
-				Handler: b.startHandler,
-			}, user, msgID, st)
-			if startHandlerErr != nil {
-				errs.Wrap(startHandlerErr, "start handler", "msg_id", msgID, "state", st, "first_error", targetBundleErr)
-				continue
-			}
-		}
-	}
-
-	for _, msgID := range msgWithoutState {
+func (b *Bot) initUserMsg(user *userContextImpl, msgID int) error {
+	st, ok := user.State(msgID)
+	if !ok {
 		b.bot.log.Debug("forget history message without state", "user_id", user.ID(), "msg_id", msgID)
 		user.forgetHistoryMessage(msgID)
+		return nil
 	}
 
-	return errs.Err()
+	bundle, foundBundle := b.stateMap.Lookup(st.String())
+	if !foundBundle {
+		b.bot.log.Warn("init bundle not found", "user_id", user.ID(), "msg_id", msgID, "state", st)
+		bundle = InitBundle{
+			Handler: b.startHandler,
+		}
+	}
+
+	b.bot.log.Debug("init user message", "user_id", user.ID(), "msg_id", msgID, "state", st)
+
+	targetBundleErr := b.init(bundle, user, msgID, st)
+	if targetBundleErr != nil {
+		if !foundBundle {
+			// got error by startHandler
+			return errm.Wrap(targetBundleErr, "start handler", "msg_id", msgID, "state", st)
+		}
+		startHandlerErr := b.init(InitBundle{
+			Handler: b.startHandler,
+		}, user, msgID, st)
+		if startHandlerErr != nil {
+			return errm.Wrap(startHandlerErr, "start handler", "msg_id", msgID, "state", st, "first_error", targetBundleErr)
+		}
+	}
+
+	return nil
 }
 
 func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expectedState State) error {

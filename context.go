@@ -30,9 +30,6 @@ type Context interface {
 	// DataParsed returns all items of button data.
 	DataParsed() []string
 
-	// DataDouble returns two first items of button data.
-	DataDouble() (string, string)
-
 	// Text returns a text sended by the user.
 	Text() string
 
@@ -223,24 +220,21 @@ func (c *contextImpl) DataParsed() []string {
 	return strings.Split(c.Data(), "|")
 }
 
-func (c *contextImpl) DataDouble() (string, string) {
-	spl := strings.Split(c.Data(), "|")
-	if len(spl) < 2 {
-		return spl[0], ""
-	}
-	return spl[0], spl[1]
-}
-
 func (c *contextImpl) Text() string {
 	msg, _ := c.TextWithMessage()
 	return msg
 }
 
 func (c *contextImpl) TextWithMessage() (string, int) {
-	if msg := c.ct.Message(); msg != nil {
-		return msg.Text, msg.ID
+	msg := c.ct.Message()
+	if msg == nil {
+		return "", 0
 	}
-	return "", 0
+	// Do not return text of a bot message
+	if c.user.Messages().HasMsgID(msg.ID) {
+		return "", 0
+	}
+	return msg.Text, msg.ID
 }
 
 func (c *contextImpl) Set(key, value string) {
