@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"os"
 	"os/signal"
 
@@ -9,9 +8,6 @@ import (
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		panic("TELEGRAM_BOT_TOKEN is not set")
@@ -22,12 +18,12 @@ func main() {
 		NoPreview:           true,
 	}
 
-	b, err := bote.New(ctx, token, bote.WithConfig(cfg))
+	b, err := bote.New(token, bote.WithConfig(cfg))
 	if err != nil {
 		panic(err)
 	}
 
-	b.Start(ctx, startHandler, nil)
+	b.Start(startHandler, nil)
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt)

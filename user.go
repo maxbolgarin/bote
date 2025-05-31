@@ -845,7 +845,7 @@ func newUserManager(db UsersStorage, log Logger, userCacheCapacity int, userCach
 	// Configure otter cache with proper eviction settings and TTL
 	c, err := otter.MustBuilder[int64, *userContextImpl](userCacheCapacity).
 		// Add cost function to better manage memory
-		Cost(func(key int64, value *userContextImpl) uint32 {
+		Cost(func(_ int64, value *userContextImpl) uint32 {
 			// Cost is roughly based on the number of messages a user has
 			// This helps prioritize eviction of users with more stored messages
 			return uint32(1 + len(value.user.Messages.HistoryIDs))
@@ -919,7 +919,7 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 
 func (m *userManagerImpl) getAllUsers() []User {
 	out := make([]User, 0, m.users.Size())
-	m.users.Range(func(key int64, value *userContextImpl) bool {
+	m.users.Range(func(_ int64, value *userContextImpl) bool {
 		out = append(out, value)
 		return true
 	})
@@ -985,7 +985,7 @@ func newInMemoryUserStorage(userCacheCapacity int, userCacheTTL time.Duration) (
 	// Configure in-memory storage with proper eviction settings
 	s, err := otter.MustBuilder[int64, UserModel](userCacheCapacity).
 		// Add cost function to better manage memory
-		Cost(func(key int64, value UserModel) uint32 {
+		Cost(func(_ int64, value UserModel) uint32 {
 			// Cost is roughly based on the number of messages a user has
 			return uint32(1 + len(value.Messages.HistoryIDs))
 		}).
@@ -1010,7 +1010,7 @@ func (m *inMemoryUserStorage) Insert(ctx context.Context, user UserModel) error 
 	}
 
 	if !m.cache.Set(user.ID, user) {
-		return errm.Wrap(fmt.Errorf("cache rejected insertion"), fmt.Sprintf("failed to insert user %d into in-memory storage", user.ID))
+		return errm.Wrap(errm.New("cache rejected insertion"), fmt.Sprintf("failed to insert user %d into in-memory storage", user.ID))
 	}
 	return nil
 }
@@ -1031,9 +1031,9 @@ func (m *inMemoryUserStorage) Find(ctx context.Context, id int64) (UserModel, bo
 	return user, true, nil
 }
 
-func (m *inMemoryUserStorage) FindAll(ctx context.Context) ([]UserModel, error) {
+func (m *inMemoryUserStorage) FindAll(context.Context) ([]UserModel, error) {
 	out := make([]UserModel, 0, m.cache.Size())
-	m.cache.Range(func(key int64, value UserModel) bool {
+	m.cache.Range(func(_ int64, value UserModel) bool {
 		out = append(out, value)
 		return true
 	})
@@ -1096,7 +1096,7 @@ func (s state) String() string {
 	return string(s)
 }
 
-func (s state) IsText() bool {
+func (state) IsText() bool {
 	return false
 }
 

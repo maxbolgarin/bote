@@ -453,13 +453,11 @@ func (m *testMessages) PrepareMessage(msg string, u bote.User, newState bote.Sta
 }
 
 func TestBotWithTestPoller(t *testing.T) {
-	ctx := context.Background()
-
 	// Create a test poller
 	poller := NewTestPoller()
 
 	// Create a bot with test mode
-	bot, err := bote.New(ctx, "test_token", bote.WithTestMode(poller))
+	bot, err := bote.New("test_token", bote.WithTestMode(poller))
 	assert.NoError(t, err)
 	assert.NotNil(t, bot)
 
@@ -471,7 +469,7 @@ func TestBotWithTestPoller(t *testing.T) {
 	})
 
 	// Start the bot
-	bot.Start(ctx, func(c bote.Context) error {
+	bot.Start(func(c bote.Context) error {
 		return nil
 	}, nil)
 	defer bot.Stop()
@@ -506,8 +504,6 @@ func TestBotCallbackHandling(t *testing.T) {
 		t.Skip("Skipping TestBotCallbackHandling in short mode")
 	}
 
-	ctx := context.Background()
-
 	// Create a test poller
 	poller := NewTestPoller()
 
@@ -515,7 +511,7 @@ func TestBotCallbackHandling(t *testing.T) {
 	logger := &testLogger{}
 
 	// Create a bot with test mode
-	bot, err := bote.New(ctx, "test_token",
+	bot, err := bote.New("test_token",
 		bote.WithTestMode(poller),
 		bote.WithLogger(logger),
 	)
@@ -536,7 +532,7 @@ func TestBotCallbackHandling(t *testing.T) {
 	})
 
 	// Start the bot
-	bot.Start(ctx, func(c bote.Context) error {
+	bot.Start(func(c bote.Context) error {
 		return nil
 	}, nil)
 	defer bot.Stop()
@@ -575,8 +571,6 @@ func TestBotWithCustomOptions(t *testing.T) {
 		t.Skip("Skipping TestBotWithCustomOptions in short mode")
 	}
 
-	ctx := context.Background()
-
 	// Create custom components for testing
 	logger := &testLogger{}
 	updateLogger := &testUpdateLogger{}
@@ -585,7 +579,7 @@ func TestBotWithCustomOptions(t *testing.T) {
 	poller := NewTestPoller()
 
 	// Create a bot with custom options
-	bot, err := bote.New(ctx, "test_token",
+	bot, err := bote.New("test_token",
 		bote.WithTestMode(poller),
 		bote.WithLogger(logger),
 		bote.WithUpdateLogger(updateLogger),
@@ -609,7 +603,7 @@ func TestBotWithCustomOptions(t *testing.T) {
 	})
 
 	// Start the bot
-	bot.Start(ctx, func(c bote.Context) error {
+	bot.Start(func(c bote.Context) error {
 		return nil
 	}, nil)
 	defer bot.Stop()
@@ -832,8 +826,6 @@ func TestBotWithPollerShutdown(t *testing.T) {
 		t.Skip("Skipping TestBotWithPollerShutdown in short mode")
 	}
 
-	ctx := context.Background()
-
 	// Create a test poller
 	poller := NewTestPoller()
 
@@ -841,7 +833,7 @@ func TestBotWithPollerShutdown(t *testing.T) {
 	logger := &testLogger{}
 
 	// Create a bot with test mode
-	bot, err := bote.New(ctx, "test_token",
+	bot, err := bote.New("test_token",
 		bote.WithTestMode(poller),
 		bote.WithLogger(logger),
 	)
@@ -861,7 +853,7 @@ func TestBotWithPollerShutdown(t *testing.T) {
 	})
 
 	// Start the bot
-	bot.Start(ctx, func(c bote.Context) error {
+	bot.Start(func(c bote.Context) error {
 		return nil
 	}, nil)
 
@@ -962,11 +954,10 @@ func TestContextOperations(t *testing.T) {
 		t.Skip("Skipping TestContextOperations in short mode")
 	}
 
-	ctx := context.Background()
 	poller := NewTestPoller()
 
 	// Create a bot with test mode
-	bot, err := bote.New(ctx, "test_token", bote.WithTestMode(poller))
+	bot, err := bote.New("test_token", bote.WithTestMode(poller))
 	if err != nil {
 		t.Fatalf("Failed to create bot: %v", err)
 	}
@@ -1003,7 +994,7 @@ func TestContextOperations(t *testing.T) {
 	})
 
 	// Start the bot
-	bot.Start(ctx, func(c bote.Context) error {
+	bot.Start(func(c bote.Context) error {
 		return nil
 	}, nil)
 	defer bot.Stop()
@@ -1066,11 +1057,10 @@ func TestBotSendAndEdit(t *testing.T) {
 		t.Skip("Skipping TestBotSendAndEdit in short mode")
 	}
 
-	ctx := context.Background()
 	poller := NewTestPoller()
 
 	// Create a bot with test mode
-	bot, err := bote.New(ctx, "test_token", bote.WithTestMode(poller))
+	bot, err := bote.New("test_token", bote.WithTestMode(poller))
 	if err != nil {
 		t.Fatalf("Failed to create bot: %v", err)
 	}
@@ -1093,7 +1083,7 @@ func TestBotSendAndEdit(t *testing.T) {
 	})
 
 	// Start the bot
-	bot.Start(ctx, func(c bote.Context) error {
+	bot.Start(func(c bote.Context) error {
 		return nil
 	}, nil)
 	defer bot.Stop()

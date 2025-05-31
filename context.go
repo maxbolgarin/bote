@@ -273,8 +273,8 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 		return c.prepareError(err, mainMsgID)
 	}
 
-	if headMsgID := c.user.Messages().HeadID; headMsgID != 0 {
-		if err := c.bt.bot.delete(c.user.ID(), headMsgID); err != nil {
+	if headMsgID = c.user.Messages().HeadID; headMsgID != 0 {
+		if err = c.bt.bot.delete(c.user.ID(), headMsgID); err != nil {
 			c.bt.bot.log.Warn("cannot delete previous head message", userFields(c.user)...)
 		}
 	}
@@ -584,67 +584,115 @@ func (c *contextImpl) handleError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if strings.Contains(err.Error(), "bot was blocked by the user") {
-		c.bt.bot.log.Info("bot is blocked by user, disable", userFields(c.user)...)
-		c.bt.um.disableUser(c.user.ID())
+
+	errorMsg := err.Error()
+
+	// Handle specific error types
+	if c.handleBotBlockedError(errorMsg) {
 		return nil
 	}
 
-	if strings.Contains(err.Error(), "is not modified") {
+	if c.handleNotModifiedError(errorMsg) {
 		return nil
 	}
 
-	if strings.Contains(err.Error(), "message to edit not found") {
-		msgIDRaw := c.Get("msg_id")
-		if msgIDRaw == "" {
-			c.bt.bot.log.Warn("message to edit not found", userFields(c.user)...)
-			return nil
-		}
-
-		msgID, err := strconv.Atoi(msgIDRaw)
-		if err == nil {
-			if c.user.forgetHistoryMessage(msgID) {
-				c.bt.bot.log.Warn("history message not found", userFields(c.user, "msg_id", msgID)...)
-				return nil
-			}
-		}
-
-		msgs := c.user.Messages()
-		if msgID == msgs.MainID || msgID == msgs.HeadID {
-			c.bt.bot.log.Warn("main/head message not found", userFields(c.user, "msg_id", msgID)...)
-
-			c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError())
-		}
-		if msgID == msgs.NotificationID {
-			c.bt.bot.log.Warn("notification message not found", userFields(c.user, "msg_id", msgID)...)
-			c.user.setNotificationMessage(0)
-		}
-		if msgID == msgs.ErrorID {
-			c.bt.bot.log.Warn("error message not found", userFields(c.user, "msg_id", msgID)...)
-			c.user.setErrorMessage(0)
-		}
+	if c.handleMessageNotFoundError(errorMsg) {
 		return nil
 	}
 
-	if strings.Contains(err.Error(), "reset by peer") {
-		c.bt.bot.log.Warn("connection error", userFields(c.user, "error", err)...)
+	if c.handleConnectionError(errorMsg, err) {
 		return nil
 	}
 
-	// TODO: handle other errors
+	// Handle generic errors
+	c.handleGenericError(err)
+	return nil
+}
 
+func (c *contextImpl) handleBotBlockedError(errorMsg string) bool {
+	if !strings.Contains(errorMsg, "bot was blocked by the user") {
+		return false
+	}
+
+	c.bt.bot.log.Info("bot is blocked by user, disable", userFields(c.user)...)
+	c.bt.um.disableUser(c.user.ID())
+	return true
+}
+
+// error when you want to edit message with the same text and buttons
+func (*contextImpl) handleNotModifiedError(errorMsg string) bool {
+	return strings.Contains(errorMsg, "is not modified")
+}
+
+// error when you want to edit message that is not found
+func (c *contextImpl) handleMessageNotFoundError(errorMsg string) bool {
+	if !strings.Contains(errorMsg, "message to edit not found") {
+		return false
+	}
+
+	msgIDRaw := c.Get("msg_id")
+	if msgIDRaw == "" {
+		c.bt.bot.log.Warn("message to edit not found", userFields(c.user)...)
+		return true
+	}
+
+	msgID, err := strconv.Atoi(msgIDRaw)
+	if err != nil {
+		return true
+	}
+
+	// Try to remove message from history
+	if c.user.forgetHistoryMessage(msgID) {
+		c.bt.bot.log.Warn("history message not found", userFields(c.user, "msg_id", msgID)...)
+		return true
+	}
+
+	// Handle special message types
+	c.handleSpecialMessageNotFound(msgID)
+	return true
+}
+
+func (c *contextImpl) handleSpecialMessageNotFound(msgID int) {
+	msgs := c.user.Messages()
+
+	switch msgID {
+	case msgs.MainID, msgs.HeadID:
+		c.bt.bot.log.Warn("main/head message not found", userFields(c.user, "msg_id", msgID)...)
+		c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError())
+
+	case msgs.NotificationID:
+		c.bt.bot.log.Warn("notification message not found", userFields(c.user, "msg_id", msgID)...)
+		c.user.setNotificationMessage(0)
+
+	case msgs.ErrorID:
+		c.bt.bot.log.Warn("error message not found", userFields(c.user, "msg_id", msgID)...)
+		c.user.setErrorMessage(0)
+	}
+}
+
+func (c *contextImpl) handleConnectionError(errorMsg string, err error) bool {
+	if !strings.Contains(errorMsg, "reset by peer") {
+		return false
+	}
+
+	c.bt.bot.log.Warn("connection error", userFields(c.user, "error", err)...)
+	return true
+}
+
+func (c *contextImpl) handleGenericError(err error) {
 	c.bt.bot.log.Error("handler", userFields(c.user, "error", err)...)
 
+	// Create error message with optional close button
 	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()
-	opts := []any{}
+	opts := []any{tele.Silent}
+
 	if closeBtn != "" {
 		opts = append(opts, SingleRow(c.Btn(closeBtn, func(c Context) error {
 			return c.DeleteError()
 		})))
 	}
-	c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError(), append(opts, tele.Silent)...)
 
-	return nil
+	c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError(), opts...)
 }
 
 func (c *contextImpl) edit(msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {

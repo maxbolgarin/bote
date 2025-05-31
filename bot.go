@@ -49,16 +49,16 @@ type Bot struct {
 }
 
 // New creates the bot with optional options.
-func New(ctx context.Context, token string, optsFuncs ...func(*Options)) (*Bot, error) {
+func New(token string, optsFuncs ...func(*Options)) (*Bot, error) {
 	var opts Options
 	for _, f := range optsFuncs {
 		f(&opts)
 	}
-	return NewWithOptions(ctx, token, opts)
+	return NewWithOptions(token, opts)
 }
 
 // NewWithOptions starts the bot with options.
-func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, error) {
+func NewWithOptions(token string, opts Options) (*Bot, error) {
 	if token == "" {
 		return nil, errm.New("token cannot be empty")
 	}
@@ -107,7 +107,7 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 // Inline buttons will trigger onCallback handler if you don't init them after bot restart.
 // You can pass nil map if you don't need to reinit messages.
 // Don't forget to call Stop() to gracefully shutdown the bot.
-func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[State]InitBundle) {
+func (b *Bot) Start(startHandler HandlerFunc, stateMap map[State]InitBundle) {
 	b.startHandler = startHandler
 	for k, v := range stateMap {
 		b.stateMap.Set(k.String(), v)
@@ -156,7 +156,7 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 
 		msgID := ctx.MessageID()
 		if !ctx.user.isMsgInited(msgID) && b.stateMap.Len() > 0 {
-			if err := b.initUserHandler(ctx, msgID); err != nil {
+			if err = b.initUserHandler(ctx, msgID); err != nil {
 				return ctx.handleError(err)
 			}
 		}
@@ -178,7 +178,9 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 		}
 
 		if c.Callback() != nil {
-			c.Respond(&tele.CallbackResponse{})
+			if err = c.Respond(&tele.CallbackResponse{}); err != nil {
+				b.bot.log.Debug("failed to respond to callback", "error", err)
+			}
 		}
 
 		return nil
@@ -231,7 +233,7 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 	})
 }
 
-func (b *Bot) emptyHandler(ctx Context) error {
+func (*Bot) emptyHandler(Context) error {
 	return nil
 }
 
@@ -260,18 +262,28 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 }
 
 func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
-	user := userRaw.(*userContextImpl)
+	user, ok := userRaw.(*userContextImpl)
+	if !ok {
+		b.bot.log.Error("failed to cast user to userContextImpl", "user_id", userRaw.ID())
+		return false
+	}
 
 	msgIDs := user.Messages()
 	if msgIDs.ErrorID > 0 {
-		b.bot.delete(user.ID(), msgIDs.ErrorID)
+		err := b.bot.delete(user.ID(), msgIDs.ErrorID)
+		if err != nil {
+			b.bot.log.Debug("failed to delete error message", "user_id", user.ID(), "msg_id", msgIDs.ErrorID, "error", err)
+		}
 		user.setErrorMessage(0)
 	}
 	if upd.Message != nil && b.deleteMessages {
 		if upd.Message.Text == startCommand && user.Messages().MainID == 0 {
 			return true
 		}
-		b.bot.delete(user.ID(), upd.Message.ID)
+		err := b.bot.delete(user.ID(), upd.Message.ID)
+		if err != nil {
+			b.bot.log.Debug("failed to delete user message", "user_id", user.ID(), "msg_id", upd.Message.ID, "error", err)
+		}
 	}
 
 	if upd.Callback != nil {
@@ -292,7 +304,11 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 var cbackRx = regexp.MustCompile(`([-\w]+)(\|(.+))?`)
 
 func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
-	user := userRaw.(*userContextImpl)
+	user, ok := userRaw.(*userContextImpl)
+	if !ok {
+		b.bot.log.Error("failed to cast user to userContextImpl", "user_id", userRaw.ID())
+		return false
+	}
 
 	fields := make([]any, 0, 7)
 	fields = append(fields,
@@ -340,11 +356,10 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 		return true
 	}
 
-	st := userRaw.StateMain()
-	switch st {
-	case FirstRequest:
-		if b.startHandler != nil {
-			b.startHandler(b.newContextFromUpdate(*upd))
+	if userRaw.StateMain() == FirstRequest && b.startHandler != nil {
+		err := b.startHandler(b.newContextFromUpdate(*upd))
+		if err != nil {
+			b.bot.log.Error("failed to handle start command", "error", err)
 		}
 	}
 	return true
@@ -459,13 +474,16 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 }
 
 func (b *Bot) sendError(userID int64, msg string, opts ...any) {
-	user := b.GetUser(userID).(*userContextImpl)
-	if user == nil {
+	user, ok := b.GetUser(userID).(*userContextImpl)
+	if !ok || user == nil {
 		b.bot.log.Error("failed to send error message", "user_id", userID, "error", errEmptyUserID)
 		return
 	}
-	if user.Messages().ErrorID != 0 {
-		b.bot.delete(user.ID(), user.Messages().ErrorID)
+	if msgID := user.Messages().ErrorID; msgID != 0 {
+		err := b.bot.delete(user.ID(), msgID)
+		if err != nil {
+			b.bot.log.Debug("failed to delete error message", "user_id", user.ID(), "msg_id", msgID, "error", err)
+		}
 	}
 	closeBtn := b.msgs.Messages(user.Language()).CloseBtn()
 	if closeBtn != "" {
@@ -475,11 +493,14 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 			Text:   closeBtn,
 		}
 		opts = append(opts, SingleRow(btn))
-		b.bot.handle(b, func(ctx tele.Context) error {
+		b.bot.handle(btn, func(tele.Context) error {
 			if user.Messages().ErrorID == 0 {
 				return nil
 			}
-			b.bot.delete(user.ID(), user.Messages().ErrorID)
+			err := b.bot.delete(user.ID(), user.Messages().ErrorID)
+			if err != nil {
+				b.bot.log.Error("failed to delete error message using close button", "user_id", user.ID(), "msg_id", user.Messages().ErrorID, "error", err)
+			}
 			user.setErrorMessage(0)
 			return nil
 		})
@@ -636,7 +657,7 @@ func (b *baseBot) deleteHistory(userID int64, lastMessageID int) map[int]struct{
 	for msgID := lastMessageID; msgID > 1; msgID-- {
 		err := b.delete(userID, msgID)
 		if err != nil {
-			counter += 1
+			counter++
 		} else {
 			counter = 0
 			deleted[msgID] = struct{}{}
@@ -688,10 +709,10 @@ func (u userIDWrapper) Recipient() string {
 
 type noopLogger struct{}
 
-func (noopLogger) Debug(msg string, fields ...any) {}
-func (noopLogger) Info(msg string, fields ...any)  {}
-func (noopLogger) Warn(msg string, fields ...any)  {}
-func (noopLogger) Error(msg string, fields ...any) {}
+func (noopLogger) Debug(string, ...any) {}
+func (noopLogger) Info(string, ...any)  {}
+func (noopLogger) Warn(string, ...any)  {}
+func (noopLogger) Error(string, ...any) {}
 
 type updateLogger struct {
 	l Logger
@@ -705,11 +726,11 @@ func getEditable(senderID int64, messageID int) tele.Editable {
 	return &tele.Message{ID: messageID, Chat: &tele.Chat{ID: senderID}}
 }
 
-func maxLen(s string, max int) string {
-	if len(s) <= max {
+func maxLen(s string, mx int) string {
+	if len(s) <= mx {
 		return s
 	}
-	return s[:max]
+	return s[:mx]
 }
 
 func getSender(upd *tele.Update) *tele.User {

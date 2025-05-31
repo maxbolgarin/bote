@@ -422,7 +422,7 @@ func newDefaultMessageProvider() MessageProvider {
 
 type defaultMessageProvider struct{}
 
-func (d defaultMessageProvider) Messages(languageCode string) Messages {
+func (defaultMessageProvider) Messages(languageCode string) Messages {
 	switch languageCode {
 	case "ru":
 		return &ruMessages{}
@@ -433,29 +433,29 @@ func (d defaultMessageProvider) Messages(languageCode string) Messages {
 
 type ruMessages struct{}
 
-func (d ruMessages) CloseBtn() string {
+func (ruMessages) CloseBtn() string {
 	return "Закрыть"
 }
 
-func (d ruMessages) GeneralError() string {
+func (ruMessages) GeneralError() string {
 	return "Произошла внутренняя ошибка"
 }
 
-func (d ruMessages) PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string {
+func (ruMessages) PrepareMessage(msg string, _ User, _ State, _ int, _ bool) string {
 	return msg
 }
 
 type enMessages struct{}
 
-func (d enMessages) CloseBtn() string {
+func (enMessages) CloseBtn() string {
 	return "Close"
 }
 
-func (d enMessages) GeneralError() string {
+func (enMessages) GeneralError() string {
 	return "There is an internal error"
 }
 
-func (d enMessages) PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string {
+func (enMessages) PrepareMessage(msg string, _ User, _ State, _ int, _ bool) string {
 	return msg
 }
 

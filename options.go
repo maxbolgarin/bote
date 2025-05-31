@@ -15,33 +15,30 @@ const (
 	// MaxTextLenInLogs is the maximum length of the text in message logs.
 	MaxTextLenInLogs = 64
 
-	// maxInitTasksPerSecond is the maximum number of init users per second.
-	maxInitTasksPerSecond = 20
-
 	startCommand = "/start"
 )
 
 // EmptyHandler is a handler that does nothing.
-var EmptyHandler = func(c Context) error { return nil }
+var EmptyHandler = func(Context) error { return nil }
 
 type (
 	// HandlerFunc represents a function that is used to handle user actions in bot.
-	HandlerFunc func(c Context) error
+	HandlerFunc func(Context) error
 
 	// MiddlewareFunc represents a function that called on every bot update.
 	MiddlewareFunc func(*tele.Update, User) bool
 
 	// Logger is an interface for logging messages.
 	Logger interface {
-		Debug(msg string, args ...any)
-		Info(msg string, args ...any)
-		Warn(msg string, args ...any)
-		Error(msg string, args ...any)
+		Debug(string, ...any)
+		Info(string, ...any)
+		Warn(string, ...any)
+		Error(string, ...any)
 	}
 
 	// UpdateLogger is an interface for logging updates.
 	UpdateLogger interface {
-		Log(t UpdateType, args ...any)
+		Log(UpdateType, ...any)
 	}
 
 	// Options contains bote additional options.
