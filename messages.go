@@ -3,7 +3,9 @@ package bote
 import (
 	"fmt"
 	"html"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/maxbolgarin/lang"
 )
@@ -459,25 +461,48 @@ func (enMessages) PrepareMessage(msg string, _ User, _ State, _ int, _ bool) str
 	return msg
 }
 
+// Case-insensitive regex patterns to detect and remove malicious sequences
+// This pattern matches "javascript:" or "data:" with optional whitespace
+var maliciousPattern = regexp.MustCompile(`(?i)(?:javascript|data)\s*:`)
+
 // sanitizeText sanitizes text inputs to prevent injection attacks
 func sanitizeText(text string, maxLength ...int) string {
 	if text == "" {
 		return ""
 	}
 
-	// HTML escape to prevent XSS
-	text = html.EscapeString(text)
+	// Remove ASCII control characters (0-31 and 127)
+	var cleaned strings.Builder
+	for _, r := range text {
+		if r >= 32 && r != 127 {
+			cleaned.WriteRune(r)
+		}
+	}
+	text = cleaned.String()
+
+	// Normalize to lowercase for pattern matching
+	lowerText := strings.ToLower(text)
+
+	// Remove malicious patterns from the original text by finding matches in lowercase
+	// and removing corresponding parts from the original text
+	matches := maliciousPattern.FindAllStringIndex(lowerText, -1)
+	if len(matches) > 0 {
+		// Remove matches in reverse order to maintain correct indices
+		for i := len(matches) - 1; i >= 0; i-- {
+			match := matches[i]
+			text = text[:match[0]] + text[match[1]:]
+		}
+	}
 
 	// Trim whitespace
 	text = strings.TrimSpace(text)
 
-	// Additional protection against potentially malicious sequences
-	text = strings.ReplaceAll(text, "javascript:", "")
-	text = strings.ReplaceAll(text, "data:", "")
+	// HTML escape to prevent XSS (done after pattern removal)
+	text = html.EscapeString(text)
 
 	if len(maxLength) > 0 {
-		if len(text) > maxLength[0] {
-			text = text[:maxLength[0]]
+		if utf8.RuneCountInString(text) > maxLength[0] {
+			text = string([]rune(text)[:maxLength[0]])
 		}
 	}
 

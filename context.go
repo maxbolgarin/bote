@@ -277,6 +277,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 		if err = c.bt.bot.delete(c.user.ID(), headMsgID); err != nil {
 			c.bt.bot.log.Warn("cannot delete previous head message", userFields(c.user)...)
 		}
+		// TODO: add cleanup task
 	}
 
 	c.user.handleSend(newState, mainMsgID, headMsgID)

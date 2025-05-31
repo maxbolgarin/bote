@@ -217,7 +217,7 @@ type userContextImpl struct {
 	isInitedMsg *abstract.SafeMap[int, bool]
 
 	// Add mutex for protecting user state and message updates
-	mu sync.RWMutex
+	mu sync.Mutex
 }
 
 func (m *userManagerImpl) newUserContext(user UserModel) *userContextImpl {
@@ -235,46 +235,46 @@ func (u *userContextImpl) ID() int64 {
 }
 
 func (u *userContextImpl) Username() string {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return u.user.Info.Username
 }
 
 func (u *userContextImpl) Language() string {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return u.user.Info.LanguageCode
 }
 
 func (u *userContextImpl) Model() UserModel {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	// Return a copy to avoid race conditions if the caller modifies the model
 	return u.user
 }
 
 func (u *userContextImpl) Info() UserInfo {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return u.user.Info
 }
 
 func (u *userContextImpl) State(msgID int) (State, bool) {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	st, ok := u.user.State.MessageStates[msgID]
 	return state(st), ok
 }
 
 func (u *userContextImpl) StateMain() State {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return state(u.user.State.Main)
 }
 
 func (u *userContextImpl) Messages() UserMessages {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	// Return a copy to avoid race conditions
 	messages := u.user.Messages
 
@@ -295,8 +295,8 @@ func (u *userContextImpl) Messages() UserMessages {
 }
 
 func (u *userContextImpl) LastSeenTime(msgID ...int) time.Time {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 
 	if len(msgID) == 0 {
 		return u.user.LastSeenTime
@@ -305,14 +305,14 @@ func (u *userContextImpl) LastSeenTime(msgID ...int) time.Time {
 }
 
 func (u *userContextImpl) IsDisabled() bool {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return u.user.IsDisabled
 }
 
 func (u *userContextImpl) String() string {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return "[@" + u.user.Info.Username + "|" + strconv.Itoa(int(u.user.ID)) + "]"
 }
 
@@ -387,16 +387,16 @@ func (u *userContextImpl) prepareTextStates() {
 }
 
 func (u *userContextImpl) hasTextMessages() bool {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 
 	u.prepareTextStates()
 	return len(u.user.State.MessagesAwaitingText) > 0
 }
 
 func (u *userContextImpl) lastTextMessage() int {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 
 	if len(u.user.State.MessagesAwaitingText) == 0 {
 		return 0
@@ -788,18 +788,30 @@ func (u *userContextImpl) setMsgInited(msgID int) {
 }
 
 func (u *userContextImpl) getBtnName() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	return u.btnName
 }
 
 func (u *userContextImpl) setBtnName(btnName string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	u.btnName = btnName
 }
 
 func (u *userContextImpl) getPayload() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	return u.payload
 }
 
 func (u *userContextImpl) setPayload(payload string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	u.payload = payload
 }
 

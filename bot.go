@@ -86,8 +86,8 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		defaultLanguageCode: opts.Config.DefaultLanguageCode,
 		middlewares:         abstract.NewSafeSlice[MiddlewareFunc](),
 		stateMap:            abstract.NewSafeMap[string, InitBundle](),
-		deleteMessages:      *opts.Config.DeleteMessages,
-		logUpdates:          *opts.Config.LogUpdates,
+		deleteMessages:      lang.Deref(opts.Config.DeleteMessages),
+		logUpdates:          lang.Deref(opts.Config.LogUpdates),
 	}
 
 	b.addMiddleware(bote.masterMiddleware)
@@ -221,6 +221,7 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 
 	upd := tele.Update{
 		Callback: &tele.Callback{
+			Sender:  &tele.User{ID: ctx.user.ID()}, // preserve sender
 			Message: &tele.Message{ID: ctx.MessageID()},
 			Data:    targetHandler.Data,
 		},
@@ -240,7 +241,7 @@ func (*Bot) emptyHandler(Context) error {
 func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	defer lang.Recover(b.bot.log)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	sender := getSender(upd)
