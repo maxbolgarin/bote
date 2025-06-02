@@ -130,6 +130,29 @@ Available options:
 - `WithMessages(msgs MessageProvider)`: Use custom message provider
 - `WithUpdateLogger(l UpdateLogger)`: Use custom update logger
 
+### Webhook Configuration
+
+Bote supports webhooks for receiving updates from Telegram, which can be more efficient than long polling in some environments.
+
+To configure webhooks, you need to set the following fields in the `bote.Config` struct or use their corresponding environment variables:
+
+- **`WebhookURL`** (`string`): The publicly accessible HTTPS URL for your webhook. Telegram will send updates to this URL.
+  - Environment variable: `BOTE_WEBHOOK_URL`
+- **`ListenAddress`** (`string`): The IP address and port the bot will listen on for incoming webhook requests (e.g., `:8443` or `0.0.0.0:8080`).
+  - Environment variable: `BOTE_LISTEN_ADDRESS`
+  - Defaults to `:8443` if `WebhookURL` is set and `ListenAddress` is not.
+- **`TLSKeyFile`** (`string`, optional): Path to your TLS private key file. Required if you want the bot to handle HTTPS directly.
+  - Environment variable: `BOTE_TLS_KEY_FILE`
+- **`TLSCertFile`** (`string`, optional): Path to your TLS public certificate file. Required if you want the bot to handle HTTPS directly.
+  - Environment variable: `BOTE_TLS_CERT_FILE`
+
+**When to use TLS Key/Cert files:**
+
+- If your bot is directly exposed to the internet and you want it to handle HTTPS encryption itself, provide both `TLSKeyFile` and `TLSCertFile`.
+- If your bot is behind a reverse proxy (like Nginx or Caddy) that handles HTTPS termination, you typically don't need to set `TLSKeyFile` and `TLSCertFile` in the bot's configuration. The reverse proxy would forward plain HTTP traffic to the `ListenAddress` of the bot.
+
+Make sure your `WebhookURL` is correctly pointing to where your bot is listening, and that your firewall/network configuration allows Telegram servers to reach your `ListenAddress`.
+
 ### States
 
 States in Bote track the user's progress and context. Create custom states like this:

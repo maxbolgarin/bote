@@ -539,15 +539,32 @@ func newBaseBot(token string, opts Options) (*baseBot, error) {
 	}
 
 	var poller tele.Poller
-	poller = &tele.LongPoller{Timeout: opts.Config.LPTimeout}
-	if opts.Poller != nil {
-		poller = opts.Poller
+	if opts.Config.WebhookURL == "" {
+		poller = &tele.LongPoller{Timeout: opts.Config.LPTimeout}
+		if opts.Poller != nil {
+			poller = opts.Poller
+		}
+	} else {
+		webhook := &tele.Webhook{
+			Listen:   opts.Config.ListenAddress,
+			Endpoint: &tele.WebhookEndpoint{PublicURL: opts.Config.WebhookURL},
+		}
+		if opts.Config.TLSKeyFile != "" && opts.Config.TLSCertFile != "" {
+			webhook.TLS = &tele.WebhookTLS{
+				Key:  opts.Config.TLSKeyFile,
+				Cert: opts.Config.TLSCertFile,
+			}
+			// Endpoint.Cert is used by Telegram to verify the certificate presented by the bot.
+			// It should be the public certificate file.
+			webhook.Endpoint.Cert = opts.Config.TLSCertFile
+		}
+		poller = webhook
 	}
 
 	bot, err := tele.NewBot(tele.Settings{
 		Token:   token,
 		Poller:  tele.NewMiddlewarePoller(poller, b.middleware),
-		Client:  &http.Client{Timeout: 2 * opts.Config.LPTimeout},
+		Client:  &http.Client{Timeout: 2 * opts.Config.LPTimeout}, // Consider if this timeout is appropriate for webhooks
 		Verbose: opts.Config.Debug,
 		OnError: func(err error, ctx tele.Context) {
 			var userID int64
