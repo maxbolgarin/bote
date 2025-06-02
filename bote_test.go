@@ -1194,14 +1194,10 @@ func TestBotInitialization_PollerSelection(t *testing.T) {
 				if assert.True(t, ok, "Poller should be MiddlewarePoller") {
 					webhookPoller, ok := middlewarePoller.Poller.(*tele.Webhook)
 					if assert.True(t, ok, "Underlying poller should be Webhook") {
-						assert.Equal(t, "127.0.0.1:8080", webhookPoller.Listen)
-						if assert.NotNil(t, webhookPoller.Endpoint) {
-							assert.Equal(t, "https://test.com/webhook", webhookPoller.Endpoint.PublicURL)
-						}
-						assert.Empty(t, webhookPoller.KeyFile, "TLSKeyFile should be empty")
-						assert.Empty(t, webhookPoller.Endpoint.PublicKey, "TLSCertFile (PublicKey) should be empty")
-					}
-				}
+                        assert.Equal(t, "127.0.0.1:8080", webhookPoller.Listen)
+                        assert.NotNil(t, webhookPoller.Endpoint)
+                        assert.Equal(t, "https://test.com/webhook", webhookPoller.Endpoint.PublicURL)
+                        assert.Nil(t, webhookPoller.TLS, "TLS struct must be nil when no TLS files are supplied")
 			}
 		}
 	})
