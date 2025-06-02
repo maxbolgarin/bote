@@ -1229,9 +1229,14 @@ func TestBotInitialization_PollerSelection(t *testing.T) {
 						assert.Equal(t, "127.0.0.1:8443", webhookPoller.Listen)
 						if assert.NotNil(t, webhookPoller.Endpoint) {
 							assert.Equal(t, "https://test.com/webhook_tls", webhookPoller.Endpoint.PublicURL)
-							assert.Equal(t, "test_cert.pem", webhookPoller.Endpoint.PublicKey)
+							assert.Equal(t, "test_cert.pem", webhookPoller.Endpoint.Cert) // Corrected: Was PublicKey
 						}
-						assert.Equal(t, "test_key.pem", webhookPoller.KeyFile)
+						if assert.NotNil(t, webhookPoller.TLS) { // Corrected: Check TLS struct
+							assert.Equal(t, "test_key.pem", webhookPoller.TLS.Key)     // Corrected: Was KeyFile
+							assert.Equal(t, "test_cert.pem", webhookPoller.TLS.Cert)    // Corrected: New check for TLS.Cert
+						} else {
+							assert.Fail(t, "webhookPoller.TLS should not be nil when TLSKeyFile and TLSCertFile are provided")
+						}
 					}
 				}
 			}

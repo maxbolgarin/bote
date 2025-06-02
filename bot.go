@@ -546,14 +546,17 @@ func newBaseBot(token string, opts Options) (*baseBot, error) {
 		}
 	} else {
 		webhook := &tele.Webhook{
-			Listen: opts.Config.ListenAddress,
-			Endpoint: &tele.WebhookEndpoint{
-				PublicURL: opts.Config.WebhookURL,
-			},
+			Listen:   opts.Config.ListenAddress,
+			Endpoint: &tele.WebhookEndpoint{PublicURL: opts.Config.WebhookURL},
 		}
 		if opts.Config.TLSKeyFile != "" && opts.Config.TLSCertFile != "" {
-			webhook.Endpoint.PublicKey = opts.Config.TLSCertFile
-			webhook.KeyFile = opts.Config.TLSKeyFile
+			webhook.TLS = &tele.WebhookTLS{
+				Key:  opts.Config.TLSKeyFile,
+				Cert: opts.Config.TLSCertFile,
+			}
+			// Endpoint.Cert is used by Telegram to verify the certificate presented by the bot.
+			// It should be the public certificate file.
+			webhook.Endpoint.Cert = opts.Config.TLSCertFile
 		}
 		poller = webhook
 	}
