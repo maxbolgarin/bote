@@ -16,6 +16,25 @@ func main() {
 	cfg := bote.Config{
 		DefaultLanguageCode: "ru",
 		NoPreview:           true,
+
+		// --- Webhook Configuration Example ---
+		// To use webhooks, uncomment and configure the following.
+		// The WebhookURL must be accessible from the internet and Telegram servers.
+		// ListenAddress is where the bot will listen for incoming updates from Telegram.
+		//
+		// If you're using a reverse proxy (e.g., Nginx) to handle HTTPS termination,
+		// you might not need to set TLSKeyFile and TLSCertFile here.
+		// The proxy would handle HTTPS and forward plain HTTP to your bot's ListenAddress.
+
+		// Example 1: Webhook without direct TLS handling by the bot (e.g., behind a reverse proxy)
+		// WebhookURL:    "https://your.domain.com/webhook-path", // Replace with your actual public URL
+		// ListenAddress: "0.0.0.0:8080",                       // Bot listens on port 8080 locally
+
+		// Example 2: Webhook with direct TLS handling by the bot
+		// WebhookURL:    "https://your.domain.com:8443/webhook-path", // Port in URL must match ListenAddress
+		// ListenAddress: "0.0.0.0:8443",
+		// TLSKeyFile:    "/path/to/your/private.key", // Replace with actual path
+		// TLSCertFile:   "/path/to/your/public.crt",  // Replace with actual path
 	}
 
 	b, err := bote.New(token, bote.WithConfig(cfg))
