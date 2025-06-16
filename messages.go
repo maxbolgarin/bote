@@ -71,6 +71,11 @@ func F(msg string, formats ...Format) string {
 	return msg
 }
 
+// Ff returns a formatted string, just like [fmt.Sprintf].
+func Ff(msg string, args ...any) string {
+	return fmt.Sprintf(msg, args...)
+}
+
 // FBold returns a string with bold formatting.
 func FBold(msg string) string {
 	return string(Bold) + msg + boldEnd

@@ -701,6 +701,9 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 		}
 	}
 
+	u.isInitedMsg.Set(mainMsgID, true)
+	u.isInitedMsg.Set(headMsgID, true)
+
 	u.db.UpdateAsync(userID, diff)
 }
 
