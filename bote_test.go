@@ -440,7 +440,7 @@ func (s *testUserStorage) UpdateAsync(id int64, userModel *bote.UserModelDiff) {
 // Mock message provider for testing
 type testMessageProvider struct{}
 
-func (p *testMessageProvider) Messages(languageCode string) bote.Messages {
+func (p *testMessageProvider) Messages(language bote.Language) bote.Messages {
 	return &testMessages{}
 }
 
@@ -640,8 +640,8 @@ func TestUpdateTypeString(t *testing.T) {
 func TestWithConfig(t *testing.T) {
 	// This test only checks that we can create a configuration
 	cfg := bote.Config{
-		DefaultLanguageCode: "fr",
-		TestMode:            true, // Enable test mode to avoid actual Telegram API calls
+		DefaultLanguage: bote.Language("fr"),
+		TestMode:        true, // Enable test mode to avoid actual Telegram API calls
 	}
 
 	// Just test the function doesn't panic
@@ -650,7 +650,7 @@ func TestWithConfig(t *testing.T) {
 	var opts bote.Options
 	optFunc(&opts)
 
-	assert.Equal(t, "fr", opts.Config.DefaultLanguageCode)
+	assert.Equal(t, bote.Language("fr"), opts.Config.DefaultLanguage)
 	assert.True(t, opts.Config.TestMode)
 }
 

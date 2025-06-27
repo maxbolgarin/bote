@@ -13,7 +13,7 @@ import (
 // MessageProvider is an interface for providing messages based on the user language code.
 type MessageProvider interface {
 	// Messages returns messages for a specific language.
-	Messages(languageCode string) Messages
+	Messages(language Language) Messages
 }
 
 // Messages is a collection of messages for a specific language.
@@ -429,10 +429,12 @@ func newDefaultMessageProvider() MessageProvider {
 
 type defaultMessageProvider struct{}
 
-func (defaultMessageProvider) Messages(languageCode string) Messages {
-	switch languageCode {
-	case "ru":
+func (defaultMessageProvider) Messages(language Language) Messages {
+	switch language {
+	case LanguageRussian:
 		return &ruMessages{}
+	case LanguageEnglish:
+		return &enMessages{}
 	default:
 		return &enMessages{}
 	}

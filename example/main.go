@@ -14,8 +14,8 @@ func main() {
 	}
 
 	cfg := bote.Config{
-		DefaultLanguageCode: "ru",
-		NoPreview:           true,
+		DefaultLanguage: bote.LanguageRussian,
+		NoPreview:       true,
 	}
 
 	b, err := bote.New(token, bote.WithConfig(cfg))

@@ -96,7 +96,7 @@ type Config struct {
 	// DefaultLanguageCode is the default language code for the bot in ISO 639-1 format.
 	// Default: "en".
 	// Environment variable: BOTE_DEFAULT_LANGUAGE_CODE.
-	DefaultLanguageCode string `yaml:"default_language_code" json:"default_language_code" env:"BOTE_DEFAULT_LANGUAGE_CODE"`
+	DefaultLanguage Language `yaml:"default_language_code" json:"default_language_code" env:"BOTE_DEFAULT_LANGUAGE_CODE"`
 
 	// UserCacheCapacity is the capacity of the user cache. Cache will evict users with least activity.
 	// Default: 10000.
@@ -192,7 +192,7 @@ func (cfg *Config) prepareAndValidate() error {
 
 	cfg.ParseMode = lang.Check(cfg.ParseMode, tele.ModeHTML)
 	cfg.LPTimeout = lang.Check(cfg.LPTimeout, 15*time.Second)
-	cfg.DefaultLanguageCode = lang.Check(cfg.DefaultLanguageCode, "en")
+	cfg.DefaultLanguage = lang.Check(cfg.DefaultLanguage, LanguageDefault)
 	cfg.DeleteMessages = lang.Ptr(lang.CheckPtr(cfg.DeleteMessages, true))
 	cfg.LogUpdates = lang.Ptr(lang.CheckPtr(cfg.LogUpdates, true))
 	cfg.EnableLogging = lang.Ptr(lang.CheckPtr(cfg.EnableLogging, true))

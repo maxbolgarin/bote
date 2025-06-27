@@ -36,7 +36,7 @@ type User interface {
 	// Username returns Telegram username (without @).
 	Username() string
 	// Language returns Telegram user language code.
-	Language() string
+	Language() Language
 	// Model returns user model.
 	Model() UserModel
 	// Info returns user info.
@@ -110,7 +110,7 @@ type UserInfo struct {
 	// Username is Telegram username (without @).
 	Username string `bson:"username" json:"username" db:"username"`
 	// LanguageCode is Telegram user language code.
-	LanguageCode string `bson:"language_code" json:"language_code" db:"language_code"`
+	LanguageCode Language `bson:"language_code" json:"language_code" db:"language_code"`
 	// IsBot is true if Telegram user is a bot.
 	IsBot bool `bson:"is_bot" json:"is_bot" db:"is_bot"`
 	// IsPremium is true if Telegram user has Telegram Premium.
@@ -160,12 +160,12 @@ type UserModelDiff struct {
 
 // UserInfoDiff contains changes that should be applied to user info.
 type UserInfoDiff struct {
-	FirstName    *string `bson:"first_name" json:"first_name" db:"first_name"`
-	LastName     *string `bson:"last_name" json:"last_name" db:"last_name"`
-	Username     *string `bson:"username" json:"username" db:"username"`
-	LanguageCode *string `bson:"language_code" json:"language_code" db:"language_code"`
-	IsBot        *bool   `bson:"is_bot" json:"is_bot" db:"is_bot"`
-	IsPremium    *bool   `bson:"is_premium" json:"is_premium" db:"is_premium"`
+	FirstName    *string   `bson:"first_name" json:"first_name" db:"first_name"`
+	LastName     *string   `bson:"last_name" json:"last_name" db:"last_name"`
+	Username     *string   `bson:"username" json:"username" db:"username"`
+	LanguageCode *Language `bson:"language_code" json:"language_code" db:"language_code"`
+	IsBot        *bool     `bson:"is_bot" json:"is_bot" db:"is_bot"`
+	IsPremium    *bool     `bson:"is_premium" json:"is_premium" db:"is_premium"`
 }
 
 // UserMessagesDiff contains changes that should be applied to user messages.
@@ -240,7 +240,7 @@ func (u *userContextImpl) Username() string {
 	return u.user.Info.Username
 }
 
-func (u *userContextImpl) Language() string {
+func (u *userContextImpl) Language() Language {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.user.Info.LanguageCode
@@ -844,7 +844,7 @@ func newUserInfo(tUser *tele.User) UserInfo {
 		FirstName:    sanitizeText(tUser.FirstName, 1000),
 		LastName:     sanitizeText(tUser.LastName, 1000),
 		Username:     sanitizeText(tUser.Username, 1000),
-		LanguageCode: sanitizeText(tUser.LanguageCode, 1000),
+		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
 		IsBot:        tUser.IsBot,
 		IsPremium:    tUser.IsPremium,
 	}

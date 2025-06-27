@@ -39,7 +39,7 @@ type Bot struct {
 	msgs MessageProvider
 	rlog UpdateLogger
 
-	defaultLanguageCode string
+	defaultLanguage Language
 
 	middlewares    *abstract.SafeSlice[MiddlewareFunc]
 	stateMap       *abstract.SafeMap[string, InitBundle]
@@ -83,11 +83,11 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		msgs: opts.Msgs,
 		rlog: opts.UpdateLogger,
 
-		defaultLanguageCode: opts.Config.DefaultLanguageCode,
-		middlewares:         abstract.NewSafeSlice[MiddlewareFunc](),
-		stateMap:            abstract.NewSafeMap[string, InitBundle](),
-		deleteMessages:      lang.Deref(opts.Config.DeleteMessages),
-		logUpdates:          lang.Deref(opts.Config.LogUpdates),
+		defaultLanguage: opts.Config.DefaultLanguage,
+		middlewares:     abstract.NewSafeSlice[MiddlewareFunc](),
+		stateMap:        abstract.NewSafeMap[string, InitBundle](),
+		deleteMessages:  lang.Deref(opts.Config.DeleteMessages),
+		logUpdates:      lang.Deref(opts.Config.LogUpdates),
 	}
 
 	b.addMiddleware(bote.masterMiddleware)
@@ -253,7 +253,7 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	user, err := b.um.prepareUser(ctx, sender)
 	if err != nil {
 		b.bot.log.Error("cannot prepare user", "error", err, "user_id", sender.ID, "username", sender.Username)
-		b.sendError(sender.ID, b.msgs.Messages(b.defaultLanguageCode).GeneralError())
+		b.sendError(sender.ID, b.msgs.Messages(b.defaultLanguage).GeneralError())
 		return false
 	}
 
