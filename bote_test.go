@@ -1141,3 +1141,150 @@ func TestFormatting(t *testing.T) {
 	assert.Equal(t, "<b>Test message</b>", bote.F(text, bote.Bold))
 	assert.Equal(t, "<i>Test message</i>", bote.F(text, bote.Italic))
 }
+
+func TestBotInitialization_PollerSelection(t *testing.T) {
+	// Test Case 1: Default (Long Poller)
+	t.Run("DefaultLongPoller", func(t *testing.T) {
+		boteBot, err := bote.New("test_token", bote.WithTestMode(NewTestPoller())) // Using TestMode to avoid actual API calls & provide a poller
+		assert.NoError(t, err)
+		if assert.NotNil(t, boteBot) {
+			teleBot := boteBot.Bot()
+			if assert.NotNil(t, teleBot) && assert.NotNil(t, teleBot.Poller) {
+				// The poller is wrapped by MiddlewarePoller, so we need to check the actual poller inside it.
+				// This requires inspecting the MiddlewarePoller's Poller field, which might not be directly accessible.
+				// For now, we assume that if WebhookURL is not set, it defaults to LongPoller.
+				// A more robust check would involve reflection or a getter for the wrapped poller if telebot provides it.
+				// As direct type assertion on teleBot.Poller will fail because it's a *tele.MiddlewarePoller.
+				// We check if it's *not* a WebhookPoller as an indirect way for now.
+				// Ideally, bote.Bot could expose its configured poller type or tele.MiddlewarePoller could expose its inner poller.
+				// For the purpose of this test, we'll create a bot *without* WithTestMode's poller to inspect the default.
+				opts := bote.Options{
+					Config: bote.Config{TestMode: true}, // Keep TestMode to prevent actual polling
+				}
+				defaultBot, err := bote.NewWithOptions("test_token", opts)
+				assert.NoError(t, err)
+				if assert.NotNil(t, defaultBot) {
+					actualTeleBot := defaultBot.Bot()
+					if assert.NotNil(t, actualTeleBot) && assert.NotNil(t, actualTeleBot.Poller) {
+						middlewarePoller, ok := actualTeleBot.Poller.(*tele.MiddlewarePoller)
+						if assert.True(t, ok, "Poller should be MiddlewarePoller") {
+							assert.IsType(t, &tele.LongPoller{}, middlewarePoller.Poller, "Underlying poller should be LongPoller")
+						}
+					}
+				}
+			}
+		}
+	})
+
+	// Test Case 2: Webhook Poller (No TLS)
+	t.Run("WebhookPoller_NoTLS", func(t *testing.T) {
+		opts := bote.Options{
+			Config: bote.Config{
+				WebhookURL:    "https://test.com/webhook",
+				ListenAddress: "127.0.0.1:8080",
+				TestMode:      true, // Important to prevent actual network operations
+			},
+		}
+		boteBot, err := bote.NewWithOptions("test_token", opts)
+		assert.NoError(t, err)
+		if assert.NotNil(t, boteBot) {
+			teleBot := boteBot.Bot()
+			if assert.NotNil(t, teleBot) && assert.NotNil(t, teleBot.Poller) {
+				middlewarePoller, ok := teleBot.Poller.(*tele.MiddlewarePoller)
+				if assert.True(t, ok, "Poller should be MiddlewarePoller") {
+					webhookPoller, ok := middlewarePoller.Poller.(*tele.Webhook)
+					if assert.True(t, ok, "Underlying poller should be Webhook") {
+						assert.Equal(t, "127.0.0.1:8080", webhookPoller.Listen)
+						if assert.NotNil(t, webhookPoller.Endpoint) {
+							assert.Equal(t, "https://test.com/webhook", webhookPoller.Endpoint.PublicURL)
+							assert.Empty(t, webhookPoller.Endpoint.Cert, "Endpoint.Cert should be empty for NoTLS case")
+						}
+						assert.Nil(t, webhookPoller.TLS, "TLS config should be nil for NoTLS case")
+					}
+				}
+			}
+		}
+	})
+
+	// Test Case 3: Webhook Poller (With TLS)
+	t.Run("WebhookPoller_WithTLS", func(t *testing.T) {
+		opts := bote.Options{
+			Config: bote.Config{
+				WebhookURL:    "https://test.com/webhook_tls",
+				ListenAddress: "127.0.0.1:8443",
+				TLSCertFile:   "test_cert.pem",
+				TLSKeyFile:    "test_key.pem",
+				TestMode:      true, // Important
+			},
+		}
+		boteBot, err := bote.NewWithOptions("test_token", opts)
+		assert.NoError(t, err)
+		if assert.NotNil(t, boteBot) {
+			teleBot := boteBot.Bot()
+			if assert.NotNil(t, teleBot) && assert.NotNil(t, teleBot.Poller) {
+				middlewarePoller, ok := teleBot.Poller.(*tele.MiddlewarePoller)
+				if assert.True(t, ok, "Poller should be MiddlewarePoller") {
+					webhookPoller, ok := middlewarePoller.Poller.(*tele.Webhook)
+					if assert.True(t, ok, "Underlying poller should be Webhook") {
+						assert.Equal(t, "127.0.0.1:8443", webhookPoller.Listen)
+						if assert.NotNil(t, webhookPoller.Endpoint) {
+							assert.Equal(t, "https://test.com/webhook_tls", webhookPoller.Endpoint.PublicURL)
+							assert.Equal(t, "test_cert.pem", webhookPoller.Endpoint.Cert) // Corrected: Was PublicKey
+						}
+						if assert.NotNil(t, webhookPoller.TLS) { // Corrected: Check TLS struct
+							assert.Equal(t, "test_key.pem", webhookPoller.TLS.Key)     // Corrected: Was KeyFile
+							assert.Equal(t, "test_cert.pem", webhookPoller.TLS.Cert)    // Corrected: New check for TLS.Cert
+						} else {
+							assert.Fail(t, "webhookPoller.TLS should not be nil when TLSKeyFile and TLSCertFile are provided")
+						}
+					}
+				}
+			}
+		}
+	})
+
+	// Test Case 4: Invalid Webhook Config (e.g., TLS files set, URL missing)
+	// This relies on validation in options.go's prepareAndValidate
+	t.Run("WebhookPoller_InvalidConfig_MissingURL", func(t *testing.T) {
+		opts := bote.Options{
+			Config: bote.Config{
+				// WebhookURL is missing
+				ListenAddress: "127.0.0.1:8443",
+				TLSCertFile:   "test_cert.pem",
+				TLSKeyFile:    "test_key.pem",
+				TestMode:      true,
+			},
+		}
+		_, err := bote.NewWithOptions("test_token", opts)
+		assert.Error(t, err, "Expected an error due to invalid webhook configuration (missing URL)")
+		// Check if the error message indicates the URL issue, if possible and stable.
+		// For now, just checking for any error is sufficient as specific error messages can be brittle.
+	})
+
+	t.Run("WebhookPoller_InvalidConfig_OnlyOneTLSFile_Key", func(t *testing.T) {
+		opts := bote.Options{
+			Config: bote.Config{
+				WebhookURL:    "https://test.com/webhook",
+				ListenAddress: "127.0.0.1:8443",
+				TLSKeyFile:    "test_key.pem",
+				// TLSCertFile is missing
+				TestMode: true,
+			},
+		}
+		_, err := bote.NewWithOptions("test_token", opts)
+		assert.Error(t, err, "Expected an error due to invalid webhook configuration (missing cert file)")
+	})
+
+	t.Run("WebhookPoller_InvalidConfig_OnlyOneTLSFile_Cert", func(t *testing.T) {
+		opts := bote.Options{
+			Config: bote.Config{
+				WebhookURL:  "https://test.com/webhook",
+				TLSCertFile: "test_cert.pem",
+				// TLSKeyFile is missing
+				TestMode: true,
+			},
+		}
+		_, err := bote.NewWithOptions("test_token", opts)
+		assert.Error(t, err, "Expected an error due to invalid webhook configuration (missing key file)")
+	})
+}

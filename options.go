@@ -2,6 +2,7 @@ package bote
 
 import (
 	"log/slog"
+	"net/url"
 	"os"
 	"time"
 
@@ -137,6 +138,23 @@ type Config struct {
 	// Default: false.
 	// You can use environment variable BOTE_TEST_MODE.
 	TestMode bool `yaml:"test_mode" json:"test_mode" env:"BOTE_TEST_MODE"`
+
+	// WebhookURL is the URL for the webhook.
+	// Environment variable: BOTE_WEBHOOK_URL.
+	WebhookURL string `yaml:"webhook_url" json:"webhook_url" env:"BOTE_WEBHOOK_URL"`
+
+	// ListenAddress is the address for the webhook listener.
+	// Default: ":8443".
+	// Environment variable: BOTE_LISTEN_ADDRESS.
+	ListenAddress string `yaml:"listen_address" json:"listen_address" env:"BOTE_LISTEN_ADDRESS"`
+
+	// TLSKeyFile is the path to the TLS key file.
+	// Environment variable: BOTE_TLS_KEY_FILE.
+	TLSKeyFile string `yaml:"tls_key_file" json:"tls_key_file" env:"BOTE_TLS_KEY_FILE"`
+
+	// TLSCertFile is the path to the TLS cert file.
+	// Environment variable: BOTE_TLS_CERT_FILE.
+	TLSCertFile string `yaml:"tls_cert_file" json:"tls_cert_file" env:"BOTE_TLS_CERT_FILE"`
 }
 
 // WithConfig returns an option that sets the bot configuration.
@@ -199,6 +217,16 @@ func (cfg *Config) prepareAndValidate() error {
 	cfg.Debug = lang.Check(cfg.Debug, cfg.TestMode)
 	cfg.UserCacheCapacity = lang.Check(cfg.UserCacheCapacity, 10000)
 	cfg.UserCacheTTL = lang.Check(cfg.UserCacheTTL, 24*time.Hour)
+
+	if cfg.WebhookURL != "" {
+		if _, err := url.ParseRequestURI(cfg.WebhookURL); err != nil {
+			return errm.Wrap(err, "invalid webhook url")
+		}
+		cfg.ListenAddress = lang.Check(cfg.ListenAddress, ":8443")
+		if (cfg.TLSKeyFile == "") != (cfg.TLSCertFile == "") {
+			return errm.New("tls key and cert files must be both provided or both empty")
+		}
+	}
 
 	return nil
 }
