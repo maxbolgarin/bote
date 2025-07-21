@@ -291,6 +291,9 @@ func ParseLanguage(code string) (Language, error) {
 	if code == "" {
 		return "", fmt.Errorf("language code cannot be empty")
 	}
+	if len(code) > 3 {
+		return "", fmt.Errorf("language code cannot be longer than 3 characters")
+	}
 
 	// Normalize to lowercase for case-insensitive lookup
 	normalizedCode := strings.ToLower(strings.TrimSpace(code))

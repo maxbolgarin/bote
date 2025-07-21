@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/maxbolgarin/abstract"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	"github.com/maypok86/otter"
 	tele "gopkg.in/telebot.v4"
@@ -37,8 +37,6 @@ type User interface {
 	Username() string
 	// Language returns Telegram user language code.
 	Language() Language
-	// Model returns user model.
-	Model() UserModel
 	// Info returns user info.
 	Info() UserInfo
 	// State returns current state for the given message ID.
@@ -47,13 +45,19 @@ type User interface {
 	StateMain() State
 	// Messages returns all message IDs.
 	Messages() UserMessages
-	// LastSeenTime returns the time when user interacts with provided message.
-	// If message ID is not provided, it returns the time when user interacts with bot's any message.
-	LastSeenTime(optionalMsgID ...int) time.Time
 	// IsDisabled returns true if user disabled the bot.
 	IsDisabled() bool
 	// String returns user string representation in format '[@username|id]'.
 	String() string
+
+	// Stats returns user stats.
+	Stats() UserStat
+	// LastSeenTime returns the time when user interacts with provided message.
+	// If message ID is not provided, it returns the time when user interacts with bot's any message.
+	LastSeenTime(optionalMsgID ...int) time.Time
+
+	// UpdateLanguage updates user language.
+	UpdateLanguage(language Language)
 }
 
 // UsersStorage is a storage for users.
@@ -91,14 +95,21 @@ type UserModel struct {
 	Messages UserMessages `bson:"messages" json:"messages" db:"messages"`
 	// State contains state for every user's message.
 	State UserState `bson:"state" json:"state" db:"state"`
+	// Stats contains user stats.
+	Stats UserStat `bson:"stats" json:"stats" db:"stats"`
+	// IsDisabled returns true if user is disabled. Disabled means that user blocks bot.
+	IsDisabled bool `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
+}
+
+type UserStat struct {
+	// NumberOfStateChangesTotal is the total number of actions user made.
+	NumberOfStateChangesTotal int `bson:"number_of_state_changes_total" json:"number_of_state_changes_total" db:"number_of_state_changes_total"`
 	// LastSeenTime is the last time user interacted with the bot.
 	LastSeenTime time.Time `bson:"last_seen_time" json:"last_seen_time" db:"last_seen_time"`
 	// CreatedTime is the time when user was created.
 	CreatedTime time.Time `bson:"created_time" json:"created_time" db:"created_time"`
 	// DisabledTime is the time when user was disabled.
 	DisabledTime time.Time `bson:"disabled_time" json:"disabled_time" db:"disabled_time"`
-	// IsDisabled returns true if user is disabled. Disabled means that user blocks bot.
-	IsDisabled bool `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
 }
 
 // UserInfo contains user info, that can be obtained from Telegram.
@@ -115,6 +126,9 @@ type UserInfo struct {
 	IsBot bool `bson:"is_bot" json:"is_bot" db:"is_bot"`
 	// IsPremium is true if Telegram user has Telegram Premium.
 	IsPremium bool `bson:"is_premium" json:"is_premium" db:"is_premium"`
+
+	// ForceLanguageCode is a custom language code for user that can be set by bot.
+	ForceLanguageCode Language `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
 }
 
 // UserMessages contains IDs of user messages.
@@ -150,22 +164,22 @@ type UserState struct {
 
 // UserModelDiff contains changes that should be applied to user.
 type UserModelDiff struct {
-	Info         *UserInfoDiff     `bson:"info" json:"info" db:"info"`
-	Messages     *UserMessagesDiff `bson:"messages" json:"messages" db:"messages"`
-	State        *UserStateDiff    `bson:"state" json:"state" db:"state"`
-	LastSeenTime *time.Time        `bson:"last_seen_time" json:"last_seen_time" db:"last_seen_time"`
-	DisabledTime *time.Time        `bson:"disabled_time" json:"disabled_time" db:"disabled_time"`
-	IsDisabled   *bool             `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
+	Info       *UserInfoDiff     `bson:"info" json:"info" db:"info"`
+	Messages   *UserMessagesDiff `bson:"messages" json:"messages" db:"messages"`
+	State      *UserStateDiff    `bson:"state" json:"state" db:"state"`
+	Stats      *UserStatDiff     `bson:"stats" json:"stats" db:"stats"`
+	IsDisabled *bool             `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
 }
 
 // UserInfoDiff contains changes that should be applied to user info.
 type UserInfoDiff struct {
-	FirstName    *string   `bson:"first_name" json:"first_name" db:"first_name"`
-	LastName     *string   `bson:"last_name" json:"last_name" db:"last_name"`
-	Username     *string   `bson:"username" json:"username" db:"username"`
-	LanguageCode *Language `bson:"language_code" json:"language_code" db:"language_code"`
-	IsBot        *bool     `bson:"is_bot" json:"is_bot" db:"is_bot"`
-	IsPremium    *bool     `bson:"is_premium" json:"is_premium" db:"is_premium"`
+	FirstName         *string   `bson:"first_name" json:"first_name" db:"first_name"`
+	LastName          *string   `bson:"last_name" json:"last_name" db:"last_name"`
+	Username          *string   `bson:"username" json:"username" db:"username"`
+	LanguageCode      *Language `bson:"language_code" json:"language_code" db:"language_code"`
+	IsBot             *bool     `bson:"is_bot" json:"is_bot" db:"is_bot"`
+	IsPremium         *bool     `bson:"is_premium" json:"is_premium" db:"is_premium"`
+	ForceLanguageCode *Language `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
 }
 
 // UserMessagesDiff contains changes that should be applied to user messages.
@@ -183,6 +197,12 @@ type UserStateDiff struct {
 	Main                 *string        `bson:"main" json:"main" db:"main"`
 	MessageStates        map[int]string `bson:"message_states" json:"message_states" db:"message_states"`
 	MessagesAwaitingText []int          `bson:"messages_awaiting_text" json:"messages_awaiting_text" db:"messages_awaiting_text"`
+}
+
+type UserStatDiff struct {
+	NumberOfStateChanges *int       `bson:"number_of_state_changes_total" json:"number_of_state_changes_total" db:"number_of_state_changes_total"`
+	LastSeenTime         *time.Time `bson:"last_seen_time" json:"last_seen_time" db:"last_seen_time"`
+	DisabledTime         *time.Time `bson:"disabled_time" json:"disabled_time" db:"disabled_time"`
 }
 
 func (u *UserModel) prepareAfterDB() {
@@ -243,13 +263,26 @@ func (u *userContextImpl) Username() string {
 func (u *userContextImpl) Language() Language {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.user.Info.ForceLanguageCode != "" {
+		return u.user.Info.ForceLanguageCode
+	}
 	return u.user.Info.LanguageCode
+}
+
+func (u *userContextImpl) UpdateLanguage(language Language) {
+	u.mu.Lock()
+	u.user.Info.ForceLanguageCode = language
+	u.mu.Unlock()
+	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+		Info: &UserInfoDiff{
+			ForceLanguageCode: &language,
+		},
+	})
 }
 
 func (u *userContextImpl) Model() UserModel {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	// Return a copy to avoid race conditions if the caller modifies the model
 	return u.user
 }
 
@@ -257,6 +290,12 @@ func (u *userContextImpl) Info() UserInfo {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.user.Info
+}
+
+func (u *userContextImpl) Stats() UserStat {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.user.Stats
 }
 
 func (u *userContextImpl) State(msgID int) (State, bool) {
@@ -299,7 +338,7 @@ func (u *userContextImpl) LastSeenTime(msgID ...int) time.Time {
 	defer u.mu.Unlock()
 
 	if len(msgID) == 0 {
-		return u.user.LastSeenTime
+		return u.user.Stats.LastSeenTime
 	}
 	return u.user.Messages.LastActions[lang.First(msgID)]
 }
@@ -354,9 +393,10 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 		upd.Main = &u.user.State.Main
 	}
 
-	u.user.LastSeenTime = time.Now().UTC()
+	u.user.Stats.LastSeenTime = time.Now().UTC()
+	u.user.Stats.NumberOfStateChangesTotal++
 	u.user.State.MessageStates[msgID] = newState.String()
-	u.user.Messages.LastActions[msgID] = u.user.LastSeenTime
+	u.user.Messages.LastActions[msgID] = u.user.Stats.LastSeenTime
 
 	upd.MessageStates = u.user.State.MessageStates
 
@@ -364,15 +404,16 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	userID := u.user.ID
 	lastActions := make(map[int]time.Time, len(u.user.Messages.LastActions))
 	maps.Copy(lastActions, u.user.Messages.LastActions)
-	lastSeenTime := u.user.LastSeenTime
+	lastSeenTime := u.user.Stats.LastSeenTime
+	numberOfActionsTotal := u.user.Stats.NumberOfStateChangesTotal
 
 	// Release the lock before making DB calls to avoid holding it too long
 	u.mu.Unlock()
 
 	u.db.UpdateAsync(userID, &UserModelDiff{
-		State:        &upd,
-		Messages:     &UserMessagesDiff{LastActions: lastActions},
-		LastSeenTime: &lastSeenTime,
+		State:    &upd,
+		Messages: &UserMessagesDiff{LastActions: lastActions},
+		Stats:    &UserStatDiff{LastSeenTime: &lastSeenTime, NumberOfStateChanges: &numberOfActionsTotal},
 	})
 }
 
@@ -386,14 +427,6 @@ func (u *userContextImpl) prepareTextStates() {
 	}
 }
 
-func (u *userContextImpl) hasTextMessages() bool {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-
-	u.prepareTextStates()
-	return len(u.user.State.MessagesAwaitingText) > 0
-}
-
 func (u *userContextImpl) lastTextMessage() int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -404,6 +437,24 @@ func (u *userContextImpl) lastTextMessage() int {
 	u.prepareTextStates()
 
 	return u.user.State.MessagesAwaitingText[len(u.user.State.MessagesAwaitingText)-1]
+}
+
+func (u *userContextImpl) lastTextMessageState() (int, State) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	if len(u.user.State.MessagesAwaitingText) == 0 {
+		return 0, NoChange
+	}
+	u.prepareTextStates()
+
+	msgID := u.user.State.MessagesAwaitingText[len(u.user.State.MessagesAwaitingText)-1]
+	st, ok := u.user.State.MessageStates[msgID]
+	if !ok {
+		return msgID, NoChange
+	}
+
+	return msgID, state(st)
 }
 
 // pushTextMessageLocked assumes the lock is already held
@@ -599,42 +650,42 @@ func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
 }
 
 func (u *userContextImpl) update(user *tele.User) {
-	// Sanitize and validate the input user
-	sanitizedUser := sanitizeTelegramUser(user)
-	if sanitizedUser == nil {
+	if user == nil {
 		return
 	}
 
-	// Create the new info outside the lock
-	newInfo := newUserInfo(sanitizedUser)
+	infoToCheck := newUserInfoNoSanitize(user)
 
 	u.mu.Lock()
 
-	// Compare and early return if no changes
+	// Fast check because sanitize is expensive
+	if infoToCheck == u.user.Info {
+		u.mu.Unlock()
+		return
+	}
+
+	newInfo := newUserInfoWithSanitize(user)
 	if newInfo == u.user.Info {
 		u.mu.Unlock()
 		return
 	}
 
-	// Update the info
+	newInfo.ForceLanguageCode = u.user.Info.ForceLanguageCode
 	u.user.Info = newInfo
-
-	// Capture values for DB update
 	userID := u.user.ID
-	userInfoDiff := &UserInfoDiff{
-		FirstName:    &u.user.Info.FirstName,
-		LastName:     &u.user.Info.LastName,
-		Username:     &u.user.Info.Username,
-		LanguageCode: &u.user.Info.LanguageCode,
-		IsBot:        &u.user.Info.IsBot,
-		IsPremium:    &u.user.Info.IsPremium,
-	}
 
 	u.mu.Unlock()
 
-	// Update the database
 	u.db.UpdateAsync(userID, &UserModelDiff{
-		Info: userInfoDiff,
+		Info: &UserInfoDiff{
+			FirstName:         &newInfo.FirstName,
+			LastName:          &newInfo.LastName,
+			Username:          &newInfo.Username,
+			LanguageCode:      &newInfo.LanguageCode,
+			IsBot:             &newInfo.IsBot,
+			IsPremium:         &newInfo.IsPremium,
+			ForceLanguageCode: &newInfo.ForceLanguageCode,
+		},
 	})
 }
 
@@ -642,7 +693,7 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 	u.mu.Lock()
 
 	currentTime := time.Now().UTC()
-	u.user.LastSeenTime = currentTime
+	u.user.Stats.LastSeenTime = currentTime
 	u.user.Messages.LastActions[mainMsgID] = currentTime
 
 	// Append to history IDs
@@ -674,7 +725,7 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 
 	// Capture values for DB update
 	userID := u.user.ID
-	lastSeenTime := u.user.LastSeenTime
+	lastSeenTime := u.user.Stats.LastSeenTime
 	mainID := mainMsgID
 	headID := headMsgID
 
@@ -691,7 +742,7 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 			HistoryIDs:  historyIDs,
 			LastActions: lastActions,
 		},
-		LastSeenTime: &lastSeenTime,
+		Stats: &UserStatDiff{LastSeenTime: &lastSeenTime},
 	}
 
 	if !newState.NotChanged() {
@@ -716,14 +767,14 @@ func (u *userContextImpl) disable() {
 	}
 
 	currentTime := time.Now().UTC()
-	u.user.DisabledTime = currentTime
+	u.user.Stats.DisabledTime = currentTime
 	u.user.IsDisabled = true
 	u.user.State.Main = Disabled.String()
 	u.user.State.MessageStates[u.user.Messages.MainID] = Disabled.String()
 
 	// Capture values for DB update
 	userID := u.user.ID
-	disabledTime := u.user.DisabledTime
+	disabledTime := u.user.Stats.DisabledTime
 	isDisabled := u.user.IsDisabled
 	stateMain := u.user.State.Main
 
@@ -737,8 +788,10 @@ func (u *userContextImpl) disable() {
 			Main:          &stateMain,
 			MessageStates: messageStates,
 		},
-		DisabledTime: &disabledTime,
-		IsDisabled:   &isDisabled,
+		Stats: &UserStatDiff{
+			DisabledTime: &disabledTime,
+		},
+		IsDisabled: &isDisabled,
 	})
 }
 
@@ -750,14 +803,14 @@ func (u *userContextImpl) enable() {
 		return
 	}
 
-	u.user.DisabledTime = time.Time{}
+	u.user.Stats.DisabledTime = time.Time{}
 	u.user.IsDisabled = false
 	u.user.State.Main = FirstRequest.String()
 	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest.String()
 
 	// Capture values for DB update
 	userID := u.user.ID
-	disabledTime := u.user.DisabledTime
+	disabledTime := u.user.Stats.DisabledTime
 	isDisabled := u.user.IsDisabled
 	stateMain := u.user.State.Main
 
@@ -771,8 +824,10 @@ func (u *userContextImpl) enable() {
 			Main:          &stateMain,
 			MessageStates: messageStates,
 		},
-		DisabledTime: &disabledTime,
-		IsDisabled:   &isDisabled,
+		Stats: &UserStatDiff{
+			DisabledTime: &disabledTime,
+		},
+		IsDisabled: &isDisabled,
 	})
 }
 
@@ -790,38 +845,24 @@ func (u *userContextImpl) setMsgInited(msgID int) {
 	u.isInitedMsg.Set(msgID, true)
 }
 
-func (u *userContextImpl) getBtnName() string {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-
-	return u.btnName
-}
-
-func (u *userContextImpl) setBtnName(btnName string) {
+func (u *userContextImpl) setBtnAndPayload(btnName, payload string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
 	u.btnName = btnName
-}
-
-func (u *userContextImpl) getPayload() string {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-
-	return u.payload
-}
-
-func (u *userContextImpl) setPayload(payload string) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-
 	u.payload = payload
+}
+func (u *userContextImpl) getBtnAndPayload() (btnName, payload string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	return u.btnName, u.payload
 }
 
 func newUserModel(tUser *tele.User) UserModel {
 	return UserModel{
 		ID:   tUser.ID,
-		Info: newUserInfo(tUser),
+		Info: newUserInfoWithSanitize(tUser),
 		State: UserState{
 			Main:          FirstRequest.String(),
 			MessageStates: make(map[int]string),
@@ -829,13 +870,14 @@ func newUserModel(tUser *tele.User) UserModel {
 		Messages: UserMessages{
 			LastActions: make(map[int]time.Time),
 		},
-		LastSeenTime: time.Now().UTC(),
-		CreatedTime:  time.Now().UTC(),
+		Stats: UserStat{
+			LastSeenTime: time.Now().UTC(),
+			CreatedTime:  time.Now().UTC(),
+		},
 	}
 }
 
-func newUserInfo(tUser *tele.User) UserInfo {
-	// Safety check
+func newUserInfoWithSanitize(tUser *tele.User) UserInfo {
 	if tUser == nil {
 		return UserInfo{}
 	}
@@ -844,6 +886,21 @@ func newUserInfo(tUser *tele.User) UserInfo {
 		FirstName:    sanitizeText(tUser.FirstName, 1000),
 		LastName:     sanitizeText(tUser.LastName, 1000),
 		Username:     sanitizeText(tUser.Username, 1000),
+		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
+		IsBot:        tUser.IsBot,
+		IsPremium:    tUser.IsPremium,
+	}
+}
+
+func newUserInfoNoSanitize(tUser *tele.User) UserInfo {
+	if tUser == nil {
+		return UserInfo{}
+	}
+
+	return UserInfo{
+		FirstName:    tUser.FirstName,
+		LastName:     tUser.LastName,
+		Username:     tUser.Username,
 		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
 		IsBot:        tUser.IsBot,
 		IsPremium:    tUser.IsPremium,
@@ -869,7 +926,7 @@ func newUserManager(db UsersStorage, log Logger, userCacheCapacity int, userCach
 		WithTTL(userCacheTTL).
 		Build()
 	if err != nil {
-		return nil, errm.Wrapf(err, "failed to create user cache with capacity %d", userCacheCapacity)
+		return nil, erro.Wrap(err, "failed to create user cache with capacity %d", userCacheCapacity)
 	}
 
 	m := &userManagerImpl{
@@ -881,20 +938,18 @@ func newUserManager(db UsersStorage, log Logger, userCacheCapacity int, userCach
 	return m, nil
 }
 
-func (m *userManagerImpl) prepareUser(ctx context.Context, tUser *tele.User) (*userContextImpl, error) {
+func (m *userManagerImpl) prepareUser(tUser *tele.User) (*userContextImpl, error) {
 	if tUser == nil {
-		return nil, errm.New("cannot prepare user: telegram user is nil")
+		return nil, erro.New("cannot prepare user: telegram user is nil")
 	}
 
-	// Sanitize user input before processing
-	sanitizedUser := sanitizeTelegramUser(tUser)
-
-	user, found := m.users.Get(sanitizedUser.ID)
+	user, found := m.users.Get(tUser.ID)
 	if found {
-		user.update(sanitizedUser)
+		user.update(tUser)
 		return user, nil
 	}
-	return m.createUser(ctx, sanitizedUser)
+
+	return m.createUser(tUser)
 }
 
 func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
@@ -914,10 +969,7 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 
 	tUser := &tele.User{ID: userID}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	user, err := m.createUser(ctx, tUser)
+	user, err := m.createUser(tUser)
 	if err != nil {
 		m.log.Error("cannot create user after cache miss",
 			"user_id", userID,
@@ -941,39 +993,38 @@ func (m *userManagerImpl) getAllUsers() []User {
 	return out
 }
 
-func (m *userManagerImpl) createUser(ctx context.Context, tUser *tele.User) (*userContextImpl, error) {
-	if ctx == nil {
-		return nil, errm.New("cannot create user: context is nil")
+func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error) {
+	if tUser == nil {
+		return nil, erro.New("cannot create user: telegram user is nil")
 	}
 
-	if tUser == nil {
-		return nil, errm.New("cannot create user: telegram user is nil")
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	userModel, isFound, err := m.db.Find(ctx, tUser.ID)
 	if err != nil {
-		return nil, errm.Wrapf(err, "failed to find user %d in database", tUser.ID)
+		return nil, erro.Wrap(err, "failed to find user in database", "user_id", tUser.ID)
 	}
 
 	if !isFound {
 		userModel = newUserModel(tUser)
 		if err := m.db.Insert(ctx, userModel); err != nil {
-			return nil, errm.Wrapf(err, "failed to insert new user %d into database", tUser.ID)
+			return nil, erro.Wrap(err, "failed to insert new user into database", "user_id", tUser.ID)
 		}
 	}
 
 	user := m.newUserContext(userModel)
-	if ok := m.users.Set(user.ID(), user); !ok {
-		m.log.Warn("failed to add user to cache", "user_id", user.ID(), "username", user.Username())
+	if ok := m.users.Set(user.user.ID, user); !ok {
+		m.log.Warn("failed to add user to cache", "user_id", user.user.ID, "username", user.user.Info.Username)
 	}
 
 	// Disabled user -> user blocked bot
 	// If user gets here -> he makes request -> he unblock bot
 	if userModel.IsDisabled {
-		m.log.Info("enabling previously disabled user", "user_id", user.ID(), "username", user.Username())
+		m.log.Info("enabling previously disabled user", "user_id", user.user.ID, "username", user.user.Info.Username)
 		user.enable()
 	} else {
-		m.log.Info("new user created", "user_id", user.ID(), "username", user.Username())
+		m.log.Info("new user created", "user_id", user.user.ID, "username", user.user.Info.Username)
 	}
 
 	return user, nil
@@ -1008,7 +1059,7 @@ func newInMemoryUserStorage(userCacheCapacity int, userCacheTTL time.Duration) (
 		WithTTL(userCacheTTL).
 		Build()
 	if err != nil {
-		return nil, errm.Wrapf(err, "failed to create in-memory storage with capacity %d", userCacheCapacity)
+		return nil, erro.Wrap(err, "failed to create in-memory storage with capacity %d", userCacheCapacity)
 	}
 	return &inMemoryUserStorage{
 		cache: s,
@@ -1017,26 +1068,26 @@ func newInMemoryUserStorage(userCacheCapacity int, userCacheTTL time.Duration) (
 
 func (m *inMemoryUserStorage) Insert(ctx context.Context, user UserModel) error {
 	if ctx == nil {
-		return errm.New("cannot insert user: context is nil")
+		return erro.New("cannot insert user: context is nil")
 	}
 
 	if user.ID == 0 {
-		return errm.New("cannot insert user: invalid user ID (zero)")
+		return erro.New("cannot insert user: invalid user ID (zero)")
 	}
 
 	if !m.cache.Set(user.ID, user) {
-		return errm.Wrap(errm.New("cache rejected insertion"), fmt.Sprintf("failed to insert user %d into in-memory storage", user.ID))
+		return erro.Wrap(erro.New("cache rejected insertion"), fmt.Sprintf("failed to insert user %d into in-memory storage", user.ID))
 	}
 	return nil
 }
 
 func (m *inMemoryUserStorage) Find(ctx context.Context, id int64) (UserModel, bool, error) {
 	if ctx == nil {
-		return UserModel{}, false, errm.New("cannot find user: context is nil")
+		return UserModel{}, false, erro.New("cannot find user: context is nil")
 	}
 
 	if id == 0 {
-		return UserModel{}, false, errm.New("cannot find user: invalid user ID (zero)")
+		return UserModel{}, false, erro.New("cannot find user: invalid user ID (zero)")
 	}
 
 	user, found := m.cache.Get(id)
@@ -1063,12 +1114,13 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 
 	if diff.Info != nil {
 		user.Info = UserInfo{
-			FirstName:    lang.Check(lang.Deref(diff.Info.FirstName), user.Info.FirstName),
-			LastName:     lang.Check(lang.Deref(diff.Info.LastName), user.Info.LastName),
-			Username:     lang.Check(lang.Deref(diff.Info.Username), user.Info.Username),
-			LanguageCode: lang.Check(lang.Deref(diff.Info.LanguageCode), user.Info.LanguageCode),
-			IsBot:        lang.Check(lang.Deref(diff.Info.IsBot), user.Info.IsBot),
-			IsPremium:    lang.Check(lang.Deref(diff.Info.IsPremium), user.Info.IsPremium),
+			FirstName:         lang.Check(lang.Deref(diff.Info.FirstName), user.Info.FirstName),
+			LastName:          lang.Check(lang.Deref(diff.Info.LastName), user.Info.LastName),
+			Username:          lang.Check(lang.Deref(diff.Info.Username), user.Info.Username),
+			LanguageCode:      lang.Check(lang.Deref(diff.Info.LanguageCode), user.Info.LanguageCode),
+			IsBot:             lang.Check(lang.Deref(diff.Info.IsBot), user.Info.IsBot),
+			IsPremium:         lang.Check(lang.Deref(diff.Info.IsPremium), user.Info.IsPremium),
+			ForceLanguageCode: lang.Check(lang.Deref(diff.Info.ForceLanguageCode), user.Info.ForceLanguageCode),
 		}
 	}
 	if diff.Messages != nil {
@@ -1089,8 +1141,9 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 		}
 	}
 
-	user.LastSeenTime = lang.CheckTime(lang.Deref(diff.LastSeenTime), user.LastSeenTime)
-	user.DisabledTime = lang.CheckTime(lang.Deref(diff.DisabledTime), user.DisabledTime)
+	user.Stats.LastSeenTime = lang.CheckTime(lang.Deref(diff.Stats.LastSeenTime), user.Stats.LastSeenTime)
+	user.Stats.DisabledTime = lang.CheckTime(lang.Deref(diff.Stats.DisabledTime), user.Stats.DisabledTime)
+	user.Stats.NumberOfStateChangesTotal = lang.Check(lang.Deref(diff.Stats.NumberOfStateChanges), user.Stats.NumberOfStateChangesTotal)
 	user.IsDisabled = lang.Check(lang.Deref(diff.IsDisabled), user.IsDisabled)
 
 	m.cache.Set(id, user)
@@ -1117,22 +1170,4 @@ func (state) IsText() bool {
 
 func (s state) NotChanged() bool {
 	return s == NoChange
-}
-
-// sanitizeTelegramUser sanitizes fields in a Telegram user object
-func sanitizeTelegramUser(user *tele.User) *tele.User {
-	if user == nil {
-		return nil
-	}
-
-	// Create a copy to avoid modifying the original
-	sanitized := *user
-
-	// Sanitize text fields
-	sanitized.FirstName = sanitizeText(user.FirstName, 1000)
-	sanitized.LastName = sanitizeText(user.LastName, 1000)
-	sanitized.Username = sanitizeText(user.Username, 1000)
-	sanitized.LanguageCode = sanitizeText(user.LanguageCode, 1000)
-
-	return &sanitized
 }

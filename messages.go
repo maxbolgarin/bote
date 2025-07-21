@@ -263,8 +263,12 @@ type MessageBuilder struct {
 }
 
 // NewBuilder creates a new Builder instance.
-func NewBuilder() *MessageBuilder {
-	return &MessageBuilder{}
+func NewBuilder(cap ...int) *MessageBuilder {
+	out := &MessageBuilder{}
+	if len(cap) > 0 {
+		out.Builder.Grow(cap[0])
+	}
+	return out
 }
 
 // Write writes a string to the builder.
@@ -480,6 +484,8 @@ func sanitizeText(text string, maxLength ...int) string {
 
 	// Remove ASCII control characters (0-31 and 127)
 	var cleaned strings.Builder
+	cleaned.Grow(len(text))
+
 	for _, r := range text {
 		if r >= 32 && r != 127 {
 			cleaned.WriteRune(r)

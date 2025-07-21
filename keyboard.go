@@ -76,6 +76,8 @@ func CreateBtnData(dataList ...string) string {
 	}
 
 	var b strings.Builder
+	b.Grow(len(dataList[0]) + len(dataList[1:]) + 1)
+
 	b.WriteString(dataList[0])
 	for _, s := range dataList[1:] {
 		if s == "" {
@@ -330,7 +332,7 @@ const (
 func getBtnIDAndUnique(name string) (id string, unique string) {
 	var (
 		btnID = hex.EncodeToString([]byte(name))
-		rnd   = abstract.GetRandomString(randBytesInUnique)
+		rnd   = abstract.GetRandomStringFast(randBytesInUnique)
 	)
 	if len(btnID) > idBytesInUnique {
 		btnID = btnID[:idBytesInUnique]

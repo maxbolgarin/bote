@@ -1,7 +1,6 @@
 package bote
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -10,7 +9,7 @@ import (
 	"time"
 
 	"github.com/maxbolgarin/abstract"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
@@ -60,21 +59,21 @@ func New(token string, optsFuncs ...func(*Options)) (*Bot, error) {
 // NewWithOptions starts the bot with options.
 func NewWithOptions(token string, opts Options) (*Bot, error) {
 	if token == "" {
-		return nil, errm.New("token cannot be empty")
+		return nil, erro.New("token cannot be empty")
 	}
 	opts, err := prepareOpts(opts)
 	if err != nil {
-		return nil, errm.Wrap(err, "prepare opts")
+		return nil, erro.Wrap(err, "prepare opts")
 	}
 
 	um, err := newUserManager(opts.UserDB, opts.Logger, opts.Config.UserCacheCapacity, opts.Config.UserCacheTTL)
 	if err != nil {
-		return nil, errm.Wrap(err, "new user manager")
+		return nil, erro.Wrap(err, "new user manager")
 	}
 
 	b, err := newBaseBot(token, opts)
 	if err != nil {
-		return nil, errm.Wrap(err, "start bot")
+		return nil, erro.Wrap(err, "start bot")
 	}
 
 	bote := &Bot{
@@ -162,10 +161,11 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 		}
 
 		if ep, ok := endpoint.(string); ok && ep == tele.OnText {
-			if !ctx.user.hasTextMessages() {
+			lastMsg := ctx.user.lastTextMessage()
+			if lastMsg == 0 {
 				return nil
 			}
-			ctx.textMsgID = ctx.user.lastTextMessage()
+			ctx.textMsgID = lastMsg
 
 			// /start was already handled
 			if ctx.ct.Text() == startCommand {
@@ -241,16 +241,13 @@ func (*Bot) emptyHandler(Context) error {
 func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	defer lang.Recover(b.bot.log)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	sender := getSender(upd)
 	if sender == nil {
 		b.bot.log.Error(fmt.Sprintf("cannot get sender from update: %+v", upd))
 		return false
 	}
 
-	user, err := b.um.prepareUser(ctx, sender)
+	user, err := b.um.prepareUser(sender)
 	if err != nil {
 		b.bot.log.Error("cannot prepare user", "error", err, "user_id", sender.ID, "username", sender.Username)
 		b.sendError(sender.ID, b.msgs.Messages(b.defaultLanguage).GeneralError())
@@ -289,8 +286,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 
 	if upd.Callback != nil {
 		if match := cbackRx.FindAllStringSubmatch(upd.Callback.Data, -1); match != nil {
-			user.setBtnName(getNameFromUnique(match[0][1]))
-			user.setPayload(match[0][3])
+			user.setBtnAndPayload(getNameFromUnique(match[0][1]), match[0][3])
 		}
 	}
 
@@ -311,38 +307,37 @@ func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
 		return false
 	}
 
-	fields := make([]any, 0, 7)
+	fields := make([]any, 0, 14)
 	fields = append(fields,
-		"user_id", user.ID(),
-		"username", user.Username(),
+		"user_id", user.user.ID,
+		"username", user.user.Info.Username,
 	)
 
 	switch {
 	case upd.Message != nil:
-		fields = append(fields, "state", user.StateMain(), "msg_id", upd.Message.ID, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
-		if user.hasTextMessages() {
-			msgID := user.lastTextMessage()
-			ts, _ := user.State(msgID)
-			fields = append(fields, "text_state", ts, "text_state_msg_id", msgID)
+		fields = append(fields, "state", user.user.State.Main, "msg_id", upd.Message.ID, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
+		if msgID, st := user.lastTextMessageState(); msgID != 0 {
+			fields = append(fields, "text_state", st, "text_state_msg_id", msgID)
 		}
 		b.rlog.Log(MessageUpdate, fields...)
 
 	case upd.Callback != nil:
 		if upd.Callback.Message != nil {
-			st, _ := user.State(upd.Callback.Message.ID)
-			if st.NotChanged() {
+			st, ok := user.State(upd.Callback.Message.ID)
+			if !ok || st.NotChanged() {
 				st = user.StateMain()
 			}
 			fields = append(fields, "state", st, "msg_id", upd.Callback.Message.ID)
 		} else {
-			fields = append(fields, "state", user.StateMain())
+			fields = append(fields, "state", user.user.State.Main)
 		}
 
-		if btnName := user.getBtnName(); btnName != "" {
-			fields = append(fields, "button", any(btnName))
+		btnName, payload := user.getBtnAndPayload()
+		if btnName != "" {
+			fields = append(fields, "button", btnName)
 		}
-		if payload := user.getPayload(); payload != "" {
-			fields = append(fields, "payload", any(payload))
+		if payload != "" {
+			fields = append(fields, "payload", payload)
 		}
 
 		b.rlog.Log(CallbackUpdate, fields...)
@@ -368,7 +363,12 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 
 func userFields(user User, fields ...any) []any {
 	f := make([]any, 0, len(fields)+6)
-	f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.StateMain())
+	if u, ok := user.(*userContextImpl); ok {
+		// No mutex lock for the price of type assertion
+		f = append(f, "user_id", u.user.ID, "username", u.user.Info.Username, "state", u.user.State.Main)
+	} else {
+		f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.StateMain())
+	}
 	return append(f, fields...)
 }
 
@@ -394,13 +394,13 @@ func (b *Bot) initUserMsg(user *userContextImpl, msgID int) error {
 	if targetBundleErr != nil {
 		if !foundBundle {
 			// got error by startHandler
-			return errm.Wrap(targetBundleErr, "start handler", "msg_id", msgID, "state", st)
+			return erro.Wrap(targetBundleErr, "start handler", "msg_id", msgID, "state", st)
 		}
 		startHandlerErr := b.init(InitBundle{
 			Handler: b.startHandler,
 		}, user, msgID, st)
 		if startHandlerErr != nil {
-			return errm.Wrap(startHandlerErr, "start handler", "msg_id", msgID, "state", st, "first_error", targetBundleErr)
+			return erro.Wrap(startHandlerErr, "start handler", "msg_id", msgID, "state", st, "first_error", targetBundleErr)
 		}
 	}
 
@@ -413,7 +413,7 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 		Message: &tele.Message{
 			Text: bundle.Text,
 			Sender: &tele.User{
-				ID: user.ID(),
+				ID: user.user.ID,
 			},
 		},
 		Callback: &tele.Callback{
@@ -421,9 +421,9 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 			Data:    bundle.Data,
 		},
 	}
-
-	mainBefore := user.Messages().MainID
-	headBefore := user.Messages().HeadID
+	msgs := user.Messages()
+	mainBefore := msgs.MainID
+	headBefore := msgs.HeadID
 
 	err := bundle.Handler(&contextImpl{
 		bt:   b,
@@ -432,27 +432,28 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "is not modified") {
-			b.bot.log.Debug("message is not modified in init", "user_id", user.ID(), "msg_id", msgID)
+			b.bot.log.Debug("message is not modified in init", "user_id", user.user.ID, "msg_id", msgID)
 			return nil
 		}
-		return errm.Wrap(err, "run handler")
+		return erro.Wrap(err, "run handler")
 	}
 
-	newMainID := user.Messages().MainID
-	newHeadID := user.Messages().HeadID
+	msgs = user.Messages()
+	newMainID := msgs.MainID
+	newHeadID := msgs.HeadID
 
 	if mainBefore != newMainID {
-		b.bot.log.Debug("main message id changed in init", "user_id", user.ID(), "msg_id", msgID)
-		if err := b.bot.delete(user.ID(), mainBefore); err != nil {
-			b.bot.log.Error("error deleting old main message", "user_id", user.ID(), "msg_id", mainBefore, "error", err)
+		b.bot.log.Debug("main message id changed in init", "user_id", user.user.ID, "msg_id", msgID)
+		if err := b.bot.delete(user.user.ID, mainBefore); err != nil {
+			b.bot.log.Error("error deleting old main message", "user_id", user.user.ID, "msg_id", mainBefore, "error", err)
 		}
 		user.forgetHistoryMessage(mainBefore)
 		msgID = newMainID
 	}
 	if headBefore != newHeadID {
-		b.bot.log.Debug("head message id changed in init", "user_id", user.ID(), "msg_id", msgID)
-		if err := b.bot.delete(user.ID(), headBefore); err != nil {
-			b.bot.log.Error("error deleting old head message", "user_id", user.ID(), "msg_id", headBefore, "error", err)
+		b.bot.log.Debug("head message id changed in init", "user_id", user.user.ID, "msg_id", msgID)
+		if err := b.bot.delete(user.user.ID, headBefore); err != nil {
+			b.bot.log.Error("error deleting old head message", "user_id", user.user.ID, "msg_id", headBefore, "error", err)
 		}
 		user.forgetHistoryMessage(headBefore)
 	}
@@ -461,10 +462,10 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 	if bundle.State == nil || bundle.State.NotChanged() {
 		newState, ok := user.State(msgID)
 		if !ok {
-			return errm.New("new state not found")
+			return erro.New("new state not found")
 		}
 		if newState != expectedState {
-			return errm.New("unexpected", "state", newState)
+			return erro.New("unexpected", "state", newState)
 		}
 		return nil
 	}
@@ -480,10 +481,11 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 		b.bot.log.Error("failed to send error message", "user_id", userID, "error", errEmptyUserID)
 		return
 	}
-	if msgID := user.Messages().ErrorID; msgID != 0 {
-		err := b.bot.delete(user.ID(), msgID)
+	msgs := user.Messages()
+	if msgID := msgs.ErrorID; msgID != 0 {
+		err := b.bot.delete(user.user.ID, msgID)
 		if err != nil {
-			b.bot.log.Debug("failed to delete error message", "user_id", user.ID(), "msg_id", msgID, "error", err)
+			b.bot.log.Debug("failed to delete error message", "user_id", user.user.ID, "msg_id", msgID, "error", err)
 		}
 	}
 	closeBtn := b.msgs.Messages(user.Language()).CloseBtn()
@@ -495,28 +497,29 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 		}
 		opts = append(opts, SingleRow(btn))
 		b.bot.handle(btn, func(tele.Context) error {
-			if user.Messages().ErrorID == 0 {
+			msgs := user.Messages()
+			if msgs.ErrorID == 0 {
 				return nil
 			}
-			err := b.bot.delete(user.ID(), user.Messages().ErrorID)
+			err := b.bot.delete(user.user.ID, msgs.ErrorID)
 			if err != nil {
-				b.bot.log.Error("failed to delete error message using close button", "user_id", user.ID(), "msg_id", user.Messages().ErrorID, "error", err)
+				b.bot.log.Error("failed to delete error message using close button", "user_id", user.user.ID, "msg_id", msgs.ErrorID, "error", err)
 			}
 			user.setErrorMessage(0)
 			return nil
 		})
 	}
-	msgID, err := b.bot.send(user.ID(), msg, append(opts, tele.Silent)...)
+	msgID, err := b.bot.send(user.user.ID, msg, append(opts, tele.Silent)...)
 	if err != nil {
-		b.bot.log.Error("failed to send error message", "user_id", user.ID(), "error", err)
+		b.bot.log.Error("failed to send error message", "user_id", user.user.ID, "error", err)
 		return
 	}
 	user.setErrorMessage(msgID)
 }
 
 var (
-	errEmptyUserID = errm.New("empty user id")
-	errEmptyMsgID  = errm.New("empty msg id")
+	errEmptyUserID = erro.New("empty user id")
+	errEmptyMsgID  = erro.New("empty msg id")
 )
 
 type baseBot struct {
@@ -559,7 +562,7 @@ func newBaseBot(token string, opts Options) (*baseBot, error) {
 		Offline: opts.Config.TestMode,
 	})
 	if err != nil {
-		return nil, errm.Wrap(err, "new telebot")
+		return nil, erro.Wrap(err, "new telebot")
 	}
 	b.tbot = bot
 
@@ -638,7 +641,7 @@ func (b *baseBot) delete(userID int64, msgIDs ...int) error {
 		return errEmptyUserID
 	}
 
-	errSet := errm.NewList()
+	errSet := erro.NewList()
 
 	for _, msgID := range msgIDs {
 		if msgID == 0 {

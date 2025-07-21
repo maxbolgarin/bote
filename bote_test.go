@@ -61,6 +61,7 @@ func (p *testPoller) SendUpdate(upd tele.Update) {
 func (p *testPoller) SendTextMessage(from tele.User, text string) {
 	p.SendUpdate(tele.Update{
 		Message: &tele.Message{
+			ID:     1,
 			Sender: &from,
 			Text:   text,
 		},
@@ -431,8 +432,10 @@ func (s *testUserStorage) Find(ctx context.Context, id int64) (bote.UserModel, b
 			Username:     "testuser",
 			LanguageCode: "en",
 		},
-		LastSeenTime: now,
-		CreatedTime:  now,
+		Stats: bote.UserStat{
+			LastSeenTime: now,
+			CreatedTime:  now,
+		},
 	}, true, nil
 }
 func (s *testUserStorage) UpdateAsync(id int64, userModel *bote.UserModelDiff) {}
@@ -665,15 +668,17 @@ func TestUserModel(t *testing.T) {
 			Username:     "testuser",
 			LanguageCode: "en",
 		},
-		LastSeenTime: now,
-		CreatedTime:  now,
+		Stats: bote.UserStat{
+			LastSeenTime: now,
+			CreatedTime:  now,
+		},
 	}
 
 	assert.Equal(t, int64(123), model.ID)
 	assert.Equal(t, "Test", model.Info.FirstName)
 	assert.Equal(t, "User", model.Info.LastName)
 	assert.Equal(t, "testuser", model.Info.Username)
-	assert.Equal(t, "en", model.Info.LanguageCode)
+	assert.EqualValues(t, "en", model.Info.LanguageCode)
 
 	// Test diff
 	diff := &bote.UserModelDiff{

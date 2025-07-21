@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
@@ -210,7 +210,7 @@ func (t UpdateType) String() string {
 func prepareOpts(opts Options) (Options, error) {
 	err := opts.Config.prepareAndValidate()
 	if err != nil {
-		return opts, errm.Wrap(err, "prepare and validate config")
+		return opts, erro.Wrap(err, "prepare and validate config")
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
@@ -232,7 +232,7 @@ func prepareOpts(opts Options) (Options, error) {
 	if opts.UserDB == nil {
 		opts.UserDB, err = newInMemoryUserStorage(opts.Config.UserCacheCapacity, opts.Config.UserCacheTTL)
 		if err != nil {
-			return opts, errm.Wrap(err, "new user storage")
+			return opts, erro.Wrap(err, "new user storage")
 		}
 	}
 	if opts.Msgs == nil {
