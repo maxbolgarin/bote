@@ -676,12 +676,12 @@ func (c *contextImpl) handleConnectionError(errorMsg string, err error) bool {
 		return false
 	}
 
-	c.bt.bot.log.Warn("connection error", userFields(c.user, "error", err)...)
+	c.bt.bot.log.Warn("connection error", userFields(c.user, "error", err.Error())...)
 	return true
 }
 
 func (c *contextImpl) handleGenericError(err error) {
-	c.bt.bot.log.Error("handler", userFields(c.user, "error", err)...)
+	c.bt.bot.log.Error("handler", userFields(c.user, "error", err.Error())...)
 
 	// Create error message with optional close button
 	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()

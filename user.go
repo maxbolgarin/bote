@@ -711,6 +711,10 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 	var stateMain *string
 	var messageStates map[int]string
 
+	if newState.NotChanged() && u.user.State.Main == firstRequest.String() {
+		newState = Unknown
+	}
+
 	if !newState.NotChanged() {
 		u.user.State.Main = newState.String()
 		u.user.State.MessageStates[mainMsgID] = newState.String()
@@ -805,8 +809,8 @@ func (u *userContextImpl) enable() {
 
 	u.user.Stats.DisabledTime = time.Time{}
 	u.user.IsDisabled = false
-	u.user.State.Main = FirstRequest.String()
-	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest.String()
+	u.user.State.Main = firstRequest.String()
+	u.user.State.MessageStates[u.user.Messages.MainID] = firstRequest.String()
 
 	// Capture values for DB update
 	userID := u.user.ID
@@ -864,7 +868,7 @@ func newUserModel(tUser *tele.User) UserModel {
 		ID:   tUser.ID,
 		Info: newUserInfoWithSanitize(tUser),
 		State: UserState{
-			Main:          FirstRequest.String(),
+			Main:          firstRequest.String(),
 			MessageStates: make(map[int]string),
 		},
 		Messages: UserMessages{
@@ -973,7 +977,7 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 	if err != nil {
 		m.log.Error("cannot create user after cache miss",
 			"user_id", userID,
-			"error", err,
+			"error", err.Error(),
 			"error_type", fmt.Sprintf("%T", err))
 
 		// Create an emergency fallback user
@@ -1154,10 +1158,13 @@ type state string
 const (
 	// NoChange is a state that means that user state should not be changed after Send of Edit.
 	NoChange state = ""
-	// FirstRequest is a state of a user after first request to bot.
-	FirstRequest state = "first_request"
+	// Unknown is a state of a user when hiw real state is not provided after creation.
+	Unknown state = "unknown"
 	// Disabled is a state of a disabled user.
 	Disabled state = "disabled"
+
+	// firstRequest is a state of a user after first request to bot.
+	firstRequest state = "first_request"
 )
 
 func (s state) String() string {

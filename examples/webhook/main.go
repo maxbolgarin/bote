@@ -1,35 +1,37 @@
 package main
 
 import (
+	"context"
+	"log"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/maxbolgarin/bote"
 )
 
+// Use ngrok or tuna.am to get a public URL for your webhook for testing purposes
+const webhookURL = "https://TODO/webhook"
+
 func main() {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
-		panic("TELEGRAM_BOT_TOKEN is not set")
+		log.Fatalln("TELEGRAM_BOT_TOKEN is not set")
 	}
 
-	cfg := bote.Config{
-		DefaultLanguage: bote.LanguageRussian,
-		NoPreview:       true,
-	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
-	b, err := bote.New(token, bote.WithConfig(cfg))
+	b, err := bote.New(token,
+		bote.WithWebhook(webhookURL),
+		// bote.WithWebhookGenerateCertificate(),
+	)
 	if err != nil {
-		panic(err)
+		log.Fatalln(err)
 	}
 
-	b.Start(startHandler, nil)
-
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt)
-	<-ch
-
-	b.Stop()
+	stopCh := b.Start(ctx, startHandler, nil)
+	<-stopCh
 }
 
 func startHandler(ctx bote.Context) error {

@@ -1,6 +1,7 @@
 package bote
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -45,9 +46,14 @@ type Bot struct {
 	startHandler   HandlerFunc
 	deleteMessages bool
 	logUpdates     bool
+
+	wp      *webhookPoller
+	closeCh chan struct{}
 }
 
 // New creates the bot with optional options.
+// It starts the bot in a separate goroutine.
+// You should call [Bot.Stop] to gracefully shutdown the bot.
 func New(token string, optsFuncs ...func(*Options)) (*Bot, error) {
 	var opts Options
 	for _, f := range optsFuncs {
@@ -57,6 +63,8 @@ func New(token string, optsFuncs ...func(*Options)) (*Bot, error) {
 }
 
 // NewWithOptions starts the bot with options.
+// It starts the bot in a separate goroutine.
+// You should call [Bot.Stop] to gracefully shutdown the bot.
 func NewWithOptions(token string, opts Options) (*Bot, error) {
 	if token == "" {
 		return nil, erro.New("token cannot be empty")
@@ -66,7 +74,7 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		return nil, erro.Wrap(err, "prepare opts")
 	}
 
-	um, err := newUserManager(opts.UserDB, opts.Logger, opts.Config.UserCacheCapacity, opts.Config.UserCacheTTL)
+	um, err := newUserManager(opts.UserDB, opts.Logger, opts.Config.Bot.UserCacheCapacity, opts.Config.Bot.UserCacheTTL)
 	if err != nil {
 		return nil, erro.Wrap(err, "new user manager")
 	}
@@ -82,11 +90,12 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		msgs: opts.Msgs,
 		rlog: opts.UpdateLogger,
 
-		defaultLanguage: opts.Config.DefaultLanguage,
+		defaultLanguage: opts.Config.Bot.DefaultLanguage,
 		middlewares:     abstract.NewSafeSlice[MiddlewareFunc](),
 		stateMap:        abstract.NewSafeMap[string, InitBundle](),
-		deleteMessages:  lang.Deref(opts.Config.DeleteMessages),
-		logUpdates:      lang.Deref(opts.Config.LogUpdates),
+		deleteMessages:  lang.Deref(opts.Config.Bot.DeleteMessages),
+		logUpdates:      lang.Deref(opts.Config.Log.LogUpdates),
+		closeCh:         make(chan struct{}),
 	}
 
 	b.addMiddleware(bote.masterMiddleware)
@@ -95,6 +104,11 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 
 	// To trigger initUserHandler on callback (there is no registered handlers if user is not inited)
 	bote.Handle(tele.OnCallback, bote.emptyHandler)
+
+	if wp, ok := opts.Poller.(*webhookPoller); ok {
+		bote.wp = wp
+		bote.closeCh = wp.stopCh
+	}
 
 	return bote, nil
 }
@@ -106,18 +120,45 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 // Inline buttons will trigger onCallback handler if you don't init them after bot restart.
 // You can pass nil map if you don't need to reinit messages.
 // Don't forget to call Stop() to gracefully shutdown the bot.
-func (b *Bot) Start(startHandler HandlerFunc, stateMap map[State]InitBundle) {
+func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[State]InitBundle) chan struct{} {
 	b.startHandler = startHandler
 	for k, v := range stateMap {
 		b.stateMap.Set(k.String(), v)
 	}
 	b.Handle(startCommand, b.startHandler)
-	b.bot.start()
-}
 
-// Stop gracefully shuts the poller down.
-func (b *Bot) Stop() {
-	b.bot.stop()
+	b.bot.log.Info("bot is starting")
+
+	stopChannel := make(chan struct{})
+	lang.Go(b.bot.log, func() {
+		lang.Go(b.bot.log, b.bot.tbot.Start)
+
+		select {
+		case <-ctx.Done():
+		case <-b.closeCh:
+			b.closeCh = nil
+		}
+
+		b.bot.log.Info("bot is stopping")
+
+		if b.wp != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			if b.closeCh != nil {
+				close(b.wp.stopCh)
+			}
+
+			if err := b.wp.shutdown(ctx); err != nil {
+				b.bot.log.Error("failed to shutdown webhook poller", "error", err.Error())
+			}
+		}
+
+		b.bot.tbot.Stop()
+		close(stopChannel)
+	})
+
+	return stopChannel
 }
 
 // Bot returns the underlying *tele.Bot.
@@ -179,7 +220,7 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 
 		if c.Callback() != nil {
 			if err = c.Respond(&tele.CallbackResponse{}); err != nil {
-				b.bot.log.Debug("failed to respond to callback", "error", err)
+				b.bot.log.Debug("failed to respond to callback", "error", err.Error())
 			}
 		}
 
@@ -200,7 +241,7 @@ func (b *Bot) SetMessageProvider(msgs MessageProvider) {
 
 func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 	defer ctx.user.setMsgInited(msgID)
-	if ctx.user.Messages().MainID == 0 || ctx.user.StateMain() == FirstRequest {
+	if ctx.user.Messages().MainID == 0 || ctx.user.StateMain() == firstRequest {
 		return nil
 	}
 
@@ -249,7 +290,7 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 
 	user, err := b.um.prepareUser(sender)
 	if err != nil {
-		b.bot.log.Error("cannot prepare user", "error", err, "user_id", sender.ID, "username", sender.Username)
+		b.bot.log.Error("cannot prepare user", "error", err.Error(), "user_id", sender.ID, "username", sender.Username)
 		b.sendError(sender.ID, b.msgs.Messages(b.defaultLanguage).GeneralError())
 		return false
 	}
@@ -270,7 +311,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 	if msgIDs.ErrorID > 0 {
 		err := b.bot.delete(user.ID(), msgIDs.ErrorID)
 		if err != nil {
-			b.bot.log.Debug("failed to delete error message", "user_id", user.ID(), "msg_id", msgIDs.ErrorID, "error", err)
+			b.bot.log.Debug("failed to delete error message", "user_id", user.ID(), "msg_id", msgIDs.ErrorID, "error", err.Error())
 		}
 		user.setErrorMessage(0)
 	}
@@ -280,7 +321,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 		}
 		err := b.bot.delete(user.ID(), upd.Message.ID)
 		if err != nil {
-			b.bot.log.Debug("failed to delete user message", "user_id", user.ID(), "msg_id", upd.Message.ID, "error", err)
+			b.bot.log.Debug("failed to delete user message", "user_id", user.ID(), "msg_id", upd.Message.ID, "error", err.Error())
 		}
 	}
 
@@ -352,10 +393,10 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 		return true
 	}
 
-	if userRaw.StateMain() == FirstRequest && b.startHandler != nil {
+	if userRaw.StateMain() == firstRequest && b.startHandler != nil {
 		err := b.startHandler(b.newContextFromUpdate(*upd))
 		if err != nil {
-			b.bot.log.Error("failed to handle start command", "error", err)
+			b.bot.log.Error("failed to handle start command", "error", err.Error())
 		}
 	}
 	return true
@@ -445,7 +486,7 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 	if mainBefore != newMainID {
 		b.bot.log.Debug("main message id changed in init", "user_id", user.user.ID, "msg_id", msgID)
 		if err := b.bot.delete(user.user.ID, mainBefore); err != nil {
-			b.bot.log.Error("error deleting old main message", "user_id", user.user.ID, "msg_id", mainBefore, "error", err)
+			b.bot.log.Error("error deleting old main message", "user_id", user.user.ID, "msg_id", mainBefore, "error", err.Error())
 		}
 		user.forgetHistoryMessage(mainBefore)
 		msgID = newMainID
@@ -453,7 +494,7 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 	if headBefore != newHeadID {
 		b.bot.log.Debug("head message id changed in init", "user_id", user.user.ID, "msg_id", msgID)
 		if err := b.bot.delete(user.user.ID, headBefore); err != nil {
-			b.bot.log.Error("error deleting old head message", "user_id", user.user.ID, "msg_id", headBefore, "error", err)
+			b.bot.log.Error("error deleting old head message", "user_id", user.user.ID, "msg_id", headBefore, "error", err.Error())
 		}
 		user.forgetHistoryMessage(headBefore)
 	}
@@ -485,7 +526,7 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 	if msgID := msgs.ErrorID; msgID != 0 {
 		err := b.bot.delete(user.user.ID, msgID)
 		if err != nil {
-			b.bot.log.Debug("failed to delete error message", "user_id", user.user.ID, "msg_id", msgID, "error", err)
+			b.bot.log.Debug("failed to delete error message", "user_id", user.user.ID, "msg_id", msgID, "error", err.Error())
 		}
 	}
 	closeBtn := b.msgs.Messages(user.Language()).CloseBtn()
@@ -503,7 +544,7 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 			}
 			err := b.bot.delete(user.user.ID, msgs.ErrorID)
 			if err != nil {
-				b.bot.log.Error("failed to delete error message using close button", "user_id", user.user.ID, "msg_id", msgs.ErrorID, "error", err)
+				b.bot.log.Error("failed to delete error message using close button", "user_id", user.user.ID, "msg_id", msgs.ErrorID, "error", err.Error())
 			}
 			user.setErrorMessage(0)
 			return nil
@@ -511,7 +552,7 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 	}
 	msgID, err := b.bot.send(user.user.ID, msg, append(opts, tele.Silent)...)
 	if err != nil {
-		b.bot.log.Error("failed to send error message", "user_id", user.user.ID, "error", err)
+		b.bot.log.Error("failed to send error message", "user_id", user.user.ID, "error", err.Error())
 		return
 	}
 	user.setErrorMessage(msgID)
@@ -533,33 +574,29 @@ type baseBot struct {
 func newBaseBot(token string, opts Options) (*baseBot, error) {
 	b := &baseBot{
 		log:            opts.Logger,
-		defaultOptions: []any{opts.Config.ParseMode},
+		defaultOptions: []any{opts.Config.Bot.ParseMode},
 		middlewares:    make([]func(upd *tele.Update) bool, 0),
 	}
 
-	if opts.Config.NoPreview {
+	if opts.Config.Bot.NoPreview {
 		b.defaultOptions = append(b.defaultOptions, tele.NoPreview)
 	}
 
-	var poller tele.Poller
-	poller = &tele.LongPoller{Timeout: opts.Config.LPTimeout}
-	if opts.Poller != nil {
-		poller = opts.Poller
-	}
-
 	bot, err := tele.NewBot(tele.Settings{
-		Token:   token,
-		Poller:  tele.NewMiddlewarePoller(poller, b.middleware),
-		Client:  &http.Client{Timeout: 2 * opts.Config.LPTimeout},
-		Verbose: opts.Config.Debug,
+		Token:  token,
+		Poller: tele.NewMiddlewarePoller(opts.Poller, b.middleware),
+		Client: &http.Client{Timeout: 2 * opts.Config.LongPolling.Timeout},
 		OnError: func(err error, ctx tele.Context) {
 			var userID int64
 			if ctx != nil && ctx.Chat() != nil {
 				userID = ctx.Chat().ID
 			}
-			b.log.Error("error callback", "error", err, "user_id", userID)
+			b.log.Error("error callback", "error", err.Error(), "user_id", userID)
 		},
-		Offline: opts.Config.TestMode,
+
+		Updates: defaultUpdatesChannelCapacity,
+		Verbose: opts.Config.Log.DebugIncomingUpdates,
+		Offline: opts.Offline,
 	})
 	if err != nil {
 		return nil, erro.Wrap(err, "new telebot")
@@ -567,16 +604,6 @@ func newBaseBot(token string, opts Options) (*baseBot, error) {
 	b.tbot = bot
 
 	return b, nil
-}
-
-func (b *baseBot) start() {
-	b.log.Info("bot is starting")
-	lang.Go(b.log, b.tbot.Start)
-}
-
-func (b *baseBot) stop() {
-	b.log.Info("bot is stopping")
-	b.tbot.Stop()
 }
 
 func (b *baseBot) addMiddleware(f func(upd *tele.Update) bool) {
