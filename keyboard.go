@@ -24,6 +24,8 @@ const (
 	OneBytePerRune   RuneSizeType = "OneBytePerRune"
 	TwoBytesPerRune  RuneSizeType = "TwoBytesPerRune"
 	FourBytesPerRune RuneSizeType = "FourBytesPerRune"
+
+	MaxDataLengthBytes = 56
 )
 
 var (
@@ -50,6 +52,13 @@ type ButtonBuilder interface {
 func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn {
 	id, unique := getBtnIDAndUnique(name)
 	data := CreateBtnData(dataList...)
+	if len(data) > MaxDataLengthBytes {
+		ctx.bt.bot.log.Warn("button data length is greater than 56 bytes, it will be truncated",
+			"name", name,
+			"length", len(data),
+		)
+		data = data[:MaxDataLengthBytes]
+	}
 	btn := tele.Btn{
 		Text:   name,
 		Unique: unique,
@@ -332,7 +341,7 @@ const (
 func getBtnIDAndUnique(name string) (id string, unique string) {
 	var (
 		btnID = hex.EncodeToString([]byte(name))
-		rnd   = abstract.GetRandomStringFast(randBytesInUnique)
+		rnd   = abstract.GetRandomString(randBytesInUnique)
 	)
 	if len(btnID) > idBytesInUnique {
 		btnID = btnID[:idBytesInUnique]
