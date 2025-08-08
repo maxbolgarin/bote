@@ -5,10 +5,10 @@ import (
 )
 
 func TestParseLanguage(t *testing.T) {
-	cases := []struct{
-		in string
+	cases := []struct {
+		in  string
 		exp Language
-		ok bool
+		ok  bool
 	}{
 		{"en", LanguageEnglish, true},
 		{"EN", LanguageEnglish, true},
@@ -38,3 +38,11 @@ func TestParseLanguage(t *testing.T) {
 	}
 }
 
+func TestMustLanguagePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic for invalid language code")
+		}
+	}()
+	_ = MustLanguage("xx")
+}

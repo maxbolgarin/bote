@@ -6,7 +6,7 @@ import (
 
 type testMessages struct{}
 
-func (testMessages) CloseBtn() string { return "Close" }
+func (testMessages) CloseBtn() string     { return "Close" }
 func (testMessages) GeneralError() string { return "General error" }
 func (testMessages) PrepareMessage(msg string, u User, newState State, msgID int, isHistorical bool) string {
 	// For testing, just echo the message unchanged
@@ -77,3 +77,60 @@ func TestDefaultMessageProvider(t *testing.T) {
 	}
 }
 
+func TestGetFilledMessage(t *testing.T) {
+	left := "A"
+	right := "B"
+	sep := " : "
+	fill := "-"
+	maxLeft := 5
+	maxRight := 5
+	maxLen := 20
+	out := GetFilledMessage(left, right, sep, fill, maxLeft, maxRight, maxLen)
+	if out == "" {
+		t.Fatalf("expected non-empty filled message")
+	}
+}
+
+func TestSanitizeText(t *testing.T) {
+	cases := []struct {
+		in  string
+		max int
+	}{
+		{"hello", 100},
+		{"\x00\x01bad\x7F", 100},
+		{"<b>bold</b>", 100},
+		{"javascript:alert(1)", 100},
+		{"data:payload", 100},
+		{"trim  ", 3},
+	}
+	for _, c := range cases {
+		_ = sanitizeText(c.in, c.max) // should not panic
+	}
+
+	out := sanitizeText("javascript:alert(1)")
+	if contains(out, "javascript:") {
+		t.Fatalf("expected to remove javascript: pattern, got %q", out)
+	}
+	out = sanitizeText("data:foo")
+	if contains(out, "data:") {
+		t.Fatalf("expected to remove data: pattern, got %q", out)
+	}
+
+	// max length handling (by runes)
+	if got := sanitizeText("абвгд", 3); runeCount(got) != 3 {
+		t.Fatalf("expected 3 runes, got %d, %q", runeCount(got), got)
+	}
+}
+
+func contains(s, sub string) bool { return len(s) >= len(sub) && (len(sub) == 0 || index(s, sub) >= 0) }
+
+func index(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+func runeCount(s string) int { return len([]rune(s)) }

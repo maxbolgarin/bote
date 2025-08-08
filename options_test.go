@@ -67,3 +67,11 @@ func TestWithOptionsHelpers(t *testing.T) {
 	}
 }
 
+func TestGetLogLevel(t *testing.T) {
+	if got := getLogLevel(LogLevelDebug); got.String() == "" {
+		t.Fatalf("expected valid log level for debug")
+	}
+	if got := getLogLevel("unknown"); got.String() == "" { // should fallback to info
+		t.Fatalf("expected fallback log level for unknown")
+	}
+}

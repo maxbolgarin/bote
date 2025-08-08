@@ -58,3 +58,20 @@ func TestInlineBuilder_SingleRowAndColumns(t *testing.T) {
 	}
 }
 
+func TestRemoveKeyboard(t *testing.T) {
+	mk := RemoveKeyboard()
+	if mk == nil || !mk.RemoveKeyboard {
+		t.Fatalf("expected RemoveKeyboard to be true")
+	}
+}
+
+func TestGetIDFromUnparsedData(t *testing.T) {
+	// unique has 8 bytes where last 4 are random; id should be unique without last 4 bytes
+	unique := "abcdef12"
+	data := unique + "|payload"
+	got := getIDFromUnparsedData(data)
+	exp := unique[:len(unique)-4]
+	if got != exp {
+		t.Fatalf("expected %q, got %q", exp, got)
+	}
+}

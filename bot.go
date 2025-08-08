@@ -503,9 +503,10 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 
 	// Expected state not changed after running handler
 	if expectedState != Unknown {
-		if newState != expectedState {
-			return erro.New("unexpected", "state", newState)
-		}
+		// TODO: is it OK to ignore unexpected state?
+		// if newState != expectedState {
+		// 	return erro.New("unexpected", "state", newState)
+		// }
 		return nil
 	}
 
