@@ -554,6 +554,22 @@ func (u *userContextImpl) setMessages(msgIDs ...int) {
 	})
 }
 
+func (u *userContextImpl) setHeadMessage(msgID int) {
+	u.mu.Lock()
+	u.user.Messages.HeadID = msgID
+
+	// Capture values for the DB update
+	userID := u.user.ID
+	headID := msgID
+	u.mu.Unlock()
+
+	u.db.UpdateAsync(userID, &UserModelDiff{
+		Messages: &UserMessagesDiff{
+			HeadID: &headID,
+		},
+	})
+}
+
 func (u *userContextImpl) setErrorMessage(msgID int) {
 	u.mu.Lock()
 	u.user.Messages.ErrorID = msgID
@@ -711,7 +727,7 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 	var stateMain *string
 	var messageStates map[int]string
 
-	if newState.NotChanged() && u.user.State.Main == firstRequest.String() {
+	if newState.NotChanged() && u.user.State.Main == FirstRequest.String() {
 		newState = Unknown
 	}
 
@@ -809,8 +825,8 @@ func (u *userContextImpl) enable() {
 
 	u.user.Stats.DisabledTime = time.Time{}
 	u.user.IsDisabled = false
-	u.user.State.Main = firstRequest.String()
-	u.user.State.MessageStates[u.user.Messages.MainID] = firstRequest.String()
+	u.user.State.Main = FirstRequest.String()
+	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest.String()
 
 	// Capture values for DB update
 	userID := u.user.ID
@@ -868,7 +884,7 @@ func newUserModel(tUser *tele.User) UserModel {
 		ID:   tUser.ID,
 		Info: newUserInfoWithSanitize(tUser),
 		State: UserState{
-			Main:          firstRequest.String(),
+			Main:          FirstRequest.String(),
 			MessageStates: make(map[int]string),
 		},
 		Messages: UserMessages{
@@ -1158,13 +1174,12 @@ type state string
 const (
 	// NoChange is a state that means that user state should not be changed after Send of Edit.
 	NoChange state = ""
+	// FirstRequest is a state of a user after first request to bot.
+	FirstRequest state = "first_request"
 	// Unknown is a state of a user when hiw real state is not provided after creation.
 	Unknown state = "unknown"
 	// Disabled is a state of a disabled user.
 	Disabled state = "disabled"
-
-	// firstRequest is a state of a user after first request to bot.
-	firstRequest state = "first_request"
 )
 
 func (s state) String() string {

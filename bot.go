@@ -27,9 +27,6 @@ type InitBundle struct {
 	// Text is a text of simulating message, that can be obtained from [Context.Text] inside [HandlerFunc].
 	// It is optional and shoud be provided if you use [Context.Text] in your [InitBundle.Handler].
 	Text string
-	// State is a state, that will be set for user after [InitBundle.Handler] is called.
-	// It is optional and shoud be provided if you don't want to live with the state that will be set in [InitBundle.Handler].
-	State State
 }
 
 // Bot is a main struct of this package. It contains all necessary components for working with Telegram bot.
@@ -241,7 +238,7 @@ func (b *Bot) SetMessageProvider(msgs MessageProvider) {
 
 func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 	defer ctx.user.setMsgInited(msgID)
-	if ctx.user.Messages().MainID == 0 || ctx.user.StateMain() == firstRequest {
+	if ctx.user.Messages().MainID == 0 || ctx.user.StateMain() == FirstRequest {
 		return nil
 	}
 
@@ -393,7 +390,7 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 		return true
 	}
 
-	if userRaw.StateMain() == firstRequest && b.startHandler != nil {
+	if userRaw.StateMain() == FirstRequest && b.startHandler != nil {
 		err := b.startHandler(b.newContextFromUpdate(*upd))
 		if err != nil {
 			b.bot.log.Error("failed to handle start command", "error", err.Error())
@@ -439,7 +436,7 @@ func (b *Bot) initUserMsg(user *userContextImpl, msgID int) error {
 		}
 		startHandlerErr := b.init(InitBundle{
 			Handler: b.startHandler,
-		}, user, msgID, st)
+		}, user, msgID, Unknown)
 		if startHandlerErr != nil {
 			return erro.Wrap(startHandlerErr, "start handler", "msg_id", msgID, "state", st, "first_error", targetBundleErr)
 		}
@@ -499,19 +496,20 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 		user.forgetHistoryMessage(headBefore)
 	}
 
+	newState, ok := user.State(msgID)
+	if !ok {
+		return erro.New("new state not found")
+	}
+
 	// Expected state not changed after running handler
-	if bundle.State == nil || bundle.State.NotChanged() {
-		newState, ok := user.State(msgID)
-		if !ok {
-			return erro.New("new state not found")
-		}
+	if expectedState != Unknown {
 		if newState != expectedState {
 			return erro.New("unexpected", "state", newState)
 		}
 		return nil
 	}
 
-	user.setState(bundle.State, msgID)
+	b.bot.log.Warn("init to start handler", "user_id", user.user.ID, "msg_id", msgID, "state", newState)
 
 	return nil
 }
@@ -537,7 +535,7 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 			Text:   closeBtn,
 		}
 		opts = append(opts, SingleRow(btn))
-		b.bot.handle(btn, func(tele.Context) error {
+		b.bot.handle(&btn, func(tele.Context) error {
 			msgs := user.Messages()
 			if msgs.ErrorID == 0 {
 				return nil

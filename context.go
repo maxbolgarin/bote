@@ -94,6 +94,9 @@ type Context interface {
 	// opts are additional options for editing message.
 	EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error
 
+	// DeleteHead deletes head message of the user.
+	DeleteHead() error
+
 	// DeleteHistory deletes provided history message.
 	DeleteHistory(msgIDs int) error
 
@@ -273,8 +276,8 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 		return c.prepareError(err, mainMsgID)
 	}
 
-	if headMsgID = c.user.Messages().HeadID; headMsgID != 0 {
-		if err = c.bt.bot.delete(c.user.ID(), headMsgID); err != nil {
+	if oldHeadMsgID := c.user.Messages().HeadID; oldHeadMsgID != 0 {
+		if err = c.bt.bot.delete(c.user.ID(), oldHeadMsgID); err != nil {
 			c.bt.bot.log.Warn("cannot delete previous head message", userFields(c.user)...)
 		}
 		// TODO: add cleanup task
@@ -297,8 +300,8 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 		return c.prepareError(err, msgID)
 	}
 
-	if headMsgID := c.user.Messages().HeadID; headMsgID != 0 {
-		if err := c.bt.bot.delete(c.user.ID(), headMsgID); err != nil {
+	if oldHeadMsgID := c.user.Messages().HeadID; oldHeadMsgID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), oldHeadMsgID); err != nil {
 			c.bt.bot.log.Warn("cannot delete previous head message", userFields(c.user)...)
 		}
 	}
@@ -472,6 +475,17 @@ func (c *contextImpl) DeleteHistory(msgID int) error {
 			c.user.forgetHistoryMessage(msgID)
 		}
 	}
+	return nil
+}
+
+func (c *contextImpl) DeleteHead() error {
+	if c.user.Messages().HeadID == 0 {
+		return nil
+	}
+	if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().HeadID); err != nil {
+		return c.prepareError(err, c.user.Messages().HeadID)
+	}
+	c.user.setHeadMessage(0)
 	return nil
 }
 

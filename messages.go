@@ -361,11 +361,13 @@ func (b *MessageBuilder) Writeblnf(msg string, args ...any) {
 }
 
 // WriteIf writes either writeTrue or writeFalse depending on the value of first argument.
-func (b *MessageBuilder) WriteIf(condition bool, writeTrue, writeFalse string) {
+func (b *MessageBuilder) WriteIf(condition bool, writeTrue string, writeFalse ...string) {
 	if condition {
 		b.WriteString(writeTrue)
 	} else {
-		b.WriteString(writeFalse)
+		if len(writeFalse) > 0 {
+			b.WriteString(writeFalse[0])
+		}
 	}
 }
 
@@ -382,6 +384,46 @@ func (b *MessageBuilder) WriteIfF(condition bool, writeTrue, writeFalse string, 
 			b.WriteString(fmt.Sprintf(writeFalse, args...))
 		} else {
 			b.WriteString(writeFalse)
+		}
+	}
+}
+
+// WritelnIf writes either writeTrue or writeFalse depending on the value of first argument.
+// It is an alias for [strings.Builder.WriteString].
+func (b *MessageBuilder) WritelnIf(condition bool, writeTrue string, writeFalse ...string) {
+	if condition {
+		b.WriteString(writeTrue + "\n")
+	} else {
+		if len(writeFalse) > 0 {
+			b.WriteString(writeFalse[0] + "\n")
+		}
+	}
+}
+
+// WriteIf writes either writeTrue or writeFalse depending on the value of first argument.
+func (b *MessageBuilder) WritelnIfF(condition bool, writeTrue, writeFalse string, args ...any) {
+	if condition {
+		if len(args) > 0 {
+			b.WriteString(fmt.Sprintf(writeTrue, args...) + "\n")
+		} else {
+			b.WriteString(writeTrue + "\n")
+		}
+	} else {
+		if len(args) > 0 {
+			b.WriteString(fmt.Sprintf(writeFalse, args...) + "\n")
+		} else {
+			b.WriteString(writeFalse + "\n")
+		}
+	}
+}
+
+// WriteIf writes either writeTrue or writeFalse depending on the value of first argument.
+func (b *MessageBuilder) WritelnIfFf(condition bool, writeTrue string, args ...any) {
+	if condition {
+		if len(args) > 0 {
+			b.WriteString(fmt.Sprintf(writeTrue, args...) + "\n")
+		} else {
+			b.WriteString(writeTrue + "\n")
 		}
 	}
 }

@@ -753,3 +753,39 @@ func (l *leveledLogger) Error(msg string, args ...any) {
 		l.log.Error(msg, args...)
 	}
 }
+
+func HTML() any {
+	return tele.ModeHTML
+}
+
+func Markdown() any {
+	return tele.ModeMarkdown
+}
+
+func MarkdownV2() any {
+	return tele.ModeMarkdownV2
+}
+
+func Silent() any {
+	return tele.Silent
+}
+
+func Protected() any {
+	return tele.Protected
+}
+
+func ForceReply() any {
+	return tele.ForceReply
+}
+
+func OneTimeKeyboard() any {
+	return tele.OneTimeKeyboard
+}
+
+func NoPreview() any {
+	return tele.NoPreview
+}
+
+func AllowWithoutReply() any {
+	return tele.AllowWithoutReply
+}
