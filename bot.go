@@ -200,9 +200,9 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 
 		if ep, ok := endpoint.(string); ok && ep == tele.OnText {
 			lastMsg := ctx.user.lastTextMessage()
-			if lastMsg == 0 {
-				return nil
-			}
+			// if lastMsg == 0 {
+			// 	return nil
+			// }
 			ctx.textMsgID = lastMsg
 
 			// /start was already handled

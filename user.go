@@ -1161,10 +1161,14 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 		}
 	}
 
-	user.Stats.LastSeenTime = lang.CheckTime(lang.Deref(diff.Stats.LastSeenTime), user.Stats.LastSeenTime)
-	user.Stats.DisabledTime = lang.CheckTime(lang.Deref(diff.Stats.DisabledTime), user.Stats.DisabledTime)
-	user.Stats.NumberOfStateChangesTotal = lang.Check(lang.Deref(diff.Stats.NumberOfStateChanges), user.Stats.NumberOfStateChangesTotal)
-	user.IsDisabled = lang.Check(lang.Deref(diff.IsDisabled), user.IsDisabled)
+	if diff.Stats != nil {
+		user.Stats.LastSeenTime = lang.CheckTime(lang.Deref(diff.Stats.LastSeenTime), user.Stats.LastSeenTime)
+		user.Stats.DisabledTime = lang.CheckTime(lang.Deref(diff.Stats.DisabledTime), user.Stats.DisabledTime)
+		user.Stats.NumberOfStateChangesTotal = lang.Check(lang.Deref(diff.Stats.NumberOfStateChanges), user.Stats.NumberOfStateChangesTotal)
+	}
+	if diff.IsDisabled != nil {
+		user.IsDisabled = lang.Check(lang.Deref(diff.IsDisabled), user.IsDisabled)
+	}
 
 	m.cache.Set(id, user)
 }

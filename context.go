@@ -220,7 +220,11 @@ func (c *contextImpl) Data() string {
 }
 
 func (c *contextImpl) DataParsed() []string {
-	return strings.Split(c.Data(), "|")
+	data := strings.Split(c.Data(), "|")
+	if len(data) == 0 || data[0] == "" {
+		return nil
+	}
+	return data
 }
 
 func (c *contextImpl) Text() string {
