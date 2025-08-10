@@ -71,7 +71,7 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		return nil, erro.Wrap(err, "prepare opts")
 	}
 
-	um, err := newUserManager(opts.UserDB, opts.Logger, opts.Config.Bot.UserCacheCapacity, opts.Config.Bot.UserCacheTTL)
+	um, err := newUserManager(opts)
 	if err != nil {
 		return nil, erro.Wrap(err, "new user manager")
 	}

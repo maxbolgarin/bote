@@ -89,7 +89,10 @@ const UserIDDBFieldName = "id"
 type UserModel struct {
 	// ID is Telegram user ID.
 	ID int64 `bson:"id" json:"id" db:"id"`
+	// LanguageCode is Telegram user language code.
+	LanguageCode Language `bson:"language_code" json:"language_code" db:"language_code"`
 	// Info contains user info, that can be obtained from Telegram.
+	// It is empty if privacy mode is strict.
 	Info UserInfo `bson:"info" json:"info" db:"info"`
 	// Messages contains IDs of user messages.
 	Messages UserMessages `bson:"messages" json:"messages" db:"messages"`
@@ -97,8 +100,13 @@ type UserModel struct {
 	State UserState `bson:"state" json:"state" db:"state"`
 	// Stats contains user stats.
 	Stats UserStat `bson:"stats" json:"stats" db:"stats"`
+	// IsBot is true if Telegram user is a bot.
+	IsBot bool `bson:"is_bot" json:"is_bot" db:"is_bot"`
 	// IsDisabled returns true if user is disabled. Disabled means that user blocks bot.
 	IsDisabled bool `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
+
+	// ForceLanguageCode is a custom language code for user that can be set by bot.
+	ForceLanguageCode Language `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
 }
 
 type UserStat struct {
@@ -114,21 +122,18 @@ type UserStat struct {
 
 // UserInfo contains user info, that can be obtained from Telegram.
 type UserInfo struct {
-	// FirstName is Telegram user first name.
-	FirstName string `bson:"first_name" json:"first_name" db:"first_name"`
-	// LastName is Telegram user last name.
-	LastName string `bson:"last_name" json:"last_name" db:"last_name"`
 	// Username is Telegram username (without @).
-	Username string `bson:"username" json:"username" db:"username"`
-	// LanguageCode is Telegram user language code.
-	LanguageCode Language `bson:"language_code" json:"language_code" db:"language_code"`
-	// IsBot is true if Telegram user is a bot.
-	IsBot bool `bson:"is_bot" json:"is_bot" db:"is_bot"`
+	// It is empty if privacy mode is strict.
+	Username string `bson:"username,omitempty" json:"username,omitempty" db:"username,omitempty"`
+	// FirstName is Telegram user first name.
+	// It is empty if privacy mode is enabled.
+	FirstName string `bson:"first_name,omitempty" json:"first_name,omitempty" db:"first_name,omitempty"`
+	// LastName is Telegram user last name.
+	// It is empty if privacy mode is enabled.
+	LastName string `bson:"last_name,omitempty" json:"last_name,omitempty" db:"last_name,omitempty"`
 	// IsPremium is true if Telegram user has Telegram Premium.
-	IsPremium bool `bson:"is_premium" json:"is_premium" db:"is_premium"`
-
-	// ForceLanguageCode is a custom language code for user that can be set by bot.
-	ForceLanguageCode Language `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
+	// It is empty if privacy mode is strict.
+	IsPremium *bool `bson:"is_premium,omitempty" json:"is_premium,omitempty" db:"is_premium,omitempty"`
 }
 
 // UserMessages contains IDs of user messages.
@@ -164,22 +169,22 @@ type UserState struct {
 
 // UserModelDiff contains changes that should be applied to user.
 type UserModelDiff struct {
-	Info       *UserInfoDiff     `bson:"info" json:"info" db:"info"`
-	Messages   *UserMessagesDiff `bson:"messages" json:"messages" db:"messages"`
-	State      *UserStateDiff    `bson:"state" json:"state" db:"state"`
-	Stats      *UserStatDiff     `bson:"stats" json:"stats" db:"stats"`
-	IsDisabled *bool             `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
+	LanguageCode      *Language         `bson:"language_code" json:"language_code" db:"language_code"`
+	ForceLanguageCode *Language         `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
+	Info              *UserInfoDiff     `bson:"info" json:"info" db:"info"`
+	Messages          *UserMessagesDiff `bson:"messages" json:"messages" db:"messages"`
+	State             *UserStateDiff    `bson:"state" json:"state" db:"state"`
+	Stats             *UserStatDiff     `bson:"stats" json:"stats" db:"stats"`
+	IsDisabled        *bool             `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
+	IsBot             *bool             `bson:"is_bot" json:"is_bot" db:"is_bot"`
 }
 
 // UserInfoDiff contains changes that should be applied to user info.
 type UserInfoDiff struct {
-	FirstName         *string   `bson:"first_name" json:"first_name" db:"first_name"`
-	LastName          *string   `bson:"last_name" json:"last_name" db:"last_name"`
-	Username          *string   `bson:"username" json:"username" db:"username"`
-	LanguageCode      *Language `bson:"language_code" json:"language_code" db:"language_code"`
-	IsBot             *bool     `bson:"is_bot" json:"is_bot" db:"is_bot"`
-	IsPremium         *bool     `bson:"is_premium" json:"is_premium" db:"is_premium"`
-	ForceLanguageCode *Language `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
+	FirstName *string `bson:"first_name" json:"first_name" db:"first_name"`
+	LastName  *string `bson:"last_name" json:"last_name" db:"last_name"`
+	Username  *string `bson:"username" json:"username" db:"username"`
+	IsPremium *bool   `bson:"is_premium" json:"is_premium" db:"is_premium"`
 }
 
 // UserMessagesDiff contains changes that should be applied to user messages.
@@ -229,6 +234,7 @@ func (m UserMessages) HasMsgID(msgID int) bool {
 type userContextImpl struct {
 	user UserModel
 	db   UsersStorage
+	priv PrivacyMode
 
 	btnName string
 	payload string
@@ -240,11 +246,12 @@ type userContextImpl struct {
 	mu sync.Mutex
 }
 
-func (m *userManagerImpl) newUserContext(user UserModel) *userContextImpl {
+func (m *userManagerImpl) newUserContext(user UserModel, priv PrivacyMode) *userContextImpl {
 	user.prepareAfterDB()
 	return &userContextImpl{
 		db:          m.db,
 		user:        user,
+		priv:        priv,
 		buttonMap:   abstract.NewSafeMap[string, InitBundle](),
 		isInitedMsg: abstract.NewSafeMap[int, bool](),
 	}
@@ -263,20 +270,18 @@ func (u *userContextImpl) Username() string {
 func (u *userContextImpl) Language() Language {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.user.Info.ForceLanguageCode != "" {
-		return u.user.Info.ForceLanguageCode
+	if u.user.ForceLanguageCode != "" {
+		return u.user.ForceLanguageCode
 	}
-	return u.user.Info.LanguageCode
+	return u.user.LanguageCode
 }
 
 func (u *userContextImpl) UpdateLanguage(language Language) {
 	u.mu.Lock()
-	u.user.Info.ForceLanguageCode = language
+	u.user.ForceLanguageCode = language
 	u.mu.Unlock()
 	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
-		Info: &UserInfoDiff{
-			ForceLanguageCode: &language,
-		},
+		ForceLanguageCode: &language,
 	})
 }
 
@@ -670,39 +675,61 @@ func (u *userContextImpl) update(user *tele.User) {
 		return
 	}
 
-	infoToCheck := newUserInfoNoSanitize(user)
+	newLanguageCode := ParseLanguageOrDefault(user.LanguageCode)
 
 	u.mu.Lock()
+
+	var updateBase bool
+	if u.user.IsBot != user.IsBot || u.user.LanguageCode != newLanguageCode {
+		updateBase = true
+	}
+
+	if u.priv == PrivacyModeStrict {
+		u.mu.Unlock()
+		u.updateBase(updateBase, newLanguageCode, user.IsBot)
+		return
+	}
+
+	infoToCheck := newUserInfoNoSanitize(user, u.priv)
 
 	// Fast check because sanitize is expensive
 	if infoToCheck == u.user.Info {
 		u.mu.Unlock()
+		u.updateBase(updateBase, newLanguageCode, user.IsBot)
 		return
 	}
 
-	newInfo := newUserInfoWithSanitize(user)
+	newInfo := newUserInfoWithSanitize(user, u.priv)
 	if newInfo == u.user.Info {
 		u.mu.Unlock()
+		u.updateBase(updateBase, newLanguageCode, user.IsBot)
 		return
 	}
 
-	newInfo.ForceLanguageCode = u.user.Info.ForceLanguageCode
 	u.user.Info = newInfo
 	userID := u.user.ID
 
 	u.mu.Unlock()
 
 	u.db.UpdateAsync(userID, &UserModelDiff{
+		IsBot:        &user.IsBot,
+		LanguageCode: &newLanguageCode,
 		Info: &UserInfoDiff{
-			FirstName:         &newInfo.FirstName,
-			LastName:          &newInfo.LastName,
-			Username:          &newInfo.Username,
-			LanguageCode:      &newInfo.LanguageCode,
-			IsBot:             &newInfo.IsBot,
-			IsPremium:         &newInfo.IsPremium,
-			ForceLanguageCode: &newInfo.ForceLanguageCode,
+			FirstName: &newInfo.FirstName,
+			LastName:  &newInfo.LastName,
+			Username:  &newInfo.Username,
+			IsPremium: newInfo.IsPremium,
 		},
 	})
+}
+
+func (u *userContextImpl) updateBase(updateBase bool, languageCode Language, isBot bool) {
+	if updateBase {
+		u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+			IsBot:        &isBot,
+			LanguageCode: &languageCode,
+		})
+	}
 }
 
 func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
@@ -879,10 +906,12 @@ func (u *userContextImpl) getBtnAndPayload() (btnName, payload string) {
 	return u.btnName, u.payload
 }
 
-func newUserModel(tUser *tele.User) UserModel {
+func newUserModel(tUser *tele.User, priv PrivacyMode) UserModel {
 	return UserModel{
-		ID:   tUser.ID,
-		Info: newUserInfoWithSanitize(tUser),
+		ID:           tUser.ID,
+		IsBot:        tUser.IsBot,
+		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
+		Info:         newUserInfoWithSanitize(tUser, priv),
 		State: UserState{
 			Main:          FirstRequest.String(),
 			MessageStates: make(map[int]string),
@@ -897,33 +926,38 @@ func newUserModel(tUser *tele.User) UserModel {
 	}
 }
 
-func newUserInfoWithSanitize(tUser *tele.User) UserInfo {
-	if tUser == nil {
-		return UserInfo{}
-	}
-
+func newUserInfoWithSanitize(tUser *tele.User, priv PrivacyMode) UserInfo {
+	ui := newUserInfoNoSanitize(tUser, priv)
 	return UserInfo{
-		FirstName:    sanitizeText(tUser.FirstName, 1000),
-		LastName:     sanitizeText(tUser.LastName, 1000),
-		Username:     sanitizeText(tUser.Username, 1000),
-		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
-		IsBot:        tUser.IsBot,
-		IsPremium:    tUser.IsPremium,
+		FirstName: sanitizeText(ui.FirstName, 1000),
+		LastName:  sanitizeText(ui.LastName, 1000),
+		Username:  sanitizeText(ui.Username, 1000),
+		IsPremium: ui.IsPremium,
 	}
 }
 
-func newUserInfoNoSanitize(tUser *tele.User) UserInfo {
+func newUserInfoNoSanitize(tUser *tele.User, priv PrivacyMode) UserInfo {
 	if tUser == nil {
 		return UserInfo{}
 	}
 
-	return UserInfo{
-		FirstName:    tUser.FirstName,
-		LastName:     tUser.LastName,
-		Username:     tUser.Username,
-		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
-		IsBot:        tUser.IsBot,
-		IsPremium:    tUser.IsPremium,
+	switch priv {
+	case PrivacyModeStrict:
+		return UserInfo{}
+
+	case PrivacyModeLow:
+		return UserInfo{
+			Username:  tUser.Username,
+			IsPremium: &tUser.IsPremium,
+		}
+
+	default:
+		return UserInfo{
+			FirstName: tUser.FirstName,
+			LastName:  tUser.LastName,
+			Username:  tUser.Username,
+			IsPremium: &tUser.IsPremium,
+		}
 	}
 }
 
@@ -931,11 +965,12 @@ type userManagerImpl struct {
 	users otter.Cache[int64, *userContextImpl]
 	db    UsersStorage
 	log   Logger
+	priv  PrivacyMode
 }
 
-func newUserManager(db UsersStorage, log Logger, userCacheCapacity int, userCacheTTL time.Duration) (*userManagerImpl, error) {
+func newUserManager(opts Options) (*userManagerImpl, error) {
 	// Configure otter cache with proper eviction settings and TTL
-	c, err := otter.MustBuilder[int64, *userContextImpl](userCacheCapacity).
+	c, err := otter.MustBuilder[int64, *userContextImpl](opts.Config.Bot.UserCacheCapacity).
 		// Add cost function to better manage memory
 		Cost(func(_ int64, value *userContextImpl) uint32 {
 			// Cost is roughly based on the number of messages a user has
@@ -943,16 +978,17 @@ func newUserManager(db UsersStorage, log Logger, userCacheCapacity int, userCach
 			return uint32(1 + len(value.user.Messages.HistoryIDs))
 		}).
 		// Set TTL for inactive users to prevent memory leaks
-		WithTTL(userCacheTTL).
+		WithTTL(opts.Config.Bot.UserCacheTTL).
 		Build()
 	if err != nil {
-		return nil, erro.Wrap(err, "failed to create user cache with capacity %d", userCacheCapacity)
+		return nil, erro.Wrap(err, "failed to create user cache with capacity %d", opts.Config.Bot.UserCacheCapacity)
 	}
 
 	m := &userManagerImpl{
 		users: c,
-		db:    db,
-		log:   log,
+		db:    opts.UserDB,
+		log:   opts.Logger,
+		priv:  lang.Check(opts.Config.Bot.PrivacyMode, PrivacyModeNo),
 	}
 
 	return m, nil
@@ -976,7 +1012,7 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 	if userID == 0 {
 		m.log.Error("invalid user ID", "user_id", userID, "error", "userID cannot be zero")
 		tUser := &tele.User{ID: 1} // Fallback to a safe default
-		user := m.newUserContext(newUserModel(tUser))
+		user := m.newUserContext(newUserModel(tUser, m.priv), m.priv)
 		return user
 	}
 
@@ -998,7 +1034,7 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 
 		// Create an emergency fallback user
 		m.log.Info("creating fallback user object", "user_id", userID)
-		user = m.newUserContext(newUserModel(tUser))
+		user = m.newUserContext(newUserModel(tUser, m.priv), m.priv)
 	}
 
 	return user
@@ -1027,13 +1063,13 @@ func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error)
 	}
 
 	if !isFound {
-		userModel = newUserModel(tUser)
+		userModel = newUserModel(tUser, m.priv)
 		if err := m.db.Insert(ctx, userModel); err != nil {
 			return nil, erro.Wrap(err, "failed to insert new user into database", "user_id", tUser.ID)
 		}
 	}
 
-	user := m.newUserContext(userModel)
+	user := m.newUserContext(userModel, m.priv)
 	if ok := m.users.Set(user.user.ID, user); !ok {
 		m.log.Warn("failed to add user to cache", "user_id", user.user.ID, "username", user.user.Info.Username)
 	}
@@ -1134,13 +1170,10 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 
 	if diff.Info != nil {
 		user.Info = UserInfo{
-			FirstName:         lang.Check(lang.Deref(diff.Info.FirstName), user.Info.FirstName),
-			LastName:          lang.Check(lang.Deref(diff.Info.LastName), user.Info.LastName),
-			Username:          lang.Check(lang.Deref(diff.Info.Username), user.Info.Username),
-			LanguageCode:      lang.Check(lang.Deref(diff.Info.LanguageCode), user.Info.LanguageCode),
-			IsBot:             lang.Check(lang.Deref(diff.Info.IsBot), user.Info.IsBot),
-			IsPremium:         lang.Check(lang.Deref(diff.Info.IsPremium), user.Info.IsPremium),
-			ForceLanguageCode: lang.Check(lang.Deref(diff.Info.ForceLanguageCode), user.Info.ForceLanguageCode),
+			FirstName: lang.Check(lang.Deref(diff.Info.FirstName), user.Info.FirstName),
+			LastName:  lang.Check(lang.Deref(diff.Info.LastName), user.Info.LastName),
+			Username:  lang.Check(lang.Deref(diff.Info.Username), user.Info.Username),
+			IsPremium: user.Info.IsPremium,
 		}
 	}
 	if diff.Messages != nil {
@@ -1168,6 +1201,14 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 	}
 	if diff.IsDisabled != nil {
 		user.IsDisabled = lang.Check(lang.Deref(diff.IsDisabled), user.IsDisabled)
+	}
+
+	if diff.IsBot != nil {
+		user.IsBot = lang.Check(lang.Deref(diff.IsBot), user.IsBot)
+	}
+
+	if diff.LanguageCode != nil {
+		user.LanguageCode = lang.Check(lang.Deref(diff.LanguageCode), user.LanguageCode)
 	}
 
 	m.cache.Set(id, user)

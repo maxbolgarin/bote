@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -26,31 +27,31 @@ func TestUserCreation(t *testing.T) {
 				LanguageCode: "en",
 			},
 			expected: UserModel{
-				ID: 123,
+				ID:           123,
+				IsBot:        false,
+				LanguageCode: LanguageEnglish,
 				Info: UserInfo{
-					FirstName:    "John",
-					LastName:     "Doe",
-					Username:     "johndoe",
-					LanguageCode: "en",
+					FirstName: "John",
+					LastName:  "Doe",
+					Username:  "johndoe",
 				},
 			},
 		},
 		{
 			name: "user with premium",
 			teleUser: &tele.User{
-				ID:           456,
-				FirstName:    "Jane",
-				Username:     "jane",
-				IsPremium:    true,
-				LanguageCode: "fr",
+				ID:        456,
+				FirstName: "Jane",
+				Username:  "jane",
+				IsPremium: true,
 			},
 			expected: UserModel{
-				ID: 456,
+				ID:           456,
+				LanguageCode: LanguageDefault,
 				Info: UserInfo{
-					FirstName:    "Jane",
-					Username:     "jane",
-					IsPremium:    true,
-					LanguageCode: "fr",
+					FirstName: "Jane",
+					Username:  "jane",
+					IsPremium: lang.Ptr(true),
 				},
 			},
 		},
@@ -62,11 +63,11 @@ func TestUserCreation(t *testing.T) {
 				IsBot:    true,
 			},
 			expected: UserModel{
-				ID: 789,
+				ID:           789,
+				LanguageCode: LanguageDefault,
+				IsBot:        true,
 				Info: UserInfo{
-					Username:     "testbot",
-					IsBot:        true,
-					LanguageCode: LanguageDefault,
+					Username: "testbot",
 				},
 			},
 		},
@@ -74,7 +75,7 @@ func TestUserCreation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user := newUserModel(tt.teleUser)
+			user := newUserModel(tt.teleUser, PrivacyModeNo)
 
 			if user.ID != tt.expected.ID {
 				t.Errorf("Expected ID %d, got %d", tt.expected.ID, user.ID)
@@ -88,12 +89,16 @@ func TestUserCreation(t *testing.T) {
 				t.Errorf("Expected Username %s, got %s", tt.expected.Info.Username, user.Info.Username)
 			}
 
-			if user.Info.IsPremium != tt.expected.Info.IsPremium {
+			if lang.Deref(user.Info.IsPremium) != lang.Deref(tt.expected.Info.IsPremium) {
 				t.Errorf("Expected IsPremium %v, got %v", tt.expected.Info.IsPremium, user.Info.IsPremium)
 			}
 
-			if user.Info.IsBot != tt.expected.Info.IsBot {
-				t.Errorf("Expected IsBot %v, got %v", tt.expected.Info.IsBot, user.Info.IsBot)
+			if user.IsBot != tt.expected.IsBot {
+				t.Errorf("Expected IsBot %v, got %v", tt.expected.IsBot, user.IsBot)
+			}
+
+			if user.LanguageCode != tt.expected.LanguageCode {
+				t.Errorf("Expected LanguageCode %s, got %s", tt.expected.LanguageCode, user.LanguageCode)
 			}
 
 			// Check default state
@@ -106,10 +111,18 @@ func TestUserCreation(t *testing.T) {
 
 // TestUserManager tests user manager functionality
 func TestUserManager(t *testing.T) {
-	storage := &mockUserStorage{}
-	logger := &testLogger{}
+	opts := Options{
+		UserDB: &mockUserStorage{},
+		Logger: &testLogger{},
+		Config: Config{
+			Bot: BotConfig{
+				UserCacheCapacity: 100,
+				UserCacheTTL:      time.Hour,
+			},
+		},
+	}
 
-	um, err := newUserManager(storage, logger, 100, time.Hour)
+	um, err := newUserManager(opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -197,10 +210,8 @@ func TestUserManager(t *testing.T) {
 
 // TestUserState tests user state management
 func TestUserState(t *testing.T) {
-	storage := &mockUserStorage{}
-	logger := &testLogger{}
-
-	um, err := newUserManager(storage, logger, 100, time.Hour)
+	opts := newTestOptions()
+	um, err := newUserManager(opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -268,10 +279,8 @@ func TestUserState(t *testing.T) {
 
 // TestUserMessages tests user message management
 func TestUserMessages(t *testing.T) {
-	storage := &mockUserStorage{}
-	logger := &testLogger{}
-
-	um, err := newUserManager(storage, logger, 100, time.Hour)
+	opts := newTestOptions()
+	um, err := newUserManager(opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -340,7 +349,8 @@ func TestUserMessages(t *testing.T) {
 
 // TestInMemoryUserStorage tests the in-memory storage implementation
 func TestInMemoryUserStorage(t *testing.T) {
-	storage, err := newInMemoryUserStorage(100, time.Hour)
+	opts := newTestOptions()
+	storage, err := newInMemoryUserStorage(opts.Config.Bot.UserCacheCapacity, opts.Config.Bot.UserCacheTTL)
 	if err != nil {
 		t.Fatalf("Failed to create in-memory storage: %v", err)
 	}
@@ -421,10 +431,8 @@ func TestInMemoryUserStorage(t *testing.T) {
 
 // TestUserContextImplementation tests userContextImpl methods
 func TestUserContextImplementation(t *testing.T) {
-	storage := &mockUserStorage{}
-	logger := &testLogger{}
-
-	um, err := newUserManager(storage, logger, 100, time.Hour)
+	opts := newTestOptions()
+	um, err := newUserManager(opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -489,10 +497,8 @@ func TestUserContextImplementation(t *testing.T) {
 
 // TestConcurrentUserAccess tests concurrent access to user data
 func TestConcurrentUserAccess(t *testing.T) {
-	storage := &mockUserStorage{}
-	logger := &testLogger{}
-
-	um, err := newUserManager(storage, logger, 100, time.Hour)
+	opts := newTestOptions()
+	um, err := newUserManager(opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -579,3 +585,16 @@ func (s textState) NotChanged() bool { return s == "" }
 
 type customState string
 type textState string
+
+func newTestOptions() Options {
+	return Options{
+		UserDB: &mockUserStorage{},
+		Logger: &testLogger{},
+		Config: Config{
+			Bot: BotConfig{
+				UserCacheCapacity: 100,
+				UserCacheTTL:      time.Hour,
+			},
+		},
+	}
+}

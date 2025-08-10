@@ -104,6 +104,14 @@ type (
 		Offline bool
 	}
 
+	// PrivacyMode is a privacy mode for the bot.
+	// It is used to make compliance with GDPR (privacy by design).
+	// Possible values:
+	// - "no" - no privacy mode (all data is stored)
+	// - "low" - low privacy mode (UserID + Username)
+	// - "strict" - strict mode (only UserID is stored)
+	PrivacyMode string
+
 	// UpdateType is a type of update that is using in update logging.
 	UpdateType string
 
@@ -127,6 +135,12 @@ const (
 	LogLevelInfo  = "info"
 	LogLevelWarn  = "warn"
 	LogLevelError = "error"
+)
+
+const (
+	PrivacyModeNo     PrivacyMode = "no"
+	PrivacyModeLow    PrivacyMode = "low"
+	PrivacyModeStrict PrivacyMode = "strict"
 )
 
 // Config contains bote configuration.
@@ -162,6 +176,15 @@ type BotConfig struct {
 	// - "Markdown"
 	// - "MarkdownV2"
 	ParseMode tele.ParseMode `yaml:"mode" json:"mode" env:"BOTE_PARSE_MODE"`
+
+	// PrivacyMode is the default privacy mode for the bot.
+	// Default: "no".
+	// Possible values:
+	// - "no" - no privacy mode (all data is stored)
+	// - "low" - low privacy mode (UserID + Username)
+	// - "strict" - strict mode (only UserID is stored)
+	// Environment variable: BOTE_PRIVACY_MODE.
+	PrivacyMode PrivacyMode `yaml:"privacy_mode" json:"privacy_mode" env:"BOTE_PRIVACY_MODE"`
 
 	// DefaultLanguage is the default language code for the bot in ISO 639-1 format.
 	// Default: "en".
@@ -521,6 +544,13 @@ func WithDefaultLanguage(lang Language) func(opts *Options) {
 	}
 }
 
+// WithPrivacyMode returns an option that sets the privacy mode.
+func WithPrivacyMode(mode PrivacyMode) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.Bot.PrivacyMode = mode
+	}
+}
+
 // WithUserDB returns an option that sets the user storage.
 func WithUserDB(db UsersStorage) func(opts *Options) {
 	return func(opts *Options) {
@@ -642,6 +672,7 @@ func (cfg *Config) prepareAndValidate() error {
 	cfg.Webhook.RateLimit.BurstSize = lang.Check(cfg.Webhook.RateLimit.BurstSize, defaultWebhookRateLimitBurst)
 
 	cfg.Bot.ParseMode = lang.Check(cfg.Bot.ParseMode, defaultBotParseMode)
+	cfg.Bot.PrivacyMode = lang.Check(cfg.Bot.PrivacyMode, PrivacyModeNo)
 	cfg.Bot.DefaultLanguage = lang.Check(cfg.Bot.DefaultLanguage, defaultBotDefaultLanguage)
 	cfg.Bot.DeleteMessages = lang.Ptr(lang.CheckPtr(cfg.Bot.DeleteMessages, defaultBotDeleteMessages))
 	cfg.Bot.UserCacheCapacity = lang.Check(cfg.Bot.UserCacheCapacity, defaultUserCacheCapacity)
