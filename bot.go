@@ -43,6 +43,7 @@ type Bot struct {
 	startHandler   HandlerFunc
 	deleteMessages bool
 	logUpdates     bool
+	logPrivacy     bool
 
 	wp      *webhookPoller
 	closeCh chan struct{}
@@ -92,6 +93,7 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		stateMap:        abstract.NewSafeMap[string, InitBundle](),
 		deleteMessages:  lang.Deref(opts.Config.Bot.DeleteMessages),
 		logUpdates:      lang.Deref(opts.Config.Log.LogUpdates),
+		logPrivacy:      opts.Config.Log.LogPrivacy,
 		closeCh:         make(chan struct{}),
 	}
 
@@ -348,12 +350,17 @@ func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
 	fields := make([]any, 0, 14)
 	fields = append(fields,
 		"user_id", user.user.ID,
-		"username", user.user.Info.Username,
 	)
+	if !b.logPrivacy {
+		fields = append(fields, "username", user.user.Info.Username)
+	}
 
 	switch {
 	case upd.Message != nil:
-		fields = append(fields, "state", user.user.State.Main, "msg_id", upd.Message.ID, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
+		fields = append(fields, "state", user.user.State.Main, "msg_id", upd.Message.ID)
+		if !b.logPrivacy {
+			fields = append(fields, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
+		}
 		if msgID, st := user.lastTextMessageState(); msgID != 0 {
 			fields = append(fields, "text_state", st, "text_state_msg_id", msgID)
 		}
@@ -370,12 +377,14 @@ func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
 			fields = append(fields, "state", user.user.State.Main)
 		}
 
-		btnName, payload := user.getBtnAndPayload()
-		if btnName != "" {
-			fields = append(fields, "button", btnName)
-		}
-		if payload != "" {
-			fields = append(fields, "payload", payload)
+		if !b.logPrivacy {
+			btnName, payload := user.getBtnAndPayload()
+			if btnName != "" {
+				fields = append(fields, "button", btnName)
+			}
+			if payload != "" {
+				fields = append(fields, "payload", payload)
+			}
 		}
 
 		b.rlog.Log(CallbackUpdate, fields...)
@@ -399,13 +408,21 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 	return true
 }
 
-func userFields(user User, fields ...any) []any {
+func (b *Bot) userFields(user User, fields ...any) []any {
 	f := make([]any, 0, len(fields)+6)
 	if u, ok := user.(*userContextImpl); ok {
 		// No mutex lock for the price of type assertion
-		f = append(f, "user_id", u.user.ID, "username", u.user.Info.Username, "state", u.user.State.Main)
+		f = append(f, "user_id", u.user.ID)
+		if !b.logPrivacy {
+			f = append(f, "username", u.user.Info.Username)
+		}
+		f = append(f, "state", u.user.State.Main)
 	} else {
-		f = append(f, "user_id", user.ID(), "username", user.Username(), "state", user.StateMain())
+		f = append(f, "user_id", user.ID())
+		if !b.logPrivacy {
+			f = append(f, "username", user.Username())
+		}
+		f = append(f, "state", user.StateMain())
 	}
 	return append(f, fields...)
 }
@@ -705,7 +722,6 @@ func (b *baseBot) middleware(upd *tele.Update) bool {
 		if lang.Deref(upd.MyChatMember.NewChatMember).Role == "kicked" {
 			b.log.Warn("bot is blocked",
 				"user_id", lang.Deref(upd.MyChatMember.Sender).ID,
-				"username", lang.Deref(upd.MyChatMember.Sender).Username,
 				"old_role", lang.Deref(upd.MyChatMember.OldChatMember).Role,
 				"new_role", lang.Deref(upd.MyChatMember.NewChatMember).Role)
 
@@ -714,7 +730,6 @@ func (b *baseBot) middleware(upd *tele.Update) bool {
 		if lang.Deref(upd.MyChatMember.OldChatMember).Role == "kicked" {
 			b.log.Info("bot is unblocked",
 				"user_id", lang.Deref(upd.MyChatMember.Sender).ID,
-				"username", lang.Deref(upd.MyChatMember.Sender).Username,
 				"old_role", lang.Deref(upd.MyChatMember.OldChatMember).Role,
 				"new_role", lang.Deref(upd.MyChatMember.NewChatMember).Role)
 

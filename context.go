@@ -258,7 +258,7 @@ func (c *contextImpl) Get(key string) string {
 
 func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) (err error) {
 	if mainMsg == "" {
-		c.bt.bot.log.Error("main message cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 
@@ -282,7 +282,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 
 	if oldHeadMsgID := c.user.Messages().HeadID; oldHeadMsgID != 0 {
 		if err = c.bt.bot.delete(c.user.ID(), oldHeadMsgID); err != nil {
-			c.bt.bot.log.Warn("cannot delete previous head message", userFields(c.user)...)
+			c.bt.bot.log.Warn("cannot delete previous head message", c.bt.userFields(c.user)...)
 		}
 		// TODO: add cleanup task
 	}
@@ -294,7 +294,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 
 func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" {
-		c.bt.bot.log.Error("main message cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 
@@ -306,7 +306,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 
 	if oldHeadMsgID := c.user.Messages().HeadID; oldHeadMsgID != 0 {
 		if err := c.bt.bot.delete(c.user.ID(), oldHeadMsgID); err != nil {
-			c.bt.bot.log.Warn("cannot delete previous head message", userFields(c.user)...)
+			c.bt.bot.log.Warn("cannot delete previous head message", c.bt.userFields(c.user)...)
 		}
 	}
 
@@ -317,12 +317,12 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 
 func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" {
-		c.bt.bot.log.Error("notification message cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("notification message cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 	if c.user.Messages().NotificationID != 0 {
 		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
-			c.bt.bot.log.Warn("cannot delete previous notification message", userFields(c.user)...)
+			c.bt.bot.log.Warn("cannot delete previous notification message", c.bt.userFields(c.user)...)
 		}
 	}
 
@@ -344,7 +344,7 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 	}
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, tele.Silent)...)
 	if err != nil {
-		c.bt.bot.log.Error("failed to send error message", userFields(c.user)...)
+		c.bt.bot.log.Error("failed to send error message", c.bt.userFields(c.user)...)
 		return nil
 	}
 	c.user.setErrorMessage(msgID)
@@ -354,7 +354,7 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 
 func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) error {
 	if mainMsg == "" && mainKb == nil {
-		c.bt.bot.log.Error("main message cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 	if headMsg == "" && headKb == nil {
@@ -380,7 +380,7 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 
 func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" && kb == nil {
-		c.bt.bot.log.Error("main message cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 
@@ -398,7 +398,7 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 
 func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
 	if kb == nil {
-		c.bt.bot.log.Error("main keyboard cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("main keyboard cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 
@@ -413,7 +413,7 @@ func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 
 func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" && kb == nil {
-		c.bt.bot.log.Error("message cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 
@@ -429,7 +429,7 @@ func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tel
 
 func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, opts ...any) error {
 	if kb == nil {
-		c.bt.bot.log.Error("history keyboard cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("history keyboard cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 
@@ -442,7 +442,7 @@ func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, op
 
 func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" && kb == nil {
-		c.bt.bot.log.Error("head message cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("head message cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 
@@ -457,7 +457,7 @@ func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) er
 
 func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
 	if kb == nil {
-		c.bt.bot.log.Error("head keyboard cannot be empty", userFields(c.User())...)
+		c.bt.bot.log.Error("head keyboard cannot be empty", c.bt.userFields(c.User())...)
 		return nil
 	}
 
@@ -551,31 +551,31 @@ func (c *contextImpl) DeleteUser() bool {
 	isOK := true
 	for _, id := range c.user.Messages().HistoryIDs {
 		if err := c.bt.bot.delete(c.user.ID(), id); err != nil {
-			c.bt.bot.log.Warn("cannot delete history message", userFields(c.user, "msg_id", id)...)
+			c.bt.bot.log.Warn("cannot delete history message", c.bt.userFields(c.user, "msg_id", id)...)
 			isOK = false
 		}
 	}
 	if c.user.Messages().NotificationID != 0 {
 		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
-			c.bt.bot.log.Warn("cannot delete notification message", userFields(c.user)...)
+			c.bt.bot.log.Warn("cannot delete notification message", c.bt.userFields(c.user)...)
 			isOK = false
 		}
 	}
 	if c.user.Messages().ErrorID != 0 {
 		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().ErrorID); err != nil {
-			c.bt.bot.log.Warn("cannot delete error message", userFields(c.user)...)
+			c.bt.bot.log.Warn("cannot delete error message", c.bt.userFields(c.user)...)
 			isOK = false
 		}
 	}
 	if c.user.Messages().MainID != 0 {
 		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().MainID); err != nil {
-			c.bt.bot.log.Warn("cannot delete main message", userFields(c.user)...)
+			c.bt.bot.log.Warn("cannot delete main message", c.bt.userFields(c.user)...)
 			isOK = false
 		}
 	}
 	if c.user.Messages().HeadID != 0 {
 		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().HeadID); err != nil {
-			c.bt.bot.log.Warn("cannot delete head message", userFields(c.user)...)
+			c.bt.bot.log.Warn("cannot delete head message", c.bt.userFields(c.user)...)
 			isOK = false
 		}
 	}
@@ -633,7 +633,7 @@ func (c *contextImpl) handleBotBlockedError(errorMsg string) bool {
 		return false
 	}
 
-	c.bt.bot.log.Info("bot is blocked by user, disable", userFields(c.user)...)
+	c.bt.bot.log.Info("bot is blocked by user, disable", c.bt.userFields(c.user)...)
 	c.bt.um.disableUser(c.user.ID())
 	return true
 }
@@ -651,7 +651,7 @@ func (c *contextImpl) handleMessageNotFoundError(errorMsg string) bool {
 
 	msgIDRaw := c.Get("msg_id")
 	if msgIDRaw == "" {
-		c.bt.bot.log.Warn("message to edit not found", userFields(c.user)...)
+		c.bt.bot.log.Warn("message to edit not found", c.bt.userFields(c.user)...)
 		return true
 	}
 
@@ -662,7 +662,7 @@ func (c *contextImpl) handleMessageNotFoundError(errorMsg string) bool {
 
 	// Try to remove message from history
 	if c.user.forgetHistoryMessage(msgID) {
-		c.bt.bot.log.Warn("history message not found", userFields(c.user, "msg_id", msgID)...)
+		c.bt.bot.log.Warn("history message not found", c.bt.userFields(c.user, "msg_id", msgID)...)
 		return true
 	}
 
@@ -676,15 +676,15 @@ func (c *contextImpl) handleSpecialMessageNotFound(msgID int) {
 
 	switch msgID {
 	case msgs.MainID, msgs.HeadID:
-		c.bt.bot.log.Warn("main/head message not found", userFields(c.user, "msg_id", msgID)...)
+		c.bt.bot.log.Warn("main/head message not found", c.bt.userFields(c.user, "msg_id", msgID)...)
 		c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError())
 
 	case msgs.NotificationID:
-		c.bt.bot.log.Warn("notification message not found", userFields(c.user, "msg_id", msgID)...)
+		c.bt.bot.log.Warn("notification message not found", c.bt.userFields(c.user, "msg_id", msgID)...)
 		c.user.setNotificationMessage(0)
 
 	case msgs.ErrorID:
-		c.bt.bot.log.Warn("error message not found", userFields(c.user, "msg_id", msgID)...)
+		c.bt.bot.log.Warn("error message not found", c.bt.userFields(c.user, "msg_id", msgID)...)
 		c.user.setErrorMessage(0)
 	}
 }
@@ -694,12 +694,12 @@ func (c *contextImpl) handleConnectionError(errorMsg string, err error) bool {
 		return false
 	}
 
-	c.bt.bot.log.Warn("connection error", userFields(c.user, "error", err.Error())...)
+	c.bt.bot.log.Warn("connection error", c.bt.userFields(c.user, "error", err.Error())...)
 	return true
 }
 
 func (c *contextImpl) handleGenericError(err error) {
-	c.bt.bot.log.Error("handler", userFields(c.user, "error", err.Error())...)
+	c.bt.bot.log.Error("handler", c.bt.userFields(c.user, "error", err.Error())...)
 
 	// Create error message with optional close button
 	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()
@@ -716,7 +716,7 @@ func (c *contextImpl) handleGenericError(err error) {
 
 func (c *contextImpl) edit(msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msgID == 0 {
-		c.bt.bot.log.Error("message id cannot be empty", userFields(c.user)...)
+		c.bt.bot.log.Error("message id cannot be empty", c.bt.userFields(c.user)...)
 		return nil
 	}
 

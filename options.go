@@ -235,6 +235,12 @@ type LogConfig struct {
 	// Environment variable: BOTE_LOG_LEVEL.
 	LogLevel string `yaml:"log_level" json:"log_level" env:"BOTE_LOG_LEVEL"`
 
+	// LogPrivacy is a flag that makes logs more privacy-friendly.
+	// When true, it will not log username, messages, pressed buttons, etc. Only IDs and states will be logged.
+	// Default: false.
+	// Environment variable: BOTE_LOG_PRIVACY.
+	LogPrivacy bool `yaml:"log_privacy" json:"log_privacy" env:"BOTE_LOG_PRIVACY" envDefault:"false"`
+
 	// DebugIncomingUpdates is a flag that enables logging of incoming updates.
 	// It is not for production use.
 	// Default: false.
