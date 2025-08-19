@@ -29,6 +29,49 @@ type State interface {
 	NotChanged() bool
 }
 
+// RegisterTextState registers a state that expects text input from the user.
+func RegisterTextStates(state ...State) bool {
+	textStateManager.mu.Lock()
+	defer textStateManager.mu.Unlock()
+	for _, s := range state {
+		textStateManager.states[s.String()] = struct{}{}
+	}
+	return true
+}
+
+type UserState string
+
+const (
+	// NoChange is a state that means that user state should not be changed after Send of Edit.
+	NoChange UserState = ""
+	// FirstRequest is a state of a user after first request to bot.
+	FirstRequest UserState = "first_request"
+	// Unknown is a state of a user when hiw real state is not provided after creation.
+	Unknown UserState = "unknown"
+	// Disabled is a state of a disabled user.
+	Disabled UserState = "disabled"
+)
+
+func (s UserState) String() string {
+	return string(s)
+}
+
+func (s UserState) IsText() bool {
+	return textStateManager.has(s)
+}
+
+func (s UserState) NotChanged() bool {
+	return s == NoChange
+}
+
+func NewUserState(state string) UserState {
+	return UserState(state)
+}
+
+func ConvertUserState(state State) UserState {
+	return NewUserState(state.String())
+}
+
 // User is an interface that represents user context in the bot.
 type User interface {
 	// ID is Telegram user ID.
@@ -97,7 +140,7 @@ type UserModel struct {
 	// Messages contains IDs of user messages.
 	Messages UserMessages `bson:"messages" json:"messages" db:"messages"`
 	// State contains state for every user's message.
-	State UserState `bson:"state" json:"state" db:"state"`
+	State MessagesState `bson:"state" json:"state" db:"state"`
 	// Stats contains user stats.
 	Stats UserStat `bson:"stats" json:"stats" db:"stats"`
 	// IsBot is true if Telegram user is a bot.
@@ -152,13 +195,13 @@ type UserMessages struct {
 	LastActions map[int]time.Time `bson:"last_actions" json:"last_actions" db:"last_actions"`
 }
 
-// UserState contains current user state and state history.
+// MessagesState contains current user state and state history.
 // State connects to message, every Main and Info message has its own state.
-type UserState struct {
+type MessagesState struct {
 	// Main is the main state of the user, state of the Main message.
-	Main string `bson:"main" json:"main" db:"main"`
+	Main UserState `bson:"main" json:"main" db:"main"`
 	// MessageStates contains all states of the user for all messages. It is a map of message_id -> state.
-	MessageStates map[int]string `bson:"message_states" json:"message_states" db:"message_states"`
+	MessageStates map[int]UserState `bson:"message_states" json:"message_states" db:"message_states"`
 	// MessagesAwaitingText is a unique stack that contains all messages IDs that awaits text.
 	// Every message can produce text state and they should be handled as LIFO.
 	MessagesAwaitingText []int `bson:"messages_awaiting_text" json:"messages_awaiting_text" db:"messages_awaiting_text"`
@@ -199,9 +242,9 @@ type UserMessagesDiff struct {
 
 // UserStateDiff contains changes that should be applied to user state.
 type UserStateDiff struct {
-	Main                 *string        `bson:"main" json:"main" db:"main"`
-	MessageStates        map[int]string `bson:"message_states" json:"message_states" db:"message_states"`
-	MessagesAwaitingText []int          `bson:"messages_awaiting_text" json:"messages_awaiting_text" db:"messages_awaiting_text"`
+	Main                 *UserState        `bson:"main" json:"main" db:"main"`
+	MessageStates        map[int]UserState `bson:"message_states" json:"message_states" db:"message_states"`
+	MessagesAwaitingText []int             `bson:"messages_awaiting_text" json:"messages_awaiting_text" db:"messages_awaiting_text"`
 }
 
 type UserStatDiff struct {
@@ -215,7 +258,7 @@ func (u *UserModel) prepareAfterDB() {
 		u.Messages.LastActions = make(map[int]time.Time)
 	}
 	if u.State.MessageStates == nil {
-		u.State.MessageStates = make(map[int]string)
+		u.State.MessageStates = make(map[int]UserState)
 	}
 	if u.State.messagesStackInd == nil {
 		u.State.messagesStackInd = make(map[int]int)
@@ -307,13 +350,13 @@ func (u *userContextImpl) State(msgID int) (State, bool) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st, ok := u.user.State.MessageStates[msgID]
-	return state(st), ok
+	return State(st), ok
 }
 
 func (u *userContextImpl) StateMain() State {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return state(u.user.State.Main)
+	return State(u.user.State.Main)
 }
 
 func (u *userContextImpl) Messages() UserMessages {
@@ -361,10 +404,6 @@ func (u *userContextImpl) String() string {
 }
 
 func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
-	if newState == nil {
-		return
-	}
-
 	if newState.NotChanged() {
 		return
 	}
@@ -381,7 +420,8 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	}
 
 	currentState, ok := u.user.State.MessageStates[msgID]
-	if ok && newState != state(currentState) && state(currentState).IsText() {
+
+	if ok && newState != State(currentState) && State(currentState).IsText() {
 		// If we got new state we should remove current pending text state
 		u.removeTextMessageLocked(msgID)
 		upd.MessagesAwaitingText = u.user.State.MessagesAwaitingText
@@ -394,13 +434,13 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	}
 
 	if msgID == u.user.Messages.MainID {
-		u.user.State.Main = newState.String()
+		u.user.State.Main = ConvertUserState(newState)
 		upd.Main = &u.user.State.Main
 	}
 
 	u.user.Stats.LastSeenTime = time.Now().UTC()
 	u.user.Stats.NumberOfStateChangesTotal++
-	u.user.State.MessageStates[msgID] = newState.String()
+	u.user.State.MessageStates[msgID] = ConvertUserState(newState)
 	u.user.Messages.LastActions[msgID] = u.user.Stats.LastSeenTime
 
 	upd.MessageStates = u.user.State.MessageStates
@@ -459,7 +499,7 @@ func (u *userContextImpl) lastTextMessageState() (int, State) {
 		return msgID, NoChange
 	}
 
-	return msgID, state(st)
+	return msgID, UserState(st)
 }
 
 // pushTextMessageLocked assumes the lock is already held
@@ -613,7 +653,7 @@ func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
 	var (
 		userID               = u.user.ID
 		updatedHistoryIDs    []int
-		updatedMessageStates map[int]string
+		updatedMessageStates map[int]UserState
 		updatedLastActions   map[int]time.Time
 		updatedAwaitingText  []int
 	)
@@ -642,7 +682,7 @@ func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
 		updatedHistoryIDs = make([]int, len(u.user.Messages.HistoryIDs))
 		copy(updatedHistoryIDs, u.user.Messages.HistoryIDs)
 
-		updatedMessageStates = make(map[int]string, len(u.user.State.MessageStates))
+		updatedMessageStates = make(map[int]UserState, len(u.user.State.MessageStates))
 		maps.Copy(updatedMessageStates, u.user.State.MessageStates)
 
 		updatedLastActions = make(map[int]time.Time, len(u.user.Messages.LastActions))
@@ -751,19 +791,19 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 		copy(historyIDs, u.user.Messages.HistoryIDs)
 	}
 
-	var stateMain *string
-	var messageStates map[int]string
+	var stateMain *UserState
+	var messageStates map[int]UserState
 
-	if newState.NotChanged() && u.user.State.Main == FirstRequest.String() {
+	if newState.NotChanged() && u.user.State.Main == FirstRequest {
 		newState = Unknown
 	}
 
 	if !newState.NotChanged() {
-		u.user.State.Main = newState.String()
-		u.user.State.MessageStates[mainMsgID] = newState.String()
+		u.user.State.Main = ConvertUserState(newState)
+		u.user.State.MessageStates[mainMsgID] = ConvertUserState(newState)
 
 		stateMain = &u.user.State.Main
-		messageStates = make(map[int]string, len(u.user.State.MessageStates))
+		messageStates = make(map[int]UserState, len(u.user.State.MessageStates))
 		maps.Copy(messageStates, u.user.State.MessageStates)
 	}
 
@@ -816,8 +856,8 @@ func (u *userContextImpl) disable() {
 	currentTime := time.Now().UTC()
 	u.user.Stats.DisabledTime = currentTime
 	u.user.IsDisabled = true
-	u.user.State.Main = Disabled.String()
-	u.user.State.MessageStates[u.user.Messages.MainID] = Disabled.String()
+	u.user.State.Main = Disabled
+	u.user.State.MessageStates[u.user.Messages.MainID] = Disabled
 
 	// Capture values for DB update
 	userID := u.user.ID
@@ -825,7 +865,7 @@ func (u *userContextImpl) disable() {
 	isDisabled := u.user.IsDisabled
 	stateMain := u.user.State.Main
 
-	messageStates := make(map[int]string, len(u.user.State.MessageStates))
+	messageStates := make(map[int]UserState, len(u.user.State.MessageStates))
 	maps.Copy(messageStates, u.user.State.MessageStates)
 
 	u.mu.Unlock()
@@ -852,8 +892,8 @@ func (u *userContextImpl) enable() {
 
 	u.user.Stats.DisabledTime = time.Time{}
 	u.user.IsDisabled = false
-	u.user.State.Main = FirstRequest.String()
-	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest.String()
+	u.user.State.Main = FirstRequest
+	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest
 
 	// Capture values for DB update
 	userID := u.user.ID
@@ -861,7 +901,7 @@ func (u *userContextImpl) enable() {
 	isDisabled := u.user.IsDisabled
 	stateMain := u.user.State.Main
 
-	messageStates := make(map[int]string, len(u.user.State.MessageStates))
+	messageStates := make(map[int]UserState, len(u.user.State.MessageStates))
 	maps.Copy(messageStates, u.user.State.MessageStates)
 
 	u.mu.Unlock()
@@ -912,9 +952,9 @@ func newUserModel(tUser *tele.User, priv PrivacyMode) UserModel {
 		IsBot:        tUser.IsBot,
 		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
 		Info:         newUserInfoWithSanitize(tUser, priv),
-		State: UserState{
-			Main:          FirstRequest.String(),
-			MessageStates: make(map[int]string),
+		State: MessagesState{
+			Main:          FirstRequest,
+			MessageStates: make(map[int]UserState),
 		},
 		Messages: UserMessages{
 			LastActions: make(map[int]time.Time),
@@ -1187,7 +1227,7 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 		}
 	}
 	if diff.State != nil {
-		user.State = UserState{
+		user.State = MessagesState{
 			Main:                 lang.Check(lang.Deref(diff.State.Main), user.State.Main),
 			MessageStates:        lang.If(len(diff.State.MessageStates) > 0, diff.State.MessageStates, user.State.MessageStates),
 			MessagesAwaitingText: lang.If(diff.State.MessagesAwaitingText != nil, diff.State.MessagesAwaitingText, user.State.MessagesAwaitingText),
@@ -1214,27 +1254,18 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 	m.cache.Set(id, user)
 }
 
-type state string
-
-const (
-	// NoChange is a state that means that user state should not be changed after Send of Edit.
-	NoChange state = ""
-	// FirstRequest is a state of a user after first request to bot.
-	FirstRequest state = "first_request"
-	// Unknown is a state of a user when hiw real state is not provided after creation.
-	Unknown state = "unknown"
-	// Disabled is a state of a disabled user.
-	Disabled state = "disabled"
-)
-
-func (s state) String() string {
-	return string(s)
+type textStateManagerImpl struct {
+	states map[string]struct{}
+	mu     sync.RWMutex
 }
 
-func (state) IsText() bool {
-	return false
+var textStateManager = textStateManagerImpl{
+	states: make(map[string]struct{}),
 }
 
-func (s state) NotChanged() bool {
-	return s == NoChange
+func (t *textStateManagerImpl) has(state State) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	_, ok := t.states[state.String()]
+	return ok
 }

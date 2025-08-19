@@ -93,7 +93,7 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		stateMap:        abstract.NewSafeMap[string, InitBundle](),
 		deleteMessages:  lang.Deref(opts.Config.Bot.DeleteMessages),
 		logUpdates:      lang.Deref(opts.Config.Log.LogUpdates),
-		logPrivacy:      opts.Config.Log.LogPrivacy,
+		logPrivacy:      opts.Config.Log.Privacy,
 		closeCh:         make(chan struct{}),
 	}
 
@@ -202,9 +202,6 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 
 		if ep, ok := endpoint.(string); ok && ep == tele.OnText {
 			lastMsg := ctx.user.lastTextMessage()
-			// if lastMsg == 0 {
-			// 	return nil
-			// }
 			ctx.textMsgID = lastMsg
 
 			// /start was already handled
@@ -239,8 +236,22 @@ func (b *Bot) SetMessageProvider(msgs MessageProvider) {
 }
 
 func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
-	defer ctx.user.setMsgInited(msgID)
-	if ctx.user.Messages().MainID == 0 || ctx.user.StateMain() == FirstRequest {
+	msgs := ctx.user.Messages()
+	defer func() {
+		ctx.user.setMsgInited(msgID)
+		if msgID == msgs.HeadID {
+			ctx.user.setMsgInited(msgs.MainID)
+		}
+		if msgID == msgs.MainID && msgs.HeadID != 0 {
+			ctx.user.setMsgInited(msgs.HeadID)
+		}
+	}()
+
+	if msgs.MainID == 0 || ctx.user.StateMain() == FirstRequest {
+		return nil
+	}
+
+	if msgID == msgs.NotificationID || msgID == msgs.ErrorID {
 		return nil
 	}
 
@@ -428,9 +439,15 @@ func (b *Bot) userFields(user User, fields ...any) []any {
 }
 
 func (b *Bot) initUserMsg(user *userContextImpl, msgID int) error {
+	msgs := user.Messages()
+	if msgID == msgs.HeadID {
+		b.bot.log.Debug("got head message in init, set as main", "user_id", user.ID(), "msg_id", msgID)
+		msgID = msgs.MainID
+	}
+
 	st, ok := user.State(msgID)
 	if !ok {
-		b.bot.log.Debug("forget history message without state", "user_id", user.ID(), "msg_id", msgID)
+		b.bot.log.Warn("forget history message without state", "user_id", user.ID(), "msg_id", msgID)
 		user.forgetHistoryMessage(msgID)
 		return nil
 	}

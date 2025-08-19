@@ -2,6 +2,7 @@ package bote
 
 import (
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -25,7 +26,7 @@ const (
 	TwoBytesPerRune  RuneSizeType = "TwoBytesPerRune"
 	FourBytesPerRune RuneSizeType = "FourBytesPerRune"
 
-	MaxDataLengthBytes = 56
+	MaxDataLengthBytes = 64 // 56
 )
 
 var (
@@ -34,9 +35,9 @@ var (
 
 	// TODO: make length depends on number of buttons
 	runesInRow = map[RuneSizeType]int{
-		OneBytePerRune:   46,
-		TwoBytesPerRune:  40,
-		FourBytesPerRune: 32,
+		OneBytePerRune:   32,
+		TwoBytesPerRune:  20,
+		FourBytesPerRune: 12,
 	}
 )
 
@@ -52,12 +53,12 @@ type ButtonBuilder interface {
 func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn {
 	id, unique := getBtnIDAndUnique(name)
 	data := CreateBtnData(dataList...)
-	if len(data) > MaxDataLengthBytes {
-		ctx.bt.bot.log.Warn("button data length is greater than 56 bytes, it will be truncated",
-			"name", name,
+	maxDataLength := MaxDataLengthBytes - len(unique) - 2
+	if len(data) > maxDataLength {
+		ctx.bt.bot.log.Warn("button data length is greater than "+strconv.Itoa(maxDataLength)+" bytes, it will be truncated",
 			"length", len(data),
 		)
-		data = data[:MaxDataLengthBytes]
+		data = data[:maxDataLength]
 	}
 	btn := tele.Btn{
 		Text:   name,

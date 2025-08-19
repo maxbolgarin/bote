@@ -225,7 +225,7 @@ type LogConfig struct {
 	// Environment variable: BOTE_LOG_UPDATES.
 	LogUpdates *bool `yaml:"log_updates" json:"log_updates" env:"BOTE_LOG_UPDATES"`
 
-	// LogLevel is the log level. Logger will log messages with level greater than or equal to this level.
+	// Level is the log level. Logger will log messages with level greater than or equal to this level.
 	// Default: info.
 	// Possible values:
 	// - "debug"
@@ -233,13 +233,13 @@ type LogConfig struct {
 	// - "warn"
 	// - "error"
 	// Environment variable: BOTE_LOG_LEVEL.
-	LogLevel string `yaml:"log_level" json:"log_level" env:"BOTE_LOG_LEVEL"`
+	Level string `yaml:"level" json:"level" env:"BOTE_LOG_LEVEL"`
 
-	// LogPrivacy is a flag that makes logs more privacy-friendly.
+	// Privacy is a flag that makes logs more privacy-friendly.
 	// When true, it will not log username, messages, pressed buttons, etc. Only IDs and states will be logged.
 	// Default: false.
 	// Environment variable: BOTE_LOG_PRIVACY.
-	LogPrivacy bool `yaml:"log_privacy" json:"log_privacy" env:"BOTE_LOG_PRIVACY" envDefault:"false"`
+	Privacy bool `yaml:"privacy" json:"privacy" env:"BOTE_LOG_PRIVACY"`
 
 	// DebugIncomingUpdates is a flag that enables logging of incoming updates.
 	// It is not for production use.
@@ -576,7 +576,7 @@ func WithLogger(logger Logger, level ...string) func(opts *Options) {
 	return func(opts *Options) {
 		opts.Logger = logger
 		opts.Config.Log.Enable = lang.Ptr(true)
-		opts.Config.Log.LogLevel = lang.First(level)
+		opts.Config.Log.Level = lang.First(level)
 	}
 }
 
@@ -591,7 +591,7 @@ func WithUpdateLogger(logger UpdateLogger) func(opts *Options) {
 // WithDebug returns an option that sets the debug mode.
 func WithLogLevel(level string) func(opts *Options) {
 	return func(opts *Options) {
-		opts.Config.Log.LogLevel = level
+		opts.Config.Log.Level = level
 	}
 }
 
@@ -686,7 +686,7 @@ func (cfg *Config) prepareAndValidate() error {
 
 	cfg.Log.Enable = lang.Ptr(lang.CheckPtr(cfg.Log.Enable, defaultLogEnable))
 	cfg.Log.LogUpdates = lang.Ptr(lang.CheckPtr(cfg.Log.LogUpdates, defaultLogUpdates))
-	cfg.Log.LogLevel = lang.Check(cfg.Log.LogLevel, defaultLogLevel)
+	cfg.Log.Level = lang.Check(cfg.Log.Level, defaultLogLevel)
 
 	return nil
 }
@@ -710,7 +710,7 @@ func prepareOpts(opts Options) (Options, error) {
 	}
 	opts.Logger = &leveledLogger{
 		log:   opts.Logger,
-		level: getLogLevel(opts.Config.Log.LogLevel),
+		level: getLogLevel(opts.Config.Log.Level),
 	}
 	if !*opts.Config.Log.Enable {
 		opts.Logger = noopLogger{}

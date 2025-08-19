@@ -102,7 +102,7 @@ func TestUserCreation(t *testing.T) {
 			}
 
 			// Check default state
-			if user.State.Main != FirstRequest.String() {
+			if user.State.Main != FirstRequest {
 				t.Errorf("Expected initial state %s, got %s", FirstRequest, user.State.Main)
 			}
 		})
@@ -231,15 +231,14 @@ func TestUserState(t *testing.T) {
 	})
 
 	t.Run("handleStateChange", func(t *testing.T) {
-		type customState string
-		const newState customState = "new_state"
+		newState := "new_state"
 
 		// Directly modify state since handleStateChange is private
 		user.mu.Lock()
 		if user.user.State.MessageStates == nil {
-			user.user.State.MessageStates = make(map[int]string)
+			user.user.State.MessageStates = make(map[int]UserState)
 		}
-		user.user.State.MessageStates[1] = string(newState)
+		user.user.State.MessageStates[1] = NewUserState(newState)
 		user.mu.Unlock()
 
 		state, ok := user.State(1)
@@ -253,15 +252,14 @@ func TestUserState(t *testing.T) {
 	})
 
 	t.Run("text state handling", func(t *testing.T) {
-		type textState string
-		const waitingForText textState = "waiting_text"
+		const waitingForText string = "waiting_text"
 
 		// Simulate text state by modifying state directly
 		user.mu.Lock()
 		if user.user.State.MessageStates == nil {
-			user.user.State.MessageStates = make(map[int]string)
+			user.user.State.MessageStates = make(map[int]UserState)
 		}
-		user.user.State.MessageStates[2] = string(waitingForText)
+		user.user.State.MessageStates[2] = NewUserState(waitingForText)
 		user.user.State.MessagesAwaitingText = append(user.user.State.MessagesAwaitingText, 2)
 		user.mu.Unlock()
 
@@ -400,9 +398,10 @@ func TestInMemoryUserStorage(t *testing.T) {
 	t.Run("UpdateAsync", func(t *testing.T) {
 		newState := "updated_state"
 		lastSeenTime := time.Now()
+		userState := NewUserState(newState)
 		diff := &UserModelDiff{
 			State: &UserStateDiff{
-				Main: &newState,
+				Main: &userState,
 			},
 			Stats: &UserStatDiff{
 				LastSeenTime: &lastSeenTime,
@@ -415,7 +414,7 @@ func TestInMemoryUserStorage(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		user, found, _ := storage.Find(ctx, 555)
-		if found && user.State.Main != newState {
+		if found && user.State.Main != userState {
 			t.Errorf("Expected updated state %s, got %s", newState, user.State.Main)
 		}
 	})
@@ -533,9 +532,9 @@ func TestConcurrentUserAccess(t *testing.T) {
 			user.mu.Lock()
 			user.user.Messages.MainID = msgID
 			if user.user.State.MessageStates == nil {
-				user.user.State.MessageStates = make(map[int]string)
+				user.user.State.MessageStates = make(map[int]UserState)
 			}
-			user.user.State.MessageStates[msgID] = FirstRequest.String()
+			user.user.State.MessageStates[msgID] = FirstRequest
 			user.mu.Unlock()
 		}(i)
 	}
