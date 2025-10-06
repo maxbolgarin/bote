@@ -49,7 +49,6 @@ func newWebhookPoller(config WebhookConfig, logger Logger) (*webhookPoller, erro
 	metrics := &webhookMetrics{}
 
 	servexOpts := []servex.Option{
-		// servex.WithLogger(logger),
 		servex.WithNoRequestLog(),
 		servex.WithReadTimeout(config.ReadTimeout),
 		servex.WithIdleTimeout(config.IdleTimeout),
@@ -63,18 +62,18 @@ func newWebhookPoller(config WebhookConfig, logger Logger) (*webhookPoller, erro
 			servex.WithCertificateFromFile(config.Security.CertFile, config.Security.KeyFile),
 		)
 	}
-	if config.Security.AllowedIPs != nil {
+	if len(config.Security.AllowedIPs) > 0 {
 		servexOpts = append(servexOpts,
 			servex.WithAllowedIPs(config.Security.AllowedIPs...),
 			servex.WithFilterTrustedProxies("127.0.0.1"),
 		)
 	}
-	if config.Security.SecurityHeaders != nil && *config.Security.SecurityHeaders {
+	if lang.Deref(config.Security.SecurityHeaders) {
 		servexOpts = append(servexOpts,
 			servex.WithSecurityHeaders(),
 		)
 	}
-	if config.RateLimit.Enabled != nil && *config.RateLimit.Enabled {
+	if lang.Deref(config.RateLimit.Enabled) {
 		servexOpts = append(servexOpts,
 			servex.WithRPS(config.RateLimit.RequestsPerSecond),
 			servex.WithBurstSize(config.RateLimit.BurstSize),
@@ -215,7 +214,7 @@ func (wp *webhookPoller) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 // validateRequest validates the Telegram webhook request.
 func (wp *webhookPoller) validateRequest(r *http.Request) error {
-	if *wp.cfg.Security.CheckTLSInRequest && r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+	if lang.Deref(wp.cfg.Security.CheckTLSInRequest) && r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
 		return erro.New("HTTPS required")
 	}
 
@@ -276,7 +275,7 @@ func (wp *webhookPoller) deleteWebhook() error {
 // prepareCertificate prepares the certificate for the webhook.
 // It validates the certificate if it exists, and generates a self-signed certificate if it doesn't.
 func prepareCertificate(config WebhookConfig, logger Logger) error {
-	genSelfSignedCert := config.Security.GenerateSelfSignedCert != nil && *config.Security.GenerateSelfSignedCert
+	genSelfSignedCert := lang.Deref(config.Security.GenerateSelfSignedCert)
 
 	if !genSelfSignedCert && (config.Security.CertFile == "" || config.Security.KeyFile == "") {
 		return nil

@@ -405,9 +405,14 @@ type WebhookSecurityConfig struct {
 	// Environment variable: BOTE_WEBHOOK_GENERATE_SELF_SIGNED_CERT.
 	GenerateSelfSignedCert *bool `yaml:"generate_self_signed_cert" json:"generate_self_signed_cert" env:"BOTE_WEBHOOK_GENERATE_SELF_SIGNED_CERT"`
 
+	// AllowedTelegramIPs is a flag that adds Telegram IPs to allowed IPs.
+	// Default: false.
+	// Environment variable: BOTE_WEBHOOK_ALLOW_TELEGRAM_IPS.
+	AllowTelegramIPs *bool `yaml:"allow_telegram_ips" json:"allow_telegram_ips" env:"BOTE_WEBHOOK_ALLOW_TELEGRAM_IPS"`
+
 	// AllowedIPs contains allowed IP addresses/CIDR blocks.
 	// Only requests from these IPs will be accepted.
-	// Default: Telegram's IP ranges. Use [] to allow all IPs.
+	// Default: [] to allow all IPs.
 	// Environment variable: BOTE_WEBHOOK_ALLOWED_IPS (comma-separated).
 	AllowedIPs []string `yaml:"allowed_ips" json:"allowed_ips" env:"BOTE_WEBHOOK_ALLOWED_IPS" envSeparator:","`
 }
@@ -500,11 +505,32 @@ func WithWebhookRateLimit(rps int, burst int) func(opts *Options) {
 	}
 }
 
-// WithWebhookSecurity returns an option that sets the webhook security configuration.
-func WithWebhookSecurity(secretToken string, allowedIPs ...string) func(opts *Options) {
+// WithWebhookSecretToken returns an option that sets the webhook secret token.
+func WithWebhookSecretToken(secretToken string) func(opts *Options) {
 	return func(opts *Options) {
 		opts.Config.Webhook.Security.SecretToken = secretToken
-		opts.Config.Webhook.Security.AllowedIPs = allowedIPs
+	}
+}
+
+// WithWebhookAllowedIPs returns an option that sets the webhook allowed IPs.
+func WithWebhookAllowedIPs(allowedIPs ...string) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.Webhook.Security.AllowedIPs = append(opts.Config.Webhook.Security.AllowedIPs, allowedIPs...)
+	}
+}
+
+// WithWebhookAllowedTelegramIPs returns an option that sets the webhook allowed Telegram IPs.
+func WithWebhookAllowedTelegramIPs() func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.Webhook.Security.AllowedIPs = append(opts.Config.Webhook.Security.AllowedIPs, telegramIPRanges...)
+		opts.Config.Webhook.Security.AllowTelegramIPs = lang.Ptr(false)
+	}
+}
+
+// WithWebhookSecurityHeaders returns an option that sets the webhook security headers.
+func WithWebhookSecurityHeaders() func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.Webhook.Security.SecurityHeaders = lang.Ptr(true)
 	}
 }
 
@@ -665,8 +691,8 @@ func (cfg *Config) prepareAndValidate() error {
 	}
 
 	cfg.Webhook.Security.CheckTLSInRequest = lang.Ptr(lang.CheckPtr(cfg.Webhook.Security.CheckTLSInRequest, true))
-	if len(cfg.Webhook.Security.AllowedIPs) == 0 {
-		cfg.Webhook.Security.AllowedIPs = telegramIPRanges
+	if cfg.Webhook.Security.AllowTelegramIPs != nil && *cfg.Webhook.Security.AllowTelegramIPs {
+		cfg.Webhook.Security.AllowedIPs = append(cfg.Webhook.Security.AllowedIPs, telegramIPRanges...)
 	}
 
 	if cfg.Webhook.Security.SecretToken == "" {
