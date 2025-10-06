@@ -55,6 +55,7 @@ func newWebhookPoller(config WebhookConfig, logger Logger) (*webhookPoller, erro
 		servex.WithIdleTimeout(config.IdleTimeout),
 		servex.WithHealthEndpoint(),
 		servex.WithMetrics(metrics),
+		servex.WithLogger(logger),
 	}
 
 	if config.Security.CertFile != "" && config.Security.KeyFile != "" {
