@@ -259,6 +259,7 @@ func (c *contextImpl) Get(key string) string {
 func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) (err error) {
 	if mainMsg == "" {
 		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -295,6 +296,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" {
 		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -318,6 +320,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" {
 		c.bt.bot.log.Error("notification message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 	if c.user.Messages().NotificationID != 0 {
@@ -355,6 +358,7 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) error {
 	if mainMsg == "" && mainKb == nil {
 		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 	if headMsg == "" && headKb == nil {
@@ -381,6 +385,7 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" && kb == nil {
 		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -399,6 +404,7 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
 	if kb == nil {
 		c.bt.bot.log.Error("main keyboard cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -414,6 +420,7 @@ func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" && kb == nil {
 		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -430,6 +437,7 @@ func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tel
 func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, opts ...any) error {
 	if kb == nil {
 		c.bt.bot.log.Error("history keyboard cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -443,6 +451,7 @@ func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, op
 func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if msg == "" && kb == nil {
 		c.bt.bot.log.Error("head message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -458,6 +467,7 @@ func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) er
 func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
 	if kb == nil {
 		c.bt.bot.log.Error("head keyboard cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -635,12 +645,17 @@ func (c *contextImpl) handleBotBlockedError(errorMsg string) bool {
 
 	c.bt.bot.log.Info("bot is blocked by user, disable", c.bt.userFields(c.user)...)
 	c.bt.um.disableUser(c.user.ID())
+	c.bt.bot.metr.incError(MetricsErrorBotBlocked, MetricsErrorSeverityLow)
+
 	return true
 }
 
 // error when you want to edit message with the same text and buttons
-func (*contextImpl) handleNotModifiedError(errorMsg string) bool {
-	return strings.Contains(errorMsg, "is not modified")
+func (c *contextImpl) handleNotModifiedError(errorMsg string) bool {
+	if !strings.Contains(errorMsg, "is not modified") {
+		return false
+	}
+	return true
 }
 
 // error when you want to edit message that is not found
@@ -648,6 +663,7 @@ func (c *contextImpl) handleMessageNotFoundError(errorMsg string) bool {
 	if !strings.Contains(errorMsg, "message to edit not found") {
 		return false
 	}
+	c.bt.bot.metr.incError(MetricsErrorInvalidUserState, MetricsErrorSeverityLow)
 
 	msgIDRaw := c.Get("msg_id")
 	if msgIDRaw == "" {
@@ -693,13 +709,14 @@ func (c *contextImpl) handleConnectionError(errorMsg string, err error) bool {
 	if !strings.Contains(errorMsg, "reset by peer") {
 		return false
 	}
-
 	c.bt.bot.log.Warn("connection error", c.bt.userFields(c.user, "error", err.Error())...)
+	c.bt.bot.metr.incError(MetricsErrorConnectionError, MetricsErrorSeverityLow)
 	return true
 }
 
 func (c *contextImpl) handleGenericError(err error) {
 	c.bt.bot.log.Error("handler", c.bt.userFields(c.user, "error", err.Error())...)
+	c.bt.bot.metr.incError(MetricsErrorHandler, MetricsErrorSeveritHigh)
 
 	// Create error message with optional close button
 	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()

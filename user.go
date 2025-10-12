@@ -1006,6 +1006,7 @@ type userManagerImpl struct {
 	db    UsersStorage
 	log   Logger
 	priv  PrivacyMode
+	metr  *metrics
 }
 
 func newUserManager(opts Options) (*userManagerImpl, error) {
@@ -1025,6 +1026,7 @@ func newUserManager(opts Options) (*userManagerImpl, error) {
 	}
 
 	m := &userManagerImpl{
+		metr:  opts.metrics,
 		users: c,
 		db:    opts.UserDB,
 		log:   opts.Logger,
@@ -1122,6 +1124,8 @@ func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error)
 	} else {
 		m.log.Info("new user created", "user_id", user.user.ID, "username", user.user.Info.Username)
 	}
+
+	m.metr.incNewUser()
 
 	return user, nil
 }

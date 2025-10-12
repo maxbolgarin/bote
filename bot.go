@@ -72,14 +72,14 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		return nil, erro.Wrap(err, "prepare opts")
 	}
 
-	um, err := newUserManager(opts)
-	if err != nil {
-		return nil, erro.Wrap(err, "new user manager")
-	}
-
 	b, err := newBaseBot(token, opts)
 	if err != nil {
 		return nil, erro.Wrap(err, "start bot")
+	}
+
+	um, err := newUserManager(opts)
+	if err != nil {
+		return nil, erro.Wrap(err, "new user manager")
 	}
 
 	bote := &Bot{
@@ -185,6 +185,27 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 	b.bot.handle(endpoint, func(c tele.Context) (err error) {
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
 
+		b.bot.metr.incActiveHandlers()
+
+		// Measure handler execution time
+		start := time.Now()
+		defer func() {
+			b.bot.metr.decActiveHandlers()
+
+			duration := time.Since(start)
+			b.bot.metr.observeHandlerDuration(duration)
+			if duration > longDurationThreshold {
+				// Get state for metrics labeling
+				state := "unknown"
+				if ctx := b.newContext(c); ctx != nil && ctx.user != nil {
+					if st, ok := ctx.user.State(ctx.MessageID()); ok {
+						state = st.String()
+					}
+				}
+				b.bot.metr.observeLongHandlerDuration(state, duration)
+			}
+		}()
+
 		ctx := b.newContext(c)
 		defer func() {
 			if b.logUpdates {
@@ -217,6 +238,7 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 		if c.Callback() != nil {
 			if err = c.Respond(&tele.CallbackResponse{}); err != nil {
 				b.bot.log.Debug("failed to respond to callback", "error", err.Error())
+				b.bot.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
 			}
 		}
 
@@ -267,6 +289,7 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 	targetHandler, ok := ctx.user.buttonMap.Lookup(btnID)
 	if !ok {
 		b.bot.log.Warn("button handler not found", "user_id", ctx.user.ID(), "button_id", btnID)
+		b.bot.metr.incError(MetricsErrorInvalidUserState, MetricsErrorSeveritHigh)
 		return nil
 	}
 
@@ -295,6 +318,7 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	sender := getSender(upd)
 	if sender == nil {
 		b.bot.log.Error(fmt.Sprintf("cannot get sender from update: %+v", upd))
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
 		return false
 	}
 
@@ -302,7 +326,13 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	if err != nil {
 		b.bot.log.Error("cannot prepare user", "error", err.Error(), "user_id", sender.ID, "username", sender.Username)
 		b.sendError(sender.ID, b.msgs.Messages(b.defaultLanguage).GeneralError())
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
 		return false
+	}
+	b.bot.metr.addActiveUser(user.ID())
+
+	if st, ok := user.State(getMsgID(upd)); ok {
+		b.bot.metr.incStateRequest(st)
 	}
 
 	return b.middlewares.Range(func(mf MiddlewareFunc) bool {
@@ -314,6 +344,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 	user, ok := userRaw.(*userContextImpl)
 	if !ok {
 		b.bot.log.Error("failed to cast user to userContextImpl", "user_id", userRaw.ID())
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
 		return false
 	}
 
@@ -355,6 +386,7 @@ func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
 	user, ok := userRaw.(*userContextImpl)
 	if !ok {
 		b.bot.log.Error("failed to cast user to userContextImpl", "user_id", userRaw.ID())
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
 		return false
 	}
 
@@ -414,6 +446,7 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 		err := b.startHandler(b.newContextFromUpdate(*upd))
 		if err != nil {
 			b.bot.log.Error("failed to handle start command", "error", err.Error())
+			b.bot.metr.incError(MetricsErrorHandler, MetricsErrorSeveritHigh)
 		}
 	}
 	return true
@@ -449,12 +482,14 @@ func (b *Bot) initUserMsg(user *userContextImpl, msgID int) error {
 	if !ok {
 		b.bot.log.Warn("forget history message without state", "user_id", user.ID(), "msg_id", msgID)
 		user.forgetHistoryMessage(msgID)
+		b.bot.metr.incError(MetricsErrorInvalidUserState, MetricsErrorSeverityLow)
 		return nil
 	}
 
 	bundle, foundBundle := b.stateMap.Lookup(st.String())
 	if !foundBundle {
 		b.bot.log.Warn("init bundle not found", "user_id", user.ID(), "msg_id", msgID, "state", st)
+		b.bot.metr.incError(MetricsErrorInvalidUserState, MetricsErrorSeverityLow)
 		bundle = InitBundle{
 			Handler: b.startHandler,
 		}
@@ -553,6 +588,7 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 	user, ok := b.GetUser(userID).(*userContextImpl)
 	if !ok || user == nil {
 		b.bot.log.Error("failed to send error message", "user_id", userID, "error", errEmptyUserID)
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
 		return
 	}
 	msgs := user.Messages()
@@ -598,6 +634,7 @@ var (
 
 type baseBot struct {
 	tbot *tele.Bot
+	metr *metrics
 	log  Logger
 
 	defaultOptions []any
@@ -606,6 +643,7 @@ type baseBot struct {
 
 func newBaseBot(token string, opts Options) (*baseBot, error) {
 	b := &baseBot{
+		metr:           opts.metrics,
 		log:            opts.Logger,
 		defaultOptions: []any{opts.Config.Bot.ParseMode},
 		middlewares:    make([]func(upd *tele.Update) bool, 0),
@@ -625,8 +663,8 @@ func newBaseBot(token string, opts Options) (*baseBot, error) {
 				userID = ctx.Chat().ID
 			}
 			b.log.Error("error callback", "error", err.Error(), "user_id", userID)
+			b.metr.incError(MetricsErrorHandler, MetricsErrorSeveritHigh)
 		},
-
 		Updates: defaultUpdatesChannelCapacity,
 		Verbose: opts.Config.Log.DebugIncomingUpdates,
 		Offline: opts.Offline,
@@ -654,8 +692,11 @@ func (b *baseBot) send(userID int64, msg string, options ...any) (int, error) {
 
 	m, err := b.tbot.Send(userIDWrapper(userID), msg, append(options, b.defaultOptions...)...)
 	if err != nil {
+		b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
 		return 0, err
 	}
+
+	b.metr.incSendMessagesTotal()
 
 	return m.ID, nil
 }
@@ -674,8 +715,11 @@ func (b *baseBot) edit(userID int64, msgID int, what any, options ...any) error 
 			b.log.Debug("message is not modified", "msg_id", msgID, "user_id", userID)
 			return nil
 		}
+		b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
 		return err
 	}
+
+	b.metr.incEditMessagesTotal()
 
 	return nil
 }
@@ -690,8 +734,11 @@ func (b *baseBot) editReplyMarkup(userID int64, msgID int, markup *tele.ReplyMar
 
 	_, err := b.tbot.EditReplyMarkup(getEditable(userID, msgID), markup)
 	if err != nil {
+		b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
 		return err
 	}
+
+	b.metr.incEditMessagesTotal()
 
 	return nil
 }
@@ -705,11 +752,15 @@ func (b *baseBot) delete(userID int64, msgIDs ...int) error {
 
 	for _, msgID := range msgIDs {
 		if msgID == 0 {
-			return errEmptyMsgID
+			errSet.Add(errEmptyMsgID)
+			continue
 		}
 		if err := b.tbot.Delete(getEditable(userID, msgID)); err != nil {
+			b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
 			errSet.Add(err)
+			continue
 		}
+		b.metr.incDeleteMessagesTotal()
 	}
 
 	return errSet.Err()
@@ -735,12 +786,15 @@ func (b *baseBot) deleteHistory(userID int64, lastMessageID int) map[int]struct{
 }
 
 func (b *baseBot) middleware(upd *tele.Update) bool {
+	b.metr.incUpdate()
+
 	if upd.MyChatMember != nil {
 		if lang.Deref(upd.MyChatMember.NewChatMember).Role == "kicked" {
 			b.log.Warn("bot is blocked",
 				"user_id", lang.Deref(upd.MyChatMember.Sender).ID,
 				"old_role", lang.Deref(upd.MyChatMember.OldChatMember).Role,
 				"new_role", lang.Deref(upd.MyChatMember.NewChatMember).Role)
+			b.metr.incError(MetricsErrorBotBlocked, MetricsErrorSeverityLow)
 
 			return false
 		}
@@ -749,6 +803,7 @@ func (b *baseBot) middleware(upd *tele.Update) bool {
 				"user_id", lang.Deref(upd.MyChatMember.Sender).ID,
 				"old_role", lang.Deref(upd.MyChatMember.OldChatMember).Role,
 				"new_role", lang.Deref(upd.MyChatMember.NewChatMember).Role)
+			b.metr.incError(MetricsErrorBotBlocked, MetricsErrorSeverityLow)
 
 			return false
 		}
@@ -831,5 +886,28 @@ func getSender(upd *tele.Update) *tele.User {
 		return upd.EditedBusinessMessage.Sender
 	default:
 		return nil
+	}
+}
+
+func getMsgID(upd *tele.Update) int {
+	switch {
+	case upd.Callback != nil:
+		return upd.Callback.Message.ID
+	case upd.Message != nil:
+		return upd.Message.ID
+	case upd.EditedMessage != nil:
+		return upd.EditedMessage.ID
+	case upd.ChannelPost != nil:
+		return upd.ChannelPost.ID
+	case upd.EditedChannelPost != nil:
+		return upd.EditedChannelPost.ID
+	case upd.MessageReaction != nil:
+		return upd.MessageReaction.MessageID
+	case upd.BusinessMessage != nil:
+		return upd.BusinessMessage.ID
+	case upd.EditedBusinessMessage != nil:
+		return upd.EditedBusinessMessage.ID
+	default:
+		return 0
 	}
 }

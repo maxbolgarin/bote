@@ -10,6 +10,7 @@ import (
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
+	"github.com/prometheus/client_golang/prometheus"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -30,6 +31,8 @@ const (
 	defaultWebhookRateLimitRPS     = 30
 	defaultWebhookRateLimitBurst   = 10
 
+	defaultWebhookMetricsPath = "/metrics"
+
 	defaultBotParseMode       = tele.ModeHTML
 	defaultBotDefaultLanguage = LanguageDefault
 	defaultBotDeleteMessages  = true
@@ -41,6 +44,8 @@ const (
 	defaultLogLevel   = "info"
 
 	defaultUpdatesChannelCapacity = 1000
+
+	longDurationThreshold = 500 * time.Millisecond
 )
 
 // https://core.telegram.org/bots/webhooks
@@ -99,9 +104,23 @@ type (
 		// Note: If WebhookConfig is provided, this will be ignored and webhook poller will be used.
 		Poller tele.Poller
 
+		// Metrics is a configuration for prometheus metrics.
+		// It registers metrics in the provided registry.
+		// It do not register metris if Registry is nil.
+		Metrics MetricsConfig
+
 		// Offline is a flag that enables offline mode.
 		// It is used to create a bot without network for testing purposes.
 		Offline bool
+
+		metrics *metrics
+	}
+
+	MetricsConfig struct {
+		Registry    *prometheus.Registry
+		Namespace   string
+		Subsystem   string
+		ConstLabels prometheus.Labels
 	}
 
 	// PrivacyMode is a privacy mode for the bot.
@@ -318,6 +337,17 @@ type WebhookConfig struct {
 	// Environment variable: BOTE_WEBHOOK_DROP_PENDING_UPDATES.
 	DropPendingUpdates bool `yaml:"drop_pending_updates" json:"drop_pending_updates" env:"BOTE_WEBHOOK_DROP_PENDING_UPDATES"`
 
+	// MetricsPath is the path to serve metrics.
+	// Default: "/metrics".
+	// Environment variable: BOTE_WEBHOOK_METRICS_PATH.
+	MetricsPath string `yaml:"metrics_path" json:"metrics_path" env:"BOTE_WEBHOOK_METRICS_PATH"`
+
+	// EnableMetrics is a flag that enables metrics serving.
+	// It uses provided registry to register metrics or a default one if registry is nil.
+	// Default: false.
+	// Environment variable: BOTE_WEBHOOK_ENABLE_METRICS.
+	EnableMetrics bool `yaml:"enable_metrics" json:"enable_metrics" env:"BOTE_WEBHOOK_ENABLE_METRICS"`
+
 	// Security contains security configuration.
 	Security WebhookSecurityConfig `yaml:"security" json:"security"`
 
@@ -448,6 +478,12 @@ func WithMode(mode PollingMode) func(opts *Options) {
 	}
 }
 
+func WithMetricsConfig(metrics MetricsConfig) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Metrics = metrics
+	}
+}
+
 // WithLongPolling returns an option that sets the long polling configuration.
 func WithLongPollingConfig(cfg LongPollingConfig) func(opts *Options) {
 	return func(opts *Options) {
@@ -551,6 +587,26 @@ func WithWebhookGenerateCertificate(directory ...string) func(opts *Options) {
 		opts.Config.Webhook.Security.GenerateSelfSignedCert = lang.Ptr(true)
 		opts.Config.Webhook.Security.CertFile = lang.Check(lang.First(directory), ".") + "/cert.pem"
 		opts.Config.Webhook.Security.KeyFile = lang.Check(lang.First(directory), ".") + "/key.pem"
+	}
+}
+
+// WithWebhookGenerateCertificate returns an option that generates self-signed certificate and uploads it to Telegram.
+func WithWebhookMetrics(metrics MetricsConfig, metricsPath ...string) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.Webhook.EnableMetrics = true
+		opts.Config.Webhook.MetricsPath = lang.First(metricsPath)
+		opts.Metrics = metrics
+	}
+}
+
+// WithWebhookGenerateCertificate returns an option that generates self-signed certificate and uploads it to Telegram.
+func WithWebhookDefaultMetrics(metricsPath ...string) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.Webhook.EnableMetrics = true
+		opts.Config.Webhook.MetricsPath = lang.First(metricsPath)
+		opts.Metrics = MetricsConfig{
+			Registry: prometheus.NewRegistry(),
+		}
 	}
 }
 
@@ -703,6 +759,8 @@ func (cfg *Config) prepareAndValidate() error {
 	cfg.Webhook.RateLimit.RequestsPerSecond = lang.Check(cfg.Webhook.RateLimit.RequestsPerSecond, defaultWebhookRateLimitRPS)
 	cfg.Webhook.RateLimit.BurstSize = lang.Check(cfg.Webhook.RateLimit.BurstSize, defaultWebhookRateLimitBurst)
 
+	cfg.Webhook.MetricsPath = lang.Check(cfg.Webhook.MetricsPath, defaultWebhookMetricsPath)
+
 	cfg.Bot.ParseMode = lang.Check(cfg.Bot.ParseMode, defaultBotParseMode)
 	cfg.Bot.PrivacyMode = lang.Check(cfg.Bot.PrivacyMode, PrivacyModeNo)
 	cfg.Bot.DefaultLanguage = lang.Check(cfg.Bot.DefaultLanguage, defaultBotDefaultLanguage)
@@ -734,6 +792,7 @@ func prepareOpts(opts Options) (Options, error) {
 	if opts.UpdateLogger == nil {
 		opts.UpdateLogger = &updateLogger{opts.Logger}
 	}
+	opts.metrics = newMetrics(opts.Metrics)
 	opts.Logger = &leveledLogger{
 		log:   opts.Logger,
 		level: getLogLevel(opts.Config.Log.Level),
@@ -763,7 +822,7 @@ func prepareOpts(opts Options) (Options, error) {
 	}
 
 	if opts.Config.Mode == PollingModeWebhook {
-		webhookPoller, err := newWebhookPoller(opts.Config.Webhook, opts.Logger)
+		webhookPoller, err := newWebhookPoller(opts.Config.Webhook, opts.metrics, opts.Logger)
 		if err != nil {
 			return opts, erro.Wrap(err, "create webhook poller")
 		}

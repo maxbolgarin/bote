@@ -23,6 +23,7 @@ import (
 	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	"github.com/maxbolgarin/servex/v2"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -31,7 +32,7 @@ type webhookPoller struct {
 	srv     *servex.Server
 	cfg     WebhookConfig
 	log     Logger
-	metrics *webhookMetrics
+	metrics *metrics
 
 	bot     *tele.Bot
 	updates chan tele.Update
@@ -41,19 +42,17 @@ type webhookPoller struct {
 }
 
 // newWebhookPoller creates a new webhook poller with the given configuration.
-func newWebhookPoller(config WebhookConfig, logger Logger) (*webhookPoller, error) {
+func newWebhookPoller(config WebhookConfig, metr *metrics, logger Logger) (*webhookPoller, error) {
 	if err := prepareCertificate(config, logger); err != nil {
 		return nil, erro.Wrap(err, "prepare certificate")
 	}
-
-	metrics := &webhookMetrics{}
 
 	servexOpts := []servex.Option{
 		servex.WithNoRequestLog(),
 		servex.WithReadTimeout(config.ReadTimeout),
 		servex.WithIdleTimeout(config.IdleTimeout),
 		servex.WithHealthEndpoint(),
-		servex.WithMetrics(metrics),
+		servex.WithMetrics(metr),
 		servex.WithLogger(logger),
 	}
 
@@ -89,11 +88,16 @@ func newWebhookPoller(config WebhookConfig, logger Logger) (*webhookPoller, erro
 		cfg:     config,
 		srv:     srv,
 		log:     logger,
-		metrics: metrics,
+		metrics: metr,
 		stopCh:  make(chan struct{}),
 	}
 
 	wp.srv.POST(config.urlParsed.Path, wp.handleWebhook)
+	if config.EnableMetrics {
+		wp.srv.GET(config.MetricsPath, promhttp.HandlerFor(metr.Registry, promhttp.HandlerOpts{
+			EnableOpenMetrics: true,
+		}).ServeHTTP)
+	}
 
 	return wp, nil
 }
@@ -181,6 +185,8 @@ func (wp *webhookPoller) setWebhook() error {
 		"allowed_ips", wp.cfg.Security.AllowedIPs,
 		"is_loaded_cert", wp.cfg.Security.LoadCertInTelegram,
 	)
+
+	wp.metrics.setWebhookStatus(webhookURL, wp.cfg.Listen)
 
 	return nil
 }
@@ -448,20 +454,6 @@ func validateCertificate(certFile, keyFile string, logger Logger) error {
 	)
 
 	return nil
-}
-
-// TODO: b
-type webhookMetrics struct {
-	requestsTotal int
-	errorsTotal   int
-}
-
-func (m *webhookMetrics) HandleRequest(r *http.Request) {
-	m.requestsTotal++
-}
-
-func (m *webhookMetrics) HandleResponse(r *http.Request, w http.ResponseWriter, statusCode int, duration time.Duration) {
-	m.errorsTotal++
 }
 
 // WebhookInfo contains information about the current webhook configuration.
