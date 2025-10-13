@@ -65,8 +65,10 @@ type metrics struct {
 	errorsTotal *prometheus.CounterVec // Total errors by type and severity
 
 	// User activity metrics
-	totalActiveUsers   prometheus.Gauge     // Total number of created/initialized users
-	currentActiveUsers *prometheus.GaugeVec // Current active users by time window
+	totalActiveUsers         prometheus.Gauge     // Total number of created/initialized users
+	currentActiveUsers       *prometheus.GaugeVec // Current active users by time window
+	averageUsersActionsCount *prometheus.GaugeVec // Average number of actions per user
+	userCacheSize            prometheus.Gauge     // Size of user cache
 
 	// Webhook metrics
 	webhookStatus        *prometheus.GaugeVec     // Webhook status by URL and address
@@ -76,12 +78,17 @@ type metrics struct {
 	webhookRequestsOnFly *prometheus.GaugeVec     // Current requests in flight by path
 
 	// Internal state tracking
-	activeHandlersCount int64                               // Atomic counter for active handlers
-	onFlyRequestsCount  int64                               // Atomic counter for requests in flight
-	userLastSeen        *abstract.SafeMap[int64, time.Time] // Thread-safe map of user last seen times
-	lastUpdateTime      time.Time                           // Last time active users were updated
+	activeHandlersCount int64                                    // Atomic counter for active handlers
+	onFlyRequestsCount  int64                                    // Atomic counter for requests in flight
+	userLastSeen        *abstract.SafeMap[int64, activeUserStat] // Thread-safe map of user last seen times
+	lastUpdateTime      time.Time                                // Last time active users were updated
 
 	disabled bool // Whether metrics collection is disabled
+}
+
+type activeUserStat struct {
+	totalActions int64
+	lastSeen     time.Time
 }
 
 // newMetrics creates and initializes a new metrics instance with all Prometheus metrics.
@@ -97,7 +104,7 @@ func newMetrics(config MetricsConfig) *metrics {
 	// Create metrics instance with thread-safe user tracking
 	m := &metrics{
 		MetricsConfig: config,
-		userLastSeen:  abstract.NewSafeMap[int64, time.Time](),
+		userLastSeen:  abstract.NewSafeMap[int64, activeUserStat](),
 	}
 
 	// Initialize core bot metrics
@@ -119,6 +126,8 @@ func newMetrics(config MetricsConfig) *metrics {
 	// Initialize user activity metrics
 	m.totalActiveUsers = m.newSimpleGauge("users_total_active", "Total number of created or initialized users")
 	m.currentActiveUsers = m.newGauge("users_current_active", "Current number of active users by window", "window")
+	m.averageUsersActionsCount = m.newGauge("users_average_actions_count", "Average number of actions per user", "window")
+	m.userCacheSize = m.newSimpleGauge("users_cache_size", "Size of user cache")
 
 	// Initialize webhook monitoring metrics
 	m.webhookStatus = m.newGauge("webhook_status", "Webhook status", "url", "address")
@@ -240,7 +249,12 @@ func (m *metrics) addActiveUser(userID int64) {
 	if m == nil || m.disabled {
 		return
 	}
-	m.userLastSeen.Set(userID, time.Now())
+	m.userLastSeen.Change(userID, func(userID int64, stat activeUserStat) activeUserStat {
+		return activeUserStat{
+			totalActions: stat.totalActions + 1,
+			lastSeen:     time.Now(),
+		}
+	})
 
 	// Update active users every minute to prevent high load
 	if time.Since(m.lastUpdateTime) > time.Minute {
@@ -248,25 +262,40 @@ func (m *metrics) addActiveUser(userID int64) {
 	}
 }
 
+// incUserCacheSize increments the user cache size gauge.
+// Called when a user is added to the cache to track the size of the cache.
+func (m *metrics) setUserCacheSize(size int) {
+	if m == nil || m.disabled {
+		return
+	}
+	m.userCacheSize.Set(float64(size))
+}
+
 // updateActiveUsers computes and updates active user counts for 1h and 24h windows.
 // This method is called periodically to maintain accurate user activity metrics.
 func (m *metrics) updateActiveUsers() {
-	now := time.Now()
-	oneHourAgo := now.Add(-1 * time.Hour)
-	twentyFourHoursAgo := now.Add(-24 * time.Hour)
+	var (
+		now                = time.Now()
+		oneHourAgo         = now.Add(-1 * time.Hour)
+		twentyFourHoursAgo = now.Add(-24 * time.Hour)
 
-	var count1h, count24h int
+		users1h, users24h, actions1h, actions24h int64
+	)
+
 	var toDelete []int64
 
 	// Iterate through all users and categorize by activity
-	m.userLastSeen.Range(func(userID int64, lastSeen time.Time) bool {
+	m.userLastSeen.Range(func(userID int64, stat activeUserStat) bool {
 		// Count users active in last 1h
-		if lastSeen.After(oneHourAgo) {
-			count1h++
-			count24h++
-		} else if lastSeen.After(twentyFourHoursAgo) {
+		if stat.lastSeen.After(oneHourAgo) {
+			users1h++
+			actions1h += stat.totalActions
+			users24h++
+			actions24h += stat.totalActions
+		} else if stat.lastSeen.After(twentyFourHoursAgo) {
 			// Count users active in last 24h but not in last 1h
-			count24h++
+			users24h++
+			actions24h += stat.totalActions
 		} else {
 			// Mark for deletion if older than 24h
 			toDelete = append(toDelete, userID)
@@ -280,8 +309,15 @@ func (m *metrics) updateActiveUsers() {
 	}
 
 	// Update gauges with current counts
-	m.currentActiveUsers.WithLabelValues(MetricsWindow1h).Set(float64(count1h))
-	m.currentActiveUsers.WithLabelValues(MetricsWindow24h).Set(float64(count24h))
+	if users1h > 0 {
+		m.currentActiveUsers.WithLabelValues(MetricsWindow1h).Set(float64(users1h))
+		m.averageUsersActionsCount.WithLabelValues(MetricsWindow1h).Set(float64(actions1h / users1h))
+	}
+	if users24h > 0 {
+		m.currentActiveUsers.WithLabelValues(MetricsWindow24h).Set(float64(users24h))
+		m.averageUsersActionsCount.WithLabelValues(MetricsWindow24h).Set(float64(actions24h / users24h))
+	}
+
 	m.lastUpdateTime = now
 }
 

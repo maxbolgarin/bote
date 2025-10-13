@@ -1040,6 +1040,9 @@ func (m *userManagerImpl) prepareUser(tUser *tele.User) (*userContextImpl, error
 	if tUser == nil {
 		return nil, erro.New("cannot prepare user: telegram user is nil")
 	}
+	defer func() {
+		m.metr.setUserCacheSize(m.users.Size())
+	}()
 
 	user, found := m.users.Get(tUser.ID)
 	if found {
