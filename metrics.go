@@ -34,6 +34,8 @@ const (
 
 	// Default subsystem name for metrics
 	defaultSubsystem = "bote"
+
+	defaultSessionLength = 15 * time.Minute
 )
 
 // Predefined histogram buckets for different metric types
@@ -42,6 +44,8 @@ var (
 	MetricsHistogramBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 	// Extended buckets for long-running handlers (0.5s to 10s)
 	LongHandlerDurationBuckets = []float64{0.5, 1, 2, 4, 6, 8, 10}
+	// Session length buckets for active users (1m to 24h)
+	SessionLengthBucketsSeconds = []float64{10, 30, 60, 120, 300, 600, 900, 1800, 3600}
 )
 
 // metrics holds all Prometheus metrics for the bot system.
@@ -68,6 +72,7 @@ type metrics struct {
 	totalActiveUsers         prometheus.Gauge     // Total number of created/initialized users
 	currentActiveUsers       *prometheus.GaugeVec // Current active users by time window
 	averageUsersActionsCount *prometheus.GaugeVec // Average number of actions per user
+	sessionLength            prometheus.Histogram // Session length by time window
 	userCacheSize            prometheus.Gauge     // Size of user cache
 
 	// Webhook metrics
@@ -89,6 +94,7 @@ type metrics struct {
 type activeUserStat struct {
 	totalActions int64
 	lastSeen     time.Time
+	sessionStart time.Time
 }
 
 // newMetrics creates and initializes a new metrics instance with all Prometheus metrics.
@@ -127,6 +133,7 @@ func newMetrics(config MetricsConfig) *metrics {
 	m.totalActiveUsers = m.newSimpleGauge("users_total_active", "Total number of created or initialized users")
 	m.currentActiveUsers = m.newGauge("users_current_active", "Current number of active users by window", "window")
 	m.averageUsersActionsCount = m.newGauge("users_average_actions_count", "Average number of actions per user", "window")
+	m.sessionLength = m.newSimpleHistogram("users_session_length_seconds", "Session length in seconds", SessionLengthBucketsSeconds)
 	m.userCacheSize = m.newSimpleGauge("users_cache_size", "Size of user cache")
 
 	// Initialize webhook monitoring metrics
@@ -250,9 +257,14 @@ func (m *metrics) addActiveUser(userID int64) {
 		return
 	}
 	m.userLastSeen.Change(userID, func(userID int64, stat activeUserStat) activeUserStat {
+		sessionStart := stat.sessionStart
+		if stat.lastSeen.IsZero() || sessionStart.IsZero() || time.Since(stat.lastSeen) > defaultSessionLength {
+			sessionStart = time.Now()
+		}
 		return activeUserStat{
 			totalActions: stat.totalActions + 1,
 			lastSeen:     time.Now(),
+			sessionStart: sessionStart,
 		}
 	})
 
@@ -286,6 +298,9 @@ func (m *metrics) updateActiveUsers() {
 
 	// Iterate through all users and categorize by activity
 	m.userLastSeen.Range(func(userID int64, stat activeUserStat) bool {
+		if !stat.sessionStart.IsZero() {
+			m.sessionLength.Observe(time.Since(stat.sessionStart).Seconds())
+		}
 		// Count users active in last 1h
 		if stat.lastSeen.After(oneHourAgo) {
 			users1h++
