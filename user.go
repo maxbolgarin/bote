@@ -1128,8 +1128,6 @@ func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error)
 		m.log.Info("new user created", "user_id", user.user.ID, "username", user.user.Info.Username)
 	}
 
-	m.metr.incNewUser()
-
 	return user, nil
 }
 

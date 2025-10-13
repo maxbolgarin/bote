@@ -185,25 +185,15 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 	b.bot.handle(endpoint, func(c tele.Context) (err error) {
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
 
-		b.bot.metr.incActiveHandlers()
+		b.bot.metr.recordHandlerStart()
 
 		// Measure handler execution time
 		start := time.Now()
 		defer func() {
-			b.bot.metr.decActiveHandlers()
+			b.bot.metr.recordHandlerFinish()
 
 			duration := time.Since(start)
 			b.bot.metr.observeHandlerDuration(duration)
-			if duration > longDurationThreshold {
-				// Get state for metrics labeling
-				state := "unknown"
-				if ctx := b.newContext(c); ctx != nil && ctx.user != nil {
-					if st, ok := ctx.user.State(ctx.MessageID()); ok {
-						state = st.String()
-					}
-				}
-				b.bot.metr.observeLongHandlerDuration(state, duration)
-			}
 		}()
 
 		ctx := b.newContext(c)

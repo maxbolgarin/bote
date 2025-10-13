@@ -40,11 +40,13 @@ const (
 
 // Predefined histogram buckets for different metric types
 var (
-	// Standard histogram buckets for general duration metrics (1ms to 10s)
-	MetricsHistogramBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+	// Handler duration buckets for all handlers (50ms to 5s)
+	BotHandlerDurationBuckets = []float64{50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 2500, 3000, 5000}
+	// Webhook response time buckets for all webhooks (5ms to 5s)
+	WebhookHistogramBuckets = []float64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000}
 	// Extended buckets for long-running handlers (0.5s to 10s)
 	LongHandlerDurationBuckets = []float64{0.5, 1, 2, 4, 6, 8, 10}
-	// Session length buckets for active users (1m to 24h)
+	// Session length buckets for active users (10s to 1h)
 	SessionLengthBucketsSeconds = []float64{10, 30, 60, 120, 300, 600, 900, 1800, 3600}
 )
 
@@ -54,11 +56,10 @@ type metrics struct {
 	MetricsConfig // Configuration for metrics (namespace, subsystem, etc.)
 
 	// Core bot metrics
-	updatesTotal               prometheus.Counter       // Total number of updates received
-	activeHandlers             prometheus.Gauge         // Number of currently active handlers
-	stateRequestsTotal         *prometheus.CounterVec   // Total requests per state (labeled by state)
-	handlerDurationSeconds     prometheus.Histogram     // All handlers execution duration
-	longHandlerDurationSeconds *prometheus.HistogramVec // Long handlers duration by state
+	updatesTotal       prometheus.Counter     // Total number of updates received
+	handlersInFlight   prometheus.Gauge       // Number of currently active handlers
+	stateRequestsTotal *prometheus.CounterVec // Total requests per state (labeled by state)
+	handlerDurationMs  prometheus.Histogram   // All handlers execution duration
 
 	// Message operation metrics
 	sendMessagesTotal   prometheus.Counter // Total messages sent
@@ -69,24 +70,23 @@ type metrics struct {
 	errorsTotal *prometheus.CounterVec // Total errors by type and severity
 
 	// User activity metrics
-	totalActiveUsers         prometheus.Gauge     // Total number of created/initialized users
-	currentActiveUsers       *prometheus.GaugeVec // Current active users by time window
-	averageUsersActionsCount *prometheus.GaugeVec // Average number of actions per user
-	sessionLength            prometheus.Histogram // Session length by time window
-	userCacheSize            prometheus.Gauge     // Size of user cache
+	currentActiveUsers  *prometheus.GaugeVec // Current active users by time window
+	averageUsersActions *prometheus.GaugeVec // Average number of actions per user
+	sessionLength       prometheus.Histogram // Session length by time window
+	userCacheSize       prometheus.Gauge     // Size of user cache
 
 	// Webhook metrics
-	webhookStatus        *prometheus.GaugeVec     // Webhook status by URL and address
-	webhookRequestsTotal *prometheus.CounterVec   // Total webhook requests by path
-	webhookErrorsTotal   *prometheus.CounterVec   // Total webhook errors by path and status
-	webhookResponseTime  *prometheus.HistogramVec // Webhook response time by path
-	webhookRequestsOnFly *prometheus.GaugeVec     // Current requests in flight by path
+	webhookStatus           *prometheus.GaugeVec     // Webhook status by URL and address
+	webhookRequestsTotal    *prometheus.CounterVec   // Total webhook requests by path
+	webhookErrorsTotal      *prometheus.CounterVec   // Total webhook errors by path and status
+	webhookResponseTimeMs   *prometheus.HistogramVec // Webhook response time by path
+	webhookRequestsInFlight *prometheus.GaugeVec     // Current requests in flight by path
 
 	// Internal state tracking
-	activeHandlersCount int64                                    // Atomic counter for active handlers
-	onFlyRequestsCount  int64                                    // Atomic counter for requests in flight
-	userLastSeen        *abstract.SafeMap[int64, activeUserStat] // Thread-safe map of user last seen times
-	lastUpdateTime      time.Time                                // Last time active users were updated
+	onFlyHandlersCount int64                                    // Atomic counter for active handlers
+	onFlyRequestsCount int64                                    // Atomic counter for requests in flight
+	userLastSeen       *abstract.SafeMap[int64, activeUserStat] // Thread-safe map of user last seen times
+	lastUpdateTime     time.Time                                // Last time active users were updated
 
 	disabled bool // Whether metrics collection is disabled
 }
@@ -115,11 +115,9 @@ func newMetrics(config MetricsConfig) *metrics {
 
 	// Initialize core bot metrics
 	m.updatesTotal = m.newSimpleCounter("updates_total", "Total number of updates received")
-	m.activeHandlers = m.newSimpleGauge("handlers_active", "Number of handlers that have at least one request")
+	m.handlersInFlight = m.newSimpleGauge("handlers_in_flight", "Number of currently active handlers")
 	m.stateRequestsTotal = m.newCounter("state_requests_total", "Total number of requests for provided state", "state")
-	m.handlerDurationSeconds = m.newSimpleHistogram("handler_duration_seconds", "All handlers execution duration in seconds", MetricsHistogramBuckets)
-	m.longHandlerDurationSeconds = m.newHistogram("long_handler_duration_seconds", "Handler execution duration in seconds by state if it is longer than 1 second",
-		LongHandlerDurationBuckets, "state")
+	m.handlerDurationMs = m.newSimpleHistogram("handler_duration_ms", "All handlers execution duration in milliseconds", BotHandlerDurationBuckets)
 
 	// Initialize message operation metrics
 	m.sendMessagesTotal = m.newSimpleCounter("messages_send_total", "Total number of messages sent")
@@ -130,9 +128,8 @@ func newMetrics(config MetricsConfig) *metrics {
 	m.errorsTotal = m.newCounter("errors_total", "Total number of errors by type and severity", "type", "severity")
 
 	// Initialize user activity metrics
-	m.totalActiveUsers = m.newSimpleGauge("users_total_active", "Total number of created or initialized users")
 	m.currentActiveUsers = m.newGauge("users_current_active", "Current number of active users by window", "window")
-	m.averageUsersActionsCount = m.newGauge("users_average_actions_count", "Average number of actions per user", "window")
+	m.averageUsersActions = m.newGauge("users_average_actions", "Average number of actions per user", "window")
 	m.sessionLength = m.newSimpleHistogram("users_session_length_seconds", "Session length in seconds", SessionLengthBucketsSeconds)
 	m.userCacheSize = m.newSimpleGauge("users_cache_size", "Size of user cache")
 
@@ -140,8 +137,8 @@ func newMetrics(config MetricsConfig) *metrics {
 	m.webhookStatus = m.newGauge("webhook_status", "Webhook status", "url", "address")
 	m.webhookRequestsTotal = m.newCounter("webhook_requests_total", "Total number of webhook requests", "path")
 	m.webhookErrorsTotal = m.newCounter("webhook_errors_total", "Total number of webhook errors", "path", "status_code")
-	m.webhookResponseTime = m.newHistogram("webhook_response_time_seconds", "Webhook response time in seconds", MetricsHistogramBuckets, "path")
-	m.webhookRequestsOnFly = m.newGauge("webhook_requests_on_fly", "Number of requests on fly", "path")
+	m.webhookResponseTimeMs = m.newHistogram("webhook_request_duration_ms", "Webhook response time in milliseconds", WebhookHistogramBuckets, "path")
+	m.webhookRequestsInFlight = m.newGauge("webhook_in_flight_requests", "Number of requests on fly", "path")
 
 	return m
 }
@@ -170,39 +167,30 @@ func (m *metrics) observeHandlerDuration(d time.Duration) {
 	if m == nil || m.disabled {
 		return
 	}
-	m.handlerDurationSeconds.Observe(d.Seconds())
+	m.handlerDurationMs.Observe(float64(d.Milliseconds()))
 }
 
-// observeLongHandlerDuration records the long handler execution duration for the given state.
-// Called for handlers that take longer than 1 second to execute.
-func (m *metrics) observeLongHandlerDuration(state string, d time.Duration) {
-	if m == nil || m.disabled {
-		return
-	}
-	m.longHandlerDurationSeconds.WithLabelValues(state).Observe(d.Seconds())
-}
-
-// incActiveHandlers increments the active handlers gauge.
+// recordHandlerStart increments the active handlers gauge.
 // Called when a handler starts execution to track concurrent handlers.
-func (m *metrics) incActiveHandlers() {
+func (m *metrics) recordHandlerStart() {
 	if m == nil || m.disabled {
 		return
 	}
-	count := atomic.AddInt64(&m.activeHandlersCount, 1)
-	m.activeHandlers.Set(float64(count))
+	count := atomic.AddInt64(&m.onFlyHandlersCount, 1)
+	m.handlersInFlight.Set(float64(count))
 }
 
-// decActiveHandlers decrements the active handlers gauge.
+// recordHandlerFinish decrements the active handlers gauge.
 // Called when a handler finishes execution to track concurrent handlers.
-func (m *metrics) decActiveHandlers() {
+func (m *metrics) recordHandlerFinish() {
 	if m == nil || m.disabled {
 		return
 	}
-	count := atomic.AddInt64(&m.activeHandlersCount, -1)
+	count := atomic.AddInt64(&m.onFlyHandlersCount, -1)
 	if count < 0 {
 		count = 0
 	}
-	m.activeHandlers.Set(float64(count))
+	m.handlersInFlight.Set(float64(count))
 }
 
 // incError increments the error counter for the given error type and severity.
@@ -241,15 +229,6 @@ func (m *metrics) incDeleteMessagesTotal() {
 	m.deleteMessagesTotal.Inc()
 }
 
-// incNewUser increments the total active users counter.
-// Called when a new user is created or initialized.
-func (m *metrics) incNewUser() {
-	if m == nil || m.disabled {
-		return
-	}
-	m.totalActiveUsers.Inc()
-}
-
 // addActiveUser records user activity and updates active user metrics.
 // Called when a user interacts with the bot to track user engagement.
 func (m *metrics) addActiveUser(userID int64) {
@@ -269,7 +248,7 @@ func (m *metrics) addActiveUser(userID int64) {
 	})
 
 	// Update active users every minute to prevent high load
-	if time.Since(m.lastUpdateTime) > time.Minute {
+	if m.lastUpdateTime.IsZero() || time.Since(m.lastUpdateTime) > time.Minute {
 		m.updateActiveUsers()
 	}
 }
@@ -326,11 +305,11 @@ func (m *metrics) updateActiveUsers() {
 	// Update gauges with current counts
 	if users1h > 0 {
 		m.currentActiveUsers.WithLabelValues(MetricsWindow1h).Set(float64(users1h))
-		m.averageUsersActionsCount.WithLabelValues(MetricsWindow1h).Set(float64(actions1h / users1h))
+		m.averageUsersActions.WithLabelValues(MetricsWindow1h).Set(float64(actions1h / users1h))
 	}
 	if users24h > 0 {
 		m.currentActiveUsers.WithLabelValues(MetricsWindow24h).Set(float64(users24h))
-		m.averageUsersActionsCount.WithLabelValues(MetricsWindow24h).Set(float64(actions24h / users24h))
+		m.averageUsersActions.WithLabelValues(MetricsWindow24h).Set(float64(actions24h / users24h))
 	}
 
 	m.lastUpdateTime = now
@@ -351,9 +330,12 @@ func (m *metrics) HandleRequest(r *http.Request) {
 	if m == nil || m.disabled {
 		return
 	}
+	if r.URL.Path == defaultWebhookMetricsPath || r.URL.Path == defaultWebhookHealthPath {
+		return
+	}
 	m.webhookRequestsTotal.WithLabelValues(r.URL.Path).Inc()
 	atomic.AddInt64(&m.onFlyRequestsCount, 1)
-	m.webhookRequestsOnFly.WithLabelValues(r.URL.Path).Set(float64(m.onFlyRequestsCount))
+	m.webhookRequestsInFlight.WithLabelValues(r.URL.Path).Set(float64(m.onFlyRequestsCount))
 }
 
 // HandleResponse records webhook response metrics.
@@ -362,14 +344,17 @@ func (m *metrics) HandleResponse(r *http.Request, w http.ResponseWriter, statusC
 	if m == nil || m.disabled {
 		return
 	}
+	if r.URL.Path == defaultWebhookMetricsPath || r.URL.Path == defaultWebhookHealthPath {
+		return
+	}
 	// Record error if status code indicates failure
 	if statusCode >= 400 {
 		m.webhookErrorsTotal.WithLabelValues(r.URL.Path, strconv.Itoa(statusCode)).Inc()
 	}
 	// Record response time and update concurrency metrics
-	m.webhookResponseTime.WithLabelValues(r.URL.Path).Observe(duration.Seconds())
+	m.webhookResponseTimeMs.WithLabelValues(r.URL.Path).Observe(float64(duration.Milliseconds()))
 	atomic.AddInt64(&m.onFlyRequestsCount, -1)
-	m.webhookRequestsOnFly.WithLabelValues(r.URL.Path).Set(float64(m.onFlyRequestsCount))
+	m.webhookRequestsInFlight.WithLabelValues(r.URL.Path).Set(float64(m.onFlyRequestsCount))
 }
 
 // newCounter creates a new CounterVec with the given name, help text, and label names.

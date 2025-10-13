@@ -51,7 +51,7 @@ func newWebhookPoller(config WebhookConfig, metr *metrics, logger Logger) (*webh
 		servex.WithNoRequestLog(),
 		servex.WithReadTimeout(config.ReadTimeout),
 		servex.WithIdleTimeout(config.IdleTimeout),
-		servex.WithHealthEndpoint(),
+		servex.WithHealthPath(defaultWebhookHealthPath),
 		servex.WithMetrics(metr),
 		servex.WithLogger(logger),
 	}

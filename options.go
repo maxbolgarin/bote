@@ -31,6 +31,7 @@ const (
 	defaultWebhookRateLimitRPS     = 30
 	defaultWebhookRateLimitBurst   = 10
 
+	defaultWebhookHealthPath  = "/health"
 	defaultWebhookMetricsPath = "/metrics"
 
 	defaultBotParseMode       = tele.ModeHTML
