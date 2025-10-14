@@ -175,6 +175,19 @@ func (b *Bot) GetAllUsers() []User {
 	return b.um.getAllUsers()
 }
 
+// CreateUserFromModel creates a new user from [UserModel].
+// If [addToCache] is true, the user will be added to the cache.
+// It is useful when you want to preinit user in cache before he makes a request.
+func (b *Bot) CreateUserFromModel(model UserModel, addToCache bool) User {
+	user := b.um.newUserContext(model, b.um.priv)
+	if addToCache {
+		if ok := b.um.users.Set(user.user.ID, user); !ok {
+			b.bot.log.Warn("failed to add user to cache", "user_id", user.user.ID, "username", user.user.Info.Username)
+		}
+	}
+	return user
+}
+
 // AddMiddleware adds middleware functions that will be called on each update.
 func (b *Bot) AddMiddleware(f ...MiddlewareFunc) {
 	b.middlewares.Append(f...)
