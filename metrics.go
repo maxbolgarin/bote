@@ -41,13 +41,11 @@ const (
 // Predefined histogram buckets for different metric types
 var (
 	// Handler duration buckets for all handlers (50ms to 5s)
-	BotHandlerDurationBuckets = []float64{50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 2500, 3000, 5000}
+	BotHandlerDurationBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5}
 	// Webhook response time buckets for all webhooks (5ms to 5s)
-	WebhookHistogramBuckets = []float64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000}
-	// Extended buckets for long-running handlers (0.5s to 10s)
-	LongHandlerDurationBuckets = []float64{0.5, 1, 2, 4, 6, 8, 10}
+	WebhookHistogramBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2.5}
 	// Session length buckets for active users (10s to 1h)
-	SessionLengthBucketsSeconds = []float64{10, 30, 60, 120, 300, 600, 900, 1800, 3600}
+	SessionLengthBucketsSeconds = []float64{10, 30, 60, 120, 300, 600, 1800}
 )
 
 // metrics holds all Prometheus metrics for the bot system.
@@ -76,11 +74,11 @@ type metrics struct {
 	userCacheSize       prometheus.Gauge     // Size of user cache
 
 	// Webhook metrics
-	webhookStatus           *prometheus.GaugeVec     // Webhook status by URL and address
-	webhookRequestsTotal    *prometheus.CounterVec   // Total webhook requests by path
-	webhookErrorsTotal      *prometheus.CounterVec   // Total webhook errors by path and status
-	webhookResponseTimeMs   *prometheus.HistogramVec // Webhook response time by path
-	webhookRequestsInFlight *prometheus.GaugeVec     // Current requests in flight by path
+	webhookStatus              *prometheus.GaugeVec     // Webhook status by URL and address
+	webhookRequestsTotal       *prometheus.CounterVec   // Total webhook requests by path
+	webhookErrorsTotal         *prometheus.CounterVec   // Total webhook errors by path and status
+	webhookResponseTimeSeconds *prometheus.HistogramVec // Webhook response time by path
+	webhookRequestsInFlight    *prometheus.GaugeVec     // Current requests in flight by path
 
 	// Internal state tracking
 	onFlyHandlersCount int64                                    // Atomic counter for active handlers
@@ -117,7 +115,7 @@ func newMetrics(config MetricsConfig) *metrics {
 	m.updatesTotal = m.newSimpleCounter("updates_total", "Total number of updates received")
 	m.handlersInFlight = m.newSimpleGauge("handlers_in_flight", "Number of currently active handlers")
 	m.stateRequestsTotal = m.newCounter("state_requests_total", "Total number of requests for provided state", "state")
-	m.handlerDurationMs = m.newSimpleHistogram("handler_duration_ms", "All handlers execution duration in milliseconds", BotHandlerDurationBuckets)
+	m.handlerDurationMs = m.newSimpleHistogram("handler_duration_seconds", "All handlers execution duration in seconds", BotHandlerDurationBuckets)
 
 	// Initialize message operation metrics
 	m.sendMessagesTotal = m.newSimpleCounter("messages_send_total", "Total number of messages sent")
@@ -137,7 +135,7 @@ func newMetrics(config MetricsConfig) *metrics {
 	m.webhookStatus = m.newGauge("webhook_status", "Webhook status", "url", "address")
 	m.webhookRequestsTotal = m.newCounter("webhook_requests_total", "Total number of webhook requests", "path")
 	m.webhookErrorsTotal = m.newCounter("webhook_errors_total", "Total number of webhook errors", "path", "status_code")
-	m.webhookResponseTimeMs = m.newHistogram("webhook_request_duration_ms", "Webhook response time in milliseconds", WebhookHistogramBuckets, "path")
+	m.webhookResponseTimeSeconds = m.newHistogram("webhook_request_duration_seconds", "Webhook response time in seconds", WebhookHistogramBuckets, "path")
 	m.webhookRequestsInFlight = m.newGauge("webhook_in_flight_requests", "Number of requests on fly", "path")
 
 	return m
@@ -167,7 +165,7 @@ func (m *metrics) observeHandlerDuration(d time.Duration) {
 	if m == nil || m.disabled {
 		return
 	}
-	m.handlerDurationMs.Observe(float64(d.Milliseconds()))
+	m.handlerDurationMs.Observe(d.Seconds())
 }
 
 // recordHandlerStart increments the active handlers gauge.
@@ -352,7 +350,7 @@ func (m *metrics) HandleResponse(r *http.Request, w http.ResponseWriter, statusC
 		m.webhookErrorsTotal.WithLabelValues(r.URL.Path, strconv.Itoa(statusCode)).Inc()
 	}
 	// Record response time and update concurrency metrics
-	m.webhookResponseTimeMs.WithLabelValues(r.URL.Path).Observe(float64(duration.Milliseconds()))
+	m.webhookResponseTimeSeconds.WithLabelValues(r.URL.Path).Observe(duration.Seconds())
 	atomic.AddInt64(&m.onFlyRequestsCount, -1)
 	m.webhookRequestsInFlight.WithLabelValues(r.URL.Path).Set(float64(m.onFlyRequestsCount))
 }
