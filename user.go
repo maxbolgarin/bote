@@ -1019,7 +1019,7 @@ func newUserManager(opts Options) (*userManagerImpl, error) {
 			return uint32(1 + len(value.user.Messages.HistoryIDs))
 		}).
 		// Set TTL for inactive users to prevent memory leaks
-		// WithTTL(opts.Config.Bot.UserCacheTTL).
+		WithTTL(opts.Config.Bot.UserCacheTTL).
 		Build()
 	if err != nil {
 		return nil, erro.Wrap(err, "failed to create user cache with capacity %d", opts.Config.Bot.UserCacheCapacity)
