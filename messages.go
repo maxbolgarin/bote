@@ -2,7 +2,6 @@ package bote
 
 import (
 	"fmt"
-	"html"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -524,12 +523,13 @@ func sanitizeText(text string, maxLength ...int) string {
 		return ""
 	}
 
-	// Remove ASCII control characters (0-31 and 127)
+	// Preserve user experience: allow all symbols including new lines, tabs, and carriage returns.
+	// Only strip harmful control characters (C0 range except \n, \r, \t) and DEL (127).
 	var cleaned strings.Builder
 	cleaned.Grow(len(text))
 
 	for _, r := range text {
-		if r >= 32 && r != 127 {
+		if r == '\n' || r == '\r' || r == '\t' || (r >= 32 && r != 127) {
 			cleaned.WriteRune(r)
 		}
 	}
@@ -549,11 +549,7 @@ func sanitizeText(text string, maxLength ...int) string {
 		}
 	}
 
-	// Trim whitespace
-	text = strings.TrimSpace(text)
-
-	// HTML escape to prevent XSS (done after pattern removal)
-	text = html.EscapeString(text)
+	// Do not trim or HTML-escape: keep original user formatting and symbols.
 
 	if len(maxLength) > 0 {
 		if utf8.RuneCountInString(text) > maxLength[0] {
