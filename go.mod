@@ -37,3 +37,5 @@ require (
 	google.golang.org/protobuf v1.28.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace gopkg.in/telebot.v4 => github.com/maxbolgarin/telebot/v4 v4.0.0-20250721184800-66dc4f1fea15

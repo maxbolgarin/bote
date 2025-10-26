@@ -46,8 +46,8 @@ type Bot struct {
 	logUpdates     bool
 	logPrivacy     bool
 
-	wp      *webhookPoller
-	closeCh chan struct{}
+	wp          *webhookPoller
+	webhookInit chan struct{}
 }
 
 // New creates the bot with optional options.
@@ -95,7 +95,7 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		deleteMessages:  lang.Deref(opts.Config.Bot.DeleteMessages),
 		logUpdates:      lang.Deref(opts.Config.Log.LogUpdates),
 		logPrivacy:      opts.Config.Log.Privacy,
-		closeCh:         make(chan struct{}),
+		webhookInit:     make(chan struct{}),
 	}
 
 	b.addMiddleware(bote.masterMiddleware)
@@ -107,7 +107,7 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 
 	if wp, ok := opts.Poller.(*webhookPoller); ok {
 		bote.wp = wp
-		bote.closeCh = wp.stopCh
+		bote.webhookInit = wp.stopCh
 	}
 
 	return bote, nil
@@ -119,7 +119,6 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 // It runs an assigned handler for every active user message when user makes a request by message's state.
 // Inline buttons will trigger onCallback handler if you don't init them after bot restart.
 // You can pass nil map if you don't need to reinit messages.
-// Don't forget to call Stop() to gracefully shutdown the bot.
 func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[State]InitBundle) chan struct{} {
 	b.startHandler = startHandler
 	for k, v := range stateMap {
@@ -130,31 +129,39 @@ func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[
 	b.bot.log.Info("bot is starting")
 
 	stopChannel := make(chan struct{})
+	botStopSignal := b.bot.tbot.GetStopSignal()
+
 	lang.Go(b.bot.log, func() {
+
+		// Start bot
 		lang.Go(b.bot.log, b.bot.tbot.Start)
 
+		// Wait for
+		//  1. Outer context stopping
+		//  2. Webhook init error
+		//  3. Telebot stoped poller
 		select {
 		case <-ctx.Done():
-		case <-b.closeCh:
-			b.closeCh = nil
+		case <-b.webhookInit:
+		case <-botStopSignal:
 		}
 
 		b.bot.log.Info("bot is stopping")
 
+		// Stop bot poller and updates processing
+		b.bot.tbot.Stop()
+
+		// Shutdown webhook server
 		if b.wp != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-
-			if b.closeCh != nil {
-				close(b.wp.stopCh)
-			}
 
 			if err := b.wp.shutdown(ctx); err != nil {
 				b.bot.log.Error("failed to shutdown webhook poller", "error", err.Error())
 			}
 		}
 
-		b.bot.tbot.Stop()
+		// Send a signal that bot is stopped
 		close(stopChannel)
 	})
 

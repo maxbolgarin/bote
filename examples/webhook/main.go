@@ -31,7 +31,12 @@ func main() {
 	}
 
 	stopCh := b.Start(ctx, startHandler, nil)
-	<-stopCh
+	select {
+	case <-stopCh:
+		// Bot stopped
+	case <-ctx.Done():
+		// Context cancelled
+	}
 }
 
 func startHandler(ctx bote.Context) error {

@@ -307,6 +307,8 @@ github.com/maxbolgarin/lang v1.9.0 h1:jnRcqN0j/rDv2vJ188LMcSgsEKzNofJEgcla0n3DQp
 github.com/maxbolgarin/lang v1.9.0/go.mod h1:gZyHWP6Odm4E4ow7ebyaD7TCoZsuQyXh30zk8g7lmXc=
 github.com/maxbolgarin/servex/v2 v2.2.0 h1:jtXrp8Mly5SKrD/S9NxMOGSPTlz2gvzHgDjMNhzmBHQ=
 github.com/maxbolgarin/servex/v2 v2.2.0/go.mod h1:LqAYYQKMXA8NiP6Og5h7YQPkDzo5EHvm2gTlm+9pW74=
+github.com/maxbolgarin/telebot/v4 v4.0.0-20250721184800-66dc4f1fea15 h1:bSPkB87rm2k8b47g0obIDDvJ7FbGOOqdMfRG8fuxfdU=
+github.com/maxbolgarin/telebot/v4 v4.0.0-20250721184800-66dc4f1fea15/go.mod h1:jhcQjM/176jZm/s9Up/MzV5VFGPjyI8oiJhWvCMxayI=
 github.com/maypok86/otter v1.2.4 h1:HhW1Pq6VdJkmWwcZZq19BlEQkHtI8xgsQzBVXJU0nfc=
 github.com/maypok86/otter v1.2.4/go.mod h1:mKLfoI7v1HOmQMwFgX4QkRk23mX6ge3RDvjdHOWG4R4=
 github.com/miekg/dns v1.1.26/go.mod h1:bPDLeHnStXmXAq1m/Ch/hvfNHr14JKNPMBo3VZKjuso=
@@ -874,8 +876,6 @@ gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 h1:YR8cESwS4TdDjEe65xsg0ogR
 gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/errgo.v2 v2.1.0/go.mod h1:hNsd1EY+bozCKY1Ytp96fpM3vjJbqLJn88ws8XvfDNI=
 gopkg.in/ini.v1 v1.67.0/go.mod h1:pNLf8WUiyNEtQjuu5G5vTm06TEv9tsIgeAvK8hOrP4k=
-gopkg.in/telebot.v4 v4.0.0-beta.5 h1:uhOnORHch59vfhy09WrHLsDTwl6UIM38fiZ62jzC3dk=
-gopkg.in/telebot.v4 v4.0.0-beta.5/go.mod h1:jhcQjM/176jZm/s9Up/MzV5VFGPjyI8oiJhWvCMxayI=
 gopkg.in/yaml.v2 v2.2.1/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
 gopkg.in/yaml.v2 v2.2.2/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
 gopkg.in/yaml.v2 v2.2.3/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=

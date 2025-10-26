@@ -135,8 +135,6 @@ func (wp *webhookPoller) Poll(bot *tele.Bot, updates chan tele.Update, stop chan
 	case <-wp.stopCh:
 		wp.log.Info("webhook poller stopped")
 	}
-
-	wp.log.Info("webhook poller stopping")
 }
 
 // setWebhook configures the webhook on Telegram's side.
