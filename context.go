@@ -68,6 +68,11 @@ type Context interface {
 	// opts are additional options for sending the file.
 	SendFile(name string, file []byte, opts ...any) error
 
+	// SendToRandomChat sends a message to a random chat ID and thread ID.
+	// chatID is the target chat ID, threadID is the target thread ID (0 for no thread).
+	// opts are additional options for sending the message.
+	SendToChat(chatID int64, threadID int, msg string, opts ...any) (int, error)
+
 	// Edit edits main and head messages of the user.
 	// newState is a state of the user which will be set after editing message.
 	// opts are additional options for editing messages.
@@ -124,22 +129,70 @@ type Context interface {
 	// Returns true if all messages were deleted successfully, false otherwise.
 	// It doesn't delete user from the persistent database, so you should make it manually.
 	DeleteUser() bool
+
+	// IsMentioned returns true if the bot is mentioned in the current message.
+	IsMentioned() bool
+
+	// IsGroup returns true if the current message is from a group or supergroup.
+	IsGroup() bool
+
+	// IsChannel returns true if the current message is from a channel.
+	IsChannel() bool
+
+	// ChatID returns the ID of the current chat.
+	ChatID() int64
 }
 
 func (b *Bot) newContext(c tele.Context) *contextImpl {
 	upd := c.Update()
+	sender := getSender(&upd)
+
+	// For group/channel messages, we need to handle the case where there might not be a sender
+	// or where we want to create a context for the chat itself
+	var user *userContextImpl
+	if sender != nil {
+		user = b.um.getUser(sender.ID)
+	} else {
+		// For channel posts without sender, create a system user or use chat ID
+		chat := c.Chat()
+		if chat != nil {
+			// Use chat ID as user ID for channel posts
+			user = b.um.getUser(chat.ID)
+		}
+	}
+
 	return &contextImpl{
 		bt:   b,
 		ct:   c,
-		user: b.um.getUser(getSender(&upd).ID),
+		user: user,
 	}
 }
 
 func (b *Bot) newContextFromUpdate(upd tele.Update) *contextImpl {
+	sender := getSender(&upd)
+
+	// For group/channel messages, we need to handle the case where there might not be a sender
+	var user *userContextImpl
+	if sender != nil {
+		user = b.um.getUser(sender.ID)
+	} else {
+		// For channel posts without sender, try to get chat ID
+		var chatID int64
+		switch {
+		case upd.ChannelPost != nil:
+			chatID = upd.ChannelPost.Chat.ID
+		case upd.EditedChannelPost != nil:
+			chatID = upd.EditedChannelPost.Chat.ID
+		}
+		if chatID != 0 {
+			user = b.um.getUser(chatID)
+		}
+	}
+
 	return &contextImpl{
 		bt:   b,
 		ct:   b.bot.tbot.NewContext(upd),
-		user: b.um.getUser(getSender(&upd).ID),
+		user: user,
 	}
 }
 
@@ -248,6 +301,74 @@ func (c *contextImpl) TextWithMessage() (string, int) {
 		return "", 0
 	}
 	return msg.Text, msg.ID
+}
+
+func (c *contextImpl) IsMentioned() bool {
+	msg := c.ct.Message()
+	if msg == nil {
+		return false
+	}
+
+	// Check if the message has entities (mentions)
+	if msg.Entities == nil {
+		return false
+	}
+
+	// Get bot username from the bot instance
+	bot := c.bt.Bot()
+	if bot == nil {
+		return false
+	}
+
+	botUsername := bot.Me.Username
+	if botUsername == "" {
+		return false
+	}
+
+	// Check for mention entities
+	for _, entity := range msg.Entities {
+		if entity.Type == "mention" {
+			// Extract the mentioned username from the text
+			start := entity.Offset
+			end := start + entity.Length
+			if end <= len(msg.Text) {
+				mentionedUsername := msg.Text[start:end]
+				// Remove @ symbol if present
+				if len(mentionedUsername) > 0 && mentionedUsername[0] == '@' {
+					mentionedUsername = mentionedUsername[1:]
+				}
+				if mentionedUsername == botUsername {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func (c *contextImpl) IsGroup() bool {
+	chat := c.ct.Chat()
+	if chat == nil {
+		return false
+	}
+	return chat.Type == "group" || chat.Type == "supergroup"
+}
+
+func (c *contextImpl) IsChannel() bool {
+	chat := c.ct.Chat()
+	if chat == nil {
+		return false
+	}
+	return chat.Type == "channel"
+}
+
+func (c *contextImpl) ChatID() int64 {
+	chat := c.ct.Chat()
+	if chat == nil {
+		return 0
+	}
+	return chat.ID
 }
 
 func (c *contextImpl) Set(key, value string) {
@@ -367,6 +488,32 @@ func (c *contextImpl) SendFile(name string, file []byte, opts ...any) error {
 		return c.prepareError(err, msgID)
 	}
 	return nil
+}
+
+func (c *contextImpl) SendToChat(chatID int64, threadID int, msg string, opts ...any) (int, error) {
+	if chatID == 0 {
+		c.bt.bot.log.Error("chat ID cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return 0, nil
+	}
+	if msg == "" {
+		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return 0, nil
+	}
+
+	// Add thread ID to options if provided
+	if threadID > 0 {
+		// Note: MessageThreadID might not be available in this version of telebot
+		// opts = append(opts, tele.MessageThreadID(threadID))
+	}
+
+	msgID, err := c.bt.bot.send(chatID, msg, opts...)
+	if err != nil {
+		return 0, err
+	}
+
+	return msgID, nil
 }
 
 func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) error {

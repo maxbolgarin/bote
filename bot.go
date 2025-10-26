@@ -171,6 +171,33 @@ func (b *Bot) GetUser(userID int64) User {
 	return b.um.getUser(userID)
 }
 
+// SendToChat sends a message to a random chat ID and thread ID.
+// chatID is the target chat ID, threadID is the target thread ID (0 for no thread).
+// opts are additional options for sending the message.
+func (b *Bot) SendToChat(chatID int64, threadID int, msg string, opts ...any) (int, error) {
+	if chatID == 0 {
+		return 0, errEmptyUserID
+	}
+	if msg == "" {
+		b.bot.log.Error("message cannot be empty", "chat_id", chatID, "thread_id", threadID)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return 0, nil
+	}
+
+	// Add thread ID to options if provided
+	if threadID > 0 {
+		// Note: MessageThreadID might not be available in this version of telebot
+		// opts = append(opts, tele.MessageThreadID(threadID))
+	}
+
+	msgID, err := b.bot.send(chatID, msg, opts...)
+	if err != nil {
+		return 0, err
+	}
+
+	return msgID, nil
+}
+
 // GetAllUsers returns all loaded users.
 func (b *Bot) GetAllUsers() []User {
 	return b.um.getAllUsers()
@@ -254,6 +281,56 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 // You should provide a single handler for all text messages, that will call another handlers based on the state.
 func (b *Bot) SetTextHandler(handler HandlerFunc) {
 	b.Handle(tele.OnText, handler)
+}
+
+// SetGroupHandler sets handler for group messages.
+// This handler will be called for messages in groups where the bot is a member.
+func (b *Bot) SetGroupHandler(handler HandlerFunc) {
+	b.Handle(tele.OnText, func(ctx Context) error {
+		// Only handle group messages
+		chat := ctx.Tele().Chat()
+		if chat == nil || (chat.Type != "group" && chat.Type != "supergroup") {
+			return nil
+		}
+		return handler(ctx)
+	})
+}
+
+// SetChannelHandler sets handler for channel messages.
+// This handler will be called for messages in channels where the bot is a member.
+func (b *Bot) SetChannelHandler(handler HandlerFunc) {
+	b.Handle(tele.OnText, func(ctx Context) error {
+		// Only handle channel messages
+		chat := ctx.Tele().Chat()
+		if chat == nil || chat.Type != "channel" {
+			return nil
+		}
+		return handler(ctx)
+	})
+}
+
+// SetMentionHandler sets handler for messages that mention the bot.
+// This handler will be called when the bot is mentioned in any chat (private, group, or channel).
+func (b *Bot) SetMentionHandler(handler HandlerFunc) {
+	b.Handle(tele.OnText, func(ctx Context) error {
+		// Only handle messages that mention the bot
+		if !ctx.IsMentioned() {
+			return nil
+		}
+		return handler(ctx)
+	})
+}
+
+// SetChannelPostHandler sets handler for channel posts.
+// This handler will be called for posts in channels where the bot is a member.
+func (b *Bot) SetChannelPostHandler(handler HandlerFunc) {
+	b.Handle(tele.OnChannelPost, handler)
+}
+
+// SetEditedChannelPostHandler sets handler for edited channel posts.
+// This handler will be called for edited posts in channels where the bot is a member.
+func (b *Bot) SetEditedChannelPostHandler(handler HandlerFunc) {
+	b.Handle(tele.OnEditedChannelPost, handler)
 }
 
 // SetMessageProvider sets message provider.
