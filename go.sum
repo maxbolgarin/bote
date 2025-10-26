@@ -307,8 +307,8 @@ github.com/maxbolgarin/lang v1.9.0 h1:jnRcqN0j/rDv2vJ188LMcSgsEKzNofJEgcla0n3DQp
 github.com/maxbolgarin/lang v1.9.0/go.mod h1:gZyHWP6Odm4E4ow7ebyaD7TCoZsuQyXh30zk8g7lmXc=
 github.com/maxbolgarin/servex/v2 v2.2.0 h1:jtXrp8Mly5SKrD/S9NxMOGSPTlz2gvzHgDjMNhzmBHQ=
 github.com/maxbolgarin/servex/v2 v2.2.0/go.mod h1:LqAYYQKMXA8NiP6Og5h7YQPkDzo5EHvm2gTlm+9pW74=
-github.com/maxbolgarin/telebot/v4 v4.0.0-20250721184800-66dc4f1fea15 h1:bSPkB87rm2k8b47g0obIDDvJ7FbGOOqdMfRG8fuxfdU=
-github.com/maxbolgarin/telebot/v4 v4.0.0-20250721184800-66dc4f1fea15/go.mod h1:jhcQjM/176jZm/s9Up/MzV5VFGPjyI8oiJhWvCMxayI=
+github.com/maxbolgarin/telebot/v4 v4.0.0-20251026131652-12a89f74a260 h1:xb2USOv8N6VA7m+bhRNHesXrkFSGTt1bnyn/OnMSY4M=
+github.com/maxbolgarin/telebot/v4 v4.0.0-20251026131652-12a89f74a260/go.mod h1:jhcQjM/176jZm/s9Up/MzV5VFGPjyI8oiJhWvCMxayI=
 github.com/maypok86/otter v1.2.4 h1:HhW1Pq6VdJkmWwcZZq19BlEQkHtI8xgsQzBVXJU0nfc=
 github.com/maypok86/otter v1.2.4/go.mod h1:mKLfoI7v1HOmQMwFgX4QkRk23mX6ge3RDvjdHOWG4R4=
 github.com/miekg/dns v1.1.26/go.mod h1:bPDLeHnStXmXAq1m/Ch/hvfNHr14JKNPMBo3VZKjuso=

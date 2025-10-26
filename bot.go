@@ -191,10 +191,8 @@ func (b *Bot) SendToChat(chatID int64, threadID int, msg string, opts ...any) (i
 		return 0, nil
 	}
 
-	// Add thread ID to options if provided
 	if threadID > 0 {
-		// Note: MessageThreadID might not be available in this version of telebot
-		// opts = append(opts, tele.MessageThreadID(threadID))
+		opts = append(opts, tele.MessageThreadID(threadID))
 	}
 
 	msgID, err := b.bot.send(chatID, msg, opts...)
