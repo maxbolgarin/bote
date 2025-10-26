@@ -1,6 +1,7 @@
 package bote
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -694,6 +695,27 @@ func (b *baseBot) send(userID int64, msg string, options ...any) (int, error) {
 	}
 
 	m, err := b.tbot.Send(userIDWrapper(userID), msg, append(options, b.defaultOptions...)...)
+	if err != nil {
+		b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
+		return 0, err
+	}
+
+	b.metr.incSendMessagesTotal()
+
+	return m.ID, nil
+}
+
+func (b *baseBot) sendFile(userID int64, file []byte, name string, options ...any) (int, error) {
+	if userID == 0 {
+		return 0, errEmptyUserID
+	}
+
+	doc := &tele.Document{
+		File:     tele.FromReader(bytes.NewReader(file)),
+		FileName: name,
+	}
+
+	m, err := b.tbot.Send(userIDWrapper(userID), doc, append(options, b.defaultOptions...)...)
 	if err != nil {
 		b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
 		return 0, err

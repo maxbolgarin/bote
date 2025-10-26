@@ -62,6 +62,12 @@ type Context interface {
 	// opts are additional options for sending message.
 	SendError(msg string, opts ...any) error
 
+	// SendFile sends a file to the user.
+	// name is the name of the file to send.
+	// file is the file to send.
+	// opts are additional options for sending the file.
+	SendFile(name string, file []byte, opts ...any) error
+
 	// Edit edits main and head messages of the user.
 	// newState is a state of the user which will be set after editing message.
 	// opts are additional options for editing messages.
@@ -352,6 +358,14 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 	}
 	c.user.setErrorMessage(msgID)
 
+	return nil
+}
+
+func (c *contextImpl) SendFile(name string, file []byte, opts ...any) error {
+	msgID, err := c.bt.bot.sendFile(c.user.ID(), file, name, opts...)
+	if err != nil {
+		return c.prepareError(err, msgID)
+	}
 	return nil
 }
 
