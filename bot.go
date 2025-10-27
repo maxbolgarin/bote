@@ -460,6 +460,23 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 var cbackRx = regexp.MustCompile(`([-\w]+)(\|(.+))?`)
 
 func (b *Bot) logUpdate(upd *tele.Update, userRaw User) bool {
+	if userRaw == nil {
+		fields := make([]any, 0, 8)
+		chatID, chatType, ok := getChatID(upd)
+		if ok {
+			fields = append(fields, "chat_id", chatID, "chat_type", chatType)
+		}
+		sender := getSender(upd)
+		if sender != nil {
+			fields = append(fields, "user_id", sender.ID)
+			if !b.logPrivacy {
+				fields = append(fields, "username", sender.Username)
+			}
+		}
+		b.rlog.Log(NotPrivateUpdate, fields...)
+		return true
+	}
+
 	user, ok := userRaw.(*userContextImpl)
 	if !ok {
 		b.bot.log.Error("failed to cast user to userContextImpl", "user_id", userRaw.ID())

@@ -150,8 +150,9 @@ const (
 )
 
 const (
-	MessageUpdate  UpdateType = "message"
-	CallbackUpdate UpdateType = "callback"
+	MessageUpdate    UpdateType = "message"
+	CallbackUpdate   UpdateType = "callback"
+	NotPrivateUpdate UpdateType = "not_private"
 )
 
 const (
