@@ -38,4 +38,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace gopkg.in/telebot.v4 => github.com/maxbolgarin/telebot/v4 v4.0.0-20251027134806-0f6ce85131f9
+replace gopkg.in/telebot.v4 => github.com/maxbolgarin/telebot/v4 v4.0.0-20251027141711-e4f2ac1eba95
