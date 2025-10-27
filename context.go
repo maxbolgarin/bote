@@ -10,15 +10,33 @@ import (
 
 // Context is an interface that provides to every handler.
 type Context interface {
-	// User returns current User context.
-	User() User
-
 	// Tele returns underlying telebot context.
 	Tele() tele.Context
 
-	// MessageID returns an ID of the active message.
+	// User returns current User context if chat type is private.
+	// If chat type is not private, returns nil.
+	User() User
+
+	// IsPrivate returns true if the current chat type is private.
+	IsPrivate() bool
+
+	// ChatID returns the ID of the current chat.
+	ChatID() int64
+
+	// ChatType returns the type of the current chat.
+	ChatType() tele.ChatType
+
+	// IsMentioned returns true if the bot is mentioned in the current message.
+	IsMentioned() bool
+
+	// IsReply returns true if the current message is a reply to the bot's message.
+	IsReply() bool
+
+	// MessageID returns an ID of the message.
 	// If handler was called from a callback button, message is the one with keyboard.
-	// If handler was called from a text message, message is the one with an active text handler (not sent message!).
+	// If handler was called from a text message and user's state IsText == true,
+	//  message is the one with an active text handler with this state (not sent message!).
+	// In other case it is an ID of the message sent to the chat.
 	MessageID() int
 
 	// ButtonID returns an ID of the pressed callback button.
@@ -41,6 +59,11 @@ type Context interface {
 
 	// Get returns custom data from the current context.
 	Get(key string) string
+
+	// Btn creates button and registers handler for it. You can provide data for the button.
+	// Data items will be separated by '|' in a single data string.
+	// Button unique value is generated from hexing button name with 10 random bytes at the end.
+	Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn
 
 	// Send sends new main and head messages to the user.
 	// Old head message will be deleted. Old main message will becomve historical.
@@ -132,44 +155,20 @@ type Context interface {
 	// Delete deletes message by provided chat ID and message ID.
 	DeleteInChat(chatID int64, msgID int) error
 
-	// Btn creates button and registers handler for it. You can provide data for the button.
-	// Data items will be separated by '|' in a single data string.
-	// Button unique value is generated from hexing button name with 10 random bytes at the end.
-	Btn(name string, callback HandlerFunc, dataList ...string) tele.Btn
-
 	// DeleteUser deletes user from the memory and deletes all messages of the user.
 	// Returns true if all messages were deleted successfully, false otherwise.
 	// It doesn't delete user from the persistent database, so you should make it manually.
 	DeleteUser() bool
-
-	// IsMentioned returns true if the bot is mentioned in the current message.
-	IsMentioned() bool
-
-	// IsGroup returns true if the current message is from a group or supergroup.
-	IsGroup() bool
-
-	// IsChannel returns true if the current message is from a channel.
-	IsChannel() bool
-
-	// ChatID returns the ID of the current chat.
-	ChatID() int64
 }
 
 func (b *Bot) newContext(c tele.Context) *contextImpl {
 	upd := c.Update()
-	sender := getSender(&upd)
 
-	// For group/channel messages, we need to handle the case where there might not be a sender
-	// or where we want to create a context for the chat itself
 	var user *userContextImpl
-	if sender != nil {
-		user = b.um.getUser(sender.ID)
-	} else {
-		// For channel posts without sender, create a system user or use chat ID
-		chat := c.Chat()
-		if chat != nil {
-			// Use chat ID as user ID for channel posts
-			user = b.um.getUser(chat.ID)
+
+	if chat := c.Chat(); chat != nil && chat.Type == tele.ChatPrivate {
+		if sender := getSender(&upd); sender != nil {
+			user = b.um.getUser(sender.ID)
 		}
 	}
 
@@ -181,31 +180,7 @@ func (b *Bot) newContext(c tele.Context) *contextImpl {
 }
 
 func (b *Bot) newContextFromUpdate(upd tele.Update) *contextImpl {
-	sender := getSender(&upd)
-
-	// For group/channel messages, we need to handle the case where there might not be a sender
-	var user *userContextImpl
-	if sender != nil {
-		user = b.um.getUser(sender.ID)
-	} else {
-		// For channel posts without sender, try to get chat ID
-		var chatID int64
-		switch {
-		case upd.ChannelPost != nil:
-			chatID = upd.ChannelPost.Chat.ID
-		case upd.EditedChannelPost != nil:
-			chatID = upd.EditedChannelPost.Chat.ID
-		}
-		if chatID != 0 {
-			user = b.um.getUser(chatID)
-		}
-	}
-
-	return &contextImpl{
-		bt:   b,
-		ct:   b.bot.tbot.NewContext(upd),
-		user: user,
-	}
+	return b.newContext(b.bot.tbot.NewContext(upd))
 }
 
 // NewContext creates a new context for the given user simulating that callback button was pressed.
@@ -359,28 +334,38 @@ func (c *contextImpl) IsMentioned() bool {
 	return false
 }
 
-func (c *contextImpl) IsGroup() bool {
-	chat := c.ct.Chat()
-	if chat == nil {
-		return false
-	}
-	return chat.Type == "group" || chat.Type == "supergroup"
-}
-
-func (c *contextImpl) IsChannel() bool {
-	chat := c.ct.Chat()
-	if chat == nil {
-		return false
-	}
-	return chat.Type == "channel"
-}
-
 func (c *contextImpl) ChatID() int64 {
 	chat := c.ct.Chat()
 	if chat == nil {
 		return 0
 	}
 	return chat.ID
+}
+
+func (c *contextImpl) ChatType() tele.ChatType {
+	chat := c.ct.Chat()
+	if chat == nil {
+		return tele.ChatPrivate
+	}
+	return chat.Type
+}
+
+func (c *contextImpl) IsReply() bool {
+	msg := c.ct.Message()
+	if msg == nil {
+		return false
+	}
+
+	replyTo := msg.ReplyTo
+	if replyTo == nil {
+		return false
+	}
+
+	return replyTo.Sender.ID == c.bt.Bot().Me.ID
+}
+
+func (c *contextImpl) IsPrivate() bool {
+	return c.ChatType() == tele.ChatPrivate
 }
 
 func (c *contextImpl) Set(key, value string) {
@@ -396,9 +381,7 @@ func (c *contextImpl) Get(key string) string {
 }
 
 func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) (err error) {
-	if mainMsg == "" {
-		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserSendInput(mainMsg, "Send") {
 		return nil
 	}
 
@@ -433,9 +416,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 }
 
 func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if msg == "" {
-		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserSendInput(msg, "SendMain") {
 		return nil
 	}
 
@@ -457,11 +438,10 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 }
 
 func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if msg == "" {
-		c.bt.bot.log.Error("notification message cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserSendInput(msg, "SendNotification") {
 		return nil
 	}
+
 	if c.user.Messages().NotificationID != 0 {
 		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
 			c.bt.bot.log.Warn("cannot delete previous notification message", c.bt.userFields(c.user)...)
@@ -478,6 +458,10 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 }
 
 func (c *contextImpl) SendError(msg string, opts ...any) error {
+	if !c.validateUserSendInput(msg, "SendError") {
+		return nil
+	}
+
 	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()
 	if closeBtn != "" {
 		opts = append(opts, SingleRow(c.Btn(closeBtn, func(c Context) error {
@@ -495,21 +479,32 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 }
 
 func (c *contextImpl) SendFile(name string, file []byte, opts ...any) error {
+	if !c.validateUserSendInput(name, "SendFile") {
+		return nil
+	}
+
+	if len(file) == 0 {
+		c.bt.bot.log.Error("file cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+
 	msgID, err := c.bt.bot.sendFile(c.user.ID(), file, name, opts...)
 	if err != nil {
 		return c.prepareError(err, msgID)
 	}
+
 	return nil
 }
 
 func (c *contextImpl) SendInChat(chatID int64, threadID int, msg string, kb *tele.ReplyMarkup, opts ...any) (int, error) {
 	if chatID == 0 {
-		c.bt.bot.log.Error("chat ID cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.log.Error("chat ID cannot be empty")
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return 0, nil
 	}
 	if msg == "" {
-		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.log.Error("message cannot be empty")
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return 0, nil
 	}
@@ -527,9 +522,7 @@ func (c *contextImpl) SendInChat(chatID int64, threadID int, msg string, kb *tel
 }
 
 func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) error {
-	if mainMsg == "" && mainKb == nil {
-		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserEditInput(mainMsg, mainKb, "Edit") {
 		return nil
 	}
 	if headMsg == "" && headKb == nil {
@@ -554,9 +547,7 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 }
 
 func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if msg == "" && kb == nil {
-		c.bt.bot.log.Error("main message cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserEditInput(msg, kb, "EditMain") {
 		return nil
 	}
 
@@ -573,9 +564,7 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 }
 
 func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
-	if kb == nil {
-		c.bt.bot.log.Error("main keyboard cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserEditInput("", kb, "EditMainReplyMarkup") {
 		return nil
 	}
 
@@ -589,9 +578,7 @@ func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 }
 
 func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if msg == "" && kb == nil {
-		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserEditInput(msg, kb, "EditHistory") {
 		return nil
 	}
 
@@ -606,9 +593,7 @@ func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tel
 }
 
 func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, opts ...any) error {
-	if kb == nil {
-		c.bt.bot.log.Error("history keyboard cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserEditInput("", kb, "EditHistoryReplyMarkup") {
 		return nil
 	}
 
@@ -620,9 +605,7 @@ func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, op
 }
 
 func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if msg == "" && kb == nil {
-		c.bt.bot.log.Error("head message cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserEditInput(msg, kb, "EditHead") {
 		return nil
 	}
 
@@ -636,9 +619,7 @@ func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) er
 }
 
 func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
-	if kb == nil {
-		c.bt.bot.log.Error("head keyboard cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserEditInput("", kb, "EditHeadReplyMarkup") {
 		return nil
 	}
 
@@ -653,12 +634,12 @@ func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 
 func (c *contextImpl) EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if chatID == 0 {
-		c.bt.bot.log.Error("chat ID cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.log.Error("chat ID cannot be empty")
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 	if msg == "" {
-		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.log.Error("message cannot be empty")
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
@@ -671,6 +652,14 @@ func (c *contextImpl) EditInChat(chatID int64, msgID int, msg string, kb *tele.R
 }
 
 func (c *contextImpl) DeleteHistory(msgID int) error {
+	if !c.validateUserInput("DeleteHistory") {
+		return nil
+	}
+	if msgID == 0 {
+		c.bt.bot.log.Error("message ID cannot be empty")
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
 	for _, id := range c.User().Messages().HistoryIDs {
 		if id == msgID {
 			if err := c.bt.bot.delete(c.user.ID(), msgID); err != nil {
@@ -683,6 +672,9 @@ func (c *contextImpl) DeleteHistory(msgID int) error {
 }
 
 func (c *contextImpl) DeleteHead() error {
+	if !c.validateUserInput("DeleteHead") {
+		return nil
+	}
 	if c.user.Messages().HeadID == 0 {
 		return nil
 	}
@@ -694,6 +686,9 @@ func (c *contextImpl) DeleteHead() error {
 }
 
 func (c *contextImpl) DeleteNotification() error {
+	if !c.validateUserInput("DeleteNotification") {
+		return nil
+	}
 	if c.user.Messages().NotificationID == 0 {
 		return nil
 	}
@@ -705,6 +700,9 @@ func (c *contextImpl) DeleteNotification() error {
 }
 
 func (c *contextImpl) DeleteError() error {
+	if !c.validateUserInput("DeleteError") {
+		return nil
+	}
 	if c.user.Messages().ErrorID == 0 {
 		return nil
 	}
@@ -716,6 +714,9 @@ func (c *contextImpl) DeleteError() error {
 }
 
 func (c *contextImpl) DeleteAll(from int) {
+	if !c.validateUserInput("DeleteAll") {
+		return
+	}
 	deleted := c.bt.bot.deleteHistory(c.user.ID(), from)
 	msgs := c.user.Messages()
 	if _, ok := deleted[msgs.MainID]; ok {
@@ -749,12 +750,12 @@ func (c *contextImpl) DeleteAll(from int) {
 
 func (c *contextImpl) DeleteInChat(chatID int64, msgID int) error {
 	if chatID == 0 {
-		c.bt.bot.log.Error("chat ID cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.log.Error("chat ID cannot be empty")
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
 	if msgID == 0 {
-		c.bt.bot.log.Error("message ID cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.log.Error("message ID cannot be empty")
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return nil
 	}
@@ -787,6 +788,11 @@ func (c *contextImpl) DeleteInChat(chatID int64, msgID int) error {
 }
 
 func (c *contextImpl) DeleteUser() bool {
+	if c.user == nil {
+		c.bt.bot.log.Error("cannot use user methods (DeleteUser) in non-private chats", "chat_id", c.ChatID())
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return false
+	}
 	isOK := true
 	for _, id := range c.user.Messages().HistoryIDs {
 		if err := c.bt.bot.delete(c.user.ID(), id); err != nil {
@@ -836,6 +842,39 @@ func (c *contextImpl) prepareEditError(err error, msgID int) error {
 		return nil
 	}
 	return err
+}
+
+func (c *contextImpl) validateUserInput(methodName string) bool {
+	if c.user == nil {
+		c.bt.bot.log.Error("cannot use user methods (", methodName, ") in non-private chats", "chat_id", c.ChatID())
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return false
+	}
+	return true
+}
+
+func (c *contextImpl) validateUserSendInput(msg string, methodName string) bool {
+	if !c.validateUserInput(methodName) {
+		return false
+	}
+	if msg == "" {
+		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return false
+	}
+	return true
+}
+
+func (c *contextImpl) validateUserEditInput(msg string, kb *tele.ReplyMarkup, methodName string) bool {
+	if !c.validateUserInput(methodName) {
+		return false
+	}
+	if msg == "" && kb == nil {
+		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return false
+	}
+	return true
 }
 
 func (c *contextImpl) handleError(err error) error {

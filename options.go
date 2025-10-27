@@ -66,6 +66,9 @@ type (
 	// MiddlewareFunc represents a function that called on every bot update.
 	MiddlewareFunc func(*tele.Update, User) bool
 
+	// MiddlewareFuncTele represents a function that called on every bot update in telebot format.
+	MiddlewareFuncTele func(*tele.Update) bool
+
 	// Logger is an interface for logging messages.
 	Logger interface {
 		Debug(string, ...any)

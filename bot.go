@@ -98,9 +98,9 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		webhookInit:     make(chan struct{}),
 	}
 
-	b.addMiddleware(bote.masterMiddleware)
-	bote.AddMiddleware(bote.cleanMiddleware)
-	bote.AddMiddleware(bote.startMiddleware)
+	b.addMiddleware(bote.masterMiddleware, tele.ChatPrivate)
+	bote.AddUserMiddleware(bote.cleanMiddleware)
+	bote.AddUserMiddleware(bote.startMiddleware)
 
 	// To trigger initUserHandler on callback (there is no registered handlers if user is not inited)
 	bote.Handle(tele.OnCallback, bote.emptyHandler)
@@ -178,6 +178,11 @@ func (b *Bot) GetUser(userID int64) User {
 	return b.um.getUser(userID)
 }
 
+// GetAllUsers returns all loaded users.
+func (b *Bot) GetAllUsers() []User {
+	return b.um.getAllUsers()
+}
+
 // SendInChat sends a message to a specific chat ID and thread ID.
 // chatID is the target chat ID, threadID is the target thread ID (0 for no thread).
 // msg is the message to send.
@@ -237,11 +242,6 @@ func (b *Bot) DeleteInChat(chatID int64, msgID int) error {
 	return b.bot.delete(chatID, msgID)
 }
 
-// GetAllUsers returns all loaded users.
-func (b *Bot) GetAllUsers() []User {
-	return b.um.getAllUsers()
-}
-
 // CreateUserFromModel creates a new user from [UserModel].
 // If [addToCache] is true, the user will be added to the cache.
 // It is useful when you want to preinit user in cache before he makes a request.
@@ -255,9 +255,16 @@ func (b *Bot) CreateUserFromModel(model UserModel, addToCache bool) User {
 	return user
 }
 
-// AddMiddleware adds middleware functions that will be called on each update.
-func (b *Bot) AddMiddleware(f ...MiddlewareFunc) {
+// AddUserMiddleware adds middleware functions that will be called on each update for a user.
+func (b *Bot) AddUserMiddleware(f ...MiddlewareFunc) {
 	b.middlewares.Append(f...)
+}
+
+var allChatTypes = []tele.ChatType{tele.ChatPrivate, tele.ChatGroup, tele.ChatSuperGroup, tele.ChatChannel, tele.ChatChannelPrivate}
+
+// AddMiddleware adds middleware functions that will be called on each update for a specific chat type.
+func (b *Bot) AddMiddleware(f MiddlewareFuncTele, chatType ...tele.ChatType) {
+	b.bot.addMiddleware(f, chatType...)
 }
 
 // Handle sets handler for any endpoint. Endpoint can be string or callback button.
@@ -320,56 +327,6 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 // You should provide a single handler for all text messages, that will call another handlers based on the state.
 func (b *Bot) SetTextHandler(handler HandlerFunc) {
 	b.Handle(tele.OnText, handler)
-}
-
-// SetGroupHandler sets handler for group messages.
-// This handler will be called for messages in groups where the bot is a member.
-func (b *Bot) SetGroupHandler(handler HandlerFunc) {
-	b.Handle(tele.OnText, func(ctx Context) error {
-		// Only handle group messages
-		chat := ctx.Tele().Chat()
-		if chat == nil || (chat.Type != "group" && chat.Type != "supergroup") {
-			return nil
-		}
-		return handler(ctx)
-	})
-}
-
-// SetChannelHandler sets handler for channel messages.
-// This handler will be called for messages in channels where the bot is a member.
-func (b *Bot) SetChannelHandler(handler HandlerFunc) {
-	b.Handle(tele.OnText, func(ctx Context) error {
-		// Only handle channel messages
-		chat := ctx.Tele().Chat()
-		if chat == nil || chat.Type != "channel" {
-			return nil
-		}
-		return handler(ctx)
-	})
-}
-
-// SetMentionHandler sets handler for messages that mention the bot.
-// This handler will be called when the bot is mentioned in any chat (private, group, or channel).
-func (b *Bot) SetMentionHandler(handler HandlerFunc) {
-	b.Handle(tele.OnText, func(ctx Context) error {
-		// Only handle messages that mention the bot
-		if !ctx.IsMentioned() {
-			return nil
-		}
-		return handler(ctx)
-	})
-}
-
-// SetChannelPostHandler sets handler for channel posts.
-// This handler will be called for posts in channels where the bot is a member.
-func (b *Bot) SetChannelPostHandler(handler HandlerFunc) {
-	b.Handle(tele.OnChannelPost, handler)
-}
-
-// SetEditedChannelPostHandler sets handler for edited channel posts.
-// This handler will be called for edited posts in channels where the bot is a member.
-func (b *Bot) SetEditedChannelPostHandler(handler HandlerFunc) {
-	b.Handle(tele.OnEditedChannelPost, handler)
 }
 
 // SetMessageProvider sets message provider.
@@ -758,7 +715,7 @@ type baseBot struct {
 	log  Logger
 
 	defaultOptions []any
-	middlewares    []func(upd *tele.Update) bool
+	middlewares    map[tele.ChatType][]func(upd *tele.Update) bool
 }
 
 func newBaseBot(token string, opts Options) (*baseBot, error) {
@@ -766,7 +723,7 @@ func newBaseBot(token string, opts Options) (*baseBot, error) {
 		metr:           opts.metrics,
 		log:            opts.Logger,
 		defaultOptions: []any{opts.Config.Bot.ParseMode},
-		middlewares:    make([]func(upd *tele.Update) bool, 0),
+		middlewares:    make(map[tele.ChatType][]func(upd *tele.Update) bool),
 	}
 
 	if opts.Config.Bot.NoPreview {
@@ -797,8 +754,13 @@ func newBaseBot(token string, opts Options) (*baseBot, error) {
 	return b, nil
 }
 
-func (b *baseBot) addMiddleware(f func(upd *tele.Update) bool) {
-	b.middlewares = append(b.middlewares, f)
+func (b *baseBot) addMiddleware(f MiddlewareFuncTele, chatType ...tele.ChatType) {
+	if len(chatType) == 0 {
+		chatType = allChatTypes
+	}
+	for _, ct := range chatType {
+		b.middlewares[ct] = append(b.middlewares[ct], f)
+	}
 }
 
 func (b *baseBot) handle(endpoint any, handler tele.HandlerFunc) {
@@ -950,13 +912,92 @@ func (b *baseBot) middleware(upd *tele.Update) bool {
 		}
 	}
 
-	for _, m := range b.middlewares {
+	_, chatType, ok := getChatID(upd)
+	if !ok {
+		b.log.Error("cannot get chat ID from update", "update", upd)
+		return false
+	}
+
+	middlewares, ok := b.middlewares[chatType]
+	if !ok || len(middlewares) == 0 {
+		return true
+	}
+	for _, m := range middlewares {
 		if !m(upd) {
 			return false
 		}
 	}
 
 	return true
+}
+
+func getChatID(upd *tele.Update) (int64, tele.ChatType, bool) {
+	switch {
+	case upd.Message != nil:
+		if upd.Message.Chat != nil {
+			return upd.Message.Chat.ID, upd.Message.Chat.Type, true
+		}
+	case upd.EditedMessage != nil:
+		if upd.EditedMessage.Chat != nil {
+			return upd.EditedMessage.Chat.ID, upd.EditedMessage.Chat.Type, true
+		}
+	case upd.ChannelPost != nil:
+		if upd.ChannelPost.Chat != nil {
+			return upd.ChannelPost.Chat.ID, upd.ChannelPost.Chat.Type, true
+		}
+	case upd.EditedChannelPost != nil:
+		if upd.EditedChannelPost.Chat != nil {
+			return upd.EditedChannelPost.Chat.ID, upd.EditedChannelPost.Chat.Type, true
+		}
+	case upd.MessageReaction != nil:
+		if upd.MessageReaction.Chat != nil {
+			return upd.MessageReaction.Chat.ID, upd.MessageReaction.Chat.Type, true
+		}
+	case upd.MessageReactionCount != nil:
+		if upd.MessageReactionCount.Chat != nil {
+			return upd.MessageReactionCount.Chat.ID, upd.MessageReactionCount.Chat.Type, true
+		}
+	case upd.Callback != nil:
+		if upd.Callback.Message != nil && upd.Callback.Message.Chat != nil {
+			return upd.Callback.Message.Chat.ID, upd.Callback.Message.Chat.Type, true
+		}
+	case upd.MyChatMember != nil:
+		if upd.MyChatMember.Chat != nil {
+			return upd.MyChatMember.Chat.ID, upd.MyChatMember.Chat.Type, true
+		}
+	case upd.ChatMember != nil:
+		if upd.ChatMember.Chat != nil {
+			return upd.ChatMember.Chat.ID, upd.ChatMember.Chat.Type, true
+		}
+	case upd.ChatJoinRequest != nil:
+		if upd.ChatJoinRequest.Chat != nil {
+			return upd.ChatJoinRequest.Chat.ID, upd.ChatJoinRequest.Chat.Type, true
+		}
+	case upd.Boost != nil:
+		if upd.Boost.Chat != nil {
+			return upd.Boost.Chat.ID, upd.Boost.Chat.Type, true
+		}
+	case upd.BoostRemoved != nil:
+		if upd.BoostRemoved.Chat != nil {
+			return upd.BoostRemoved.Chat.ID, upd.BoostRemoved.Chat.Type, true
+		}
+	case upd.BusinessConnection != nil:
+		return upd.BusinessConnection.UserChatID, tele.ChatPrivate, true
+
+	case upd.BusinessMessage != nil:
+		if upd.BusinessMessage.Chat != nil {
+			return upd.BusinessMessage.Chat.ID, upd.BusinessMessage.Chat.Type, true
+		}
+	case upd.EditedBusinessMessage != nil:
+		if upd.EditedBusinessMessage.Chat != nil {
+			return upd.EditedBusinessMessage.Chat.ID, upd.EditedBusinessMessage.Chat.Type, true
+		}
+	case upd.DeletedBusinessMessages != nil:
+		if upd.DeletedBusinessMessages.Chat != nil {
+			return upd.DeletedBusinessMessages.Chat.ID, upd.DeletedBusinessMessages.Chat.Type, true
+		}
+	}
+	return 0, "", false
 }
 
 type userIDWrapper int64

@@ -155,7 +155,7 @@ func TestBotWithMiddleware(t *testing.T) {
 	var middlewareUser User
 
 	// Add middleware
-	bot.AddMiddleware(func(upd *tele.Update, user User) bool {
+	bot.AddUserMiddleware(func(upd *tele.Update, user User) bool {
 		middlewareCalled = true
 		middlewareUser = user
 		return true // Continue processing
