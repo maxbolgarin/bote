@@ -68,10 +68,12 @@ type Context interface {
 	// opts are additional options for sending the file.
 	SendFile(name string, file []byte, opts ...any) error
 
-	// SendToRandomChat sends a message to a random chat ID and thread ID.
+	// SendInChat sends a message to a specific chat ID and thread ID.
 	// chatID is the target chat ID, threadID is the target thread ID (0 for no thread).
+	// msg is the message to send.
+	// kb is the keyboard to send.
 	// opts are additional options for sending the message.
-	SendToChat(chatID int64, threadID int, msg string, opts ...any) (int, error)
+	SendInChat(chatID int64, threadID int, msg string, kb *tele.ReplyMarkup, opts ...any) (int, error)
 
 	// Edit edits main and head messages of the user.
 	// newState is a state of the user which will be set after editing message.
@@ -105,11 +107,18 @@ type Context interface {
 	// opts are additional options for editing message.
 	EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error
 
+	// EditInChat edits message in a specific chat ID and thread ID.
+	// chatID is the target chat ID, threadID is the target thread ID (0 for no thread).
+	// msg is the message to edit.
+	// kb is the keyboard to edit.
+	// opts are additional options for editing message.
+	EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error
+
 	// DeleteHead deletes head message of the user.
 	DeleteHead() error
 
 	// DeleteHistory deletes provided history message.
-	DeleteHistory(msgIDs int) error
+	DeleteHistory(msgID int) error
 
 	// DeleteNotification deletes notification message of the user.
 	DeleteNotification() error
@@ -119,6 +128,9 @@ type Context interface {
 
 	// DeleteAll deletes all messages of the user from the specified ID.
 	DeleteAll(from int)
+
+	// Delete deletes message by provided chat ID and message ID.
+	DeleteInChat(chatID int64, msgID int) error
 
 	// Btn creates button and registers handler for it. You can provide data for the button.
 	// Data items will be separated by '|' in a single data string.
@@ -490,7 +502,7 @@ func (c *contextImpl) SendFile(name string, file []byte, opts ...any) error {
 	return nil
 }
 
-func (c *contextImpl) SendToChat(chatID int64, threadID int, msg string, opts ...any) (int, error) {
+func (c *contextImpl) SendInChat(chatID int64, threadID int, msg string, kb *tele.ReplyMarkup, opts ...any) (int, error) {
 	if chatID == 0 {
 		c.bt.bot.log.Error("chat ID cannot be empty", c.bt.userFields(c.User())...)
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
@@ -506,7 +518,7 @@ func (c *contextImpl) SendToChat(chatID int64, threadID int, msg string, opts ..
 		opts = append(opts, tele.MessageThreadID(threadID))
 	}
 
-	msgID, err := c.bt.bot.send(chatID, msg, opts...)
+	msgID, err := c.bt.bot.send(chatID, msg, append(opts, kb)...)
 	if err != nil {
 		return 0, err
 	}
@@ -639,6 +651,25 @@ func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 	return nil
 }
 
+func (c *contextImpl) EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
+	if chatID == 0 {
+		c.bt.bot.log.Error("chat ID cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+	if msg == "" {
+		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+
+	if err := c.edit(msgID, msg, kb, opts...); err != nil {
+		return c.prepareEditError(err, msgID)
+	}
+
+	return nil
+}
+
 func (c *contextImpl) DeleteHistory(msgID int) error {
 	for _, id := range c.User().Messages().HistoryIDs {
 		if id == msgID {
@@ -714,6 +745,45 @@ func (c *contextImpl) DeleteAll(from int) {
 				make([]int, 0, len(msgs.HistoryIDs)+4),
 				msgs.MainID, msgs.HeadID, msgs.NotificationID, msgs.ErrorID),
 			msgs.HistoryIDs...)...)
+}
+
+func (c *contextImpl) DeleteInChat(chatID int64, msgID int) error {
+	if chatID == 0 {
+		c.bt.bot.log.Error("chat ID cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+	if msgID == 0 {
+		c.bt.bot.log.Error("message ID cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+
+	if err := c.bt.bot.delete(chatID, msgID); err != nil {
+		return c.prepareError(err, msgID)
+	}
+	if chatID != c.user.ID() {
+		return nil
+	}
+	userMsgs := c.user.Messages()
+	switch msgID {
+	case userMsgs.MainID:
+		c.user.setMainMessage(0)
+	case userMsgs.HeadID:
+		c.user.setHeadMessage(0)
+	case userMsgs.NotificationID:
+		c.user.setNotificationMessage(0)
+	case userMsgs.ErrorID:
+		c.user.setErrorMessage(0)
+	default:
+		for _, historyID := range userMsgs.HistoryIDs {
+			if historyID == msgID {
+				c.user.forgetHistoryMessage(historyID)
+				break
+			}
+		}
+	}
+	return nil
 }
 
 func (c *contextImpl) DeleteUser() bool {

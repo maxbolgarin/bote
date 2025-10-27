@@ -178,12 +178,16 @@ func (b *Bot) GetUser(userID int64) User {
 	return b.um.getUser(userID)
 }
 
-// SendToChat sends a message to a random chat ID and thread ID.
+// SendInChat sends a message to a specific chat ID and thread ID.
 // chatID is the target chat ID, threadID is the target thread ID (0 for no thread).
+// msg is the message to send.
+// kb is the keyboard to send.
 // opts are additional options for sending the message.
-func (b *Bot) SendToChat(chatID int64, threadID int, msg string, opts ...any) (int, error) {
+func (b *Bot) SendInChat(chatID int64, threadID int, msg string, kb *tele.ReplyMarkup, opts ...any) (int, error) {
 	if chatID == 0 {
-		return 0, errEmptyUserID
+		b.bot.log.Error("chat ID cannot be empty", "chat_id", chatID, "thread_id", threadID)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return 0, nil
 	}
 	if msg == "" {
 		b.bot.log.Error("message cannot be empty", "chat_id", chatID, "thread_id", threadID)
@@ -195,12 +199,42 @@ func (b *Bot) SendToChat(chatID int64, threadID int, msg string, opts ...any) (i
 		opts = append(opts, tele.MessageThreadID(threadID))
 	}
 
-	msgID, err := b.bot.send(chatID, msg, opts...)
-	if err != nil {
-		return 0, err
+	return b.bot.send(chatID, msg, append(opts, kb)...)
+}
+
+func (b *Bot) EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
+	if chatID == 0 {
+		b.bot.log.Error("chat ID cannot be empty", "chat_id", chatID, "msg_id", msgID)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+	if msgID == 0 {
+		b.bot.log.Error("message ID cannot be empty", "chat_id", chatID, "msg_id", msgID)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+	if msg == "" {
+		b.bot.log.Error("message cannot be empty", "chat_id", chatID, "msg_id", msgID)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
 	}
 
-	return msgID, nil
+	return b.bot.edit(chatID, msgID, msg, append(opts, kb)...)
+}
+
+func (b *Bot) DeleteInChat(chatID int64, msgID int) error {
+	if chatID == 0 {
+		b.bot.log.Error("chat ID cannot be empty", "chat_id", chatID, "msg_id", msgID)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+	if msgID == 0 {
+		b.bot.log.Error("message ID cannot be empty", "chat_id", chatID, "msg_id", msgID)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return nil
+	}
+
+	return b.bot.delete(chatID, msgID)
 }
 
 // GetAllUsers returns all loaded users.

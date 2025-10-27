@@ -599,6 +599,22 @@ func (u *userContextImpl) setMessages(msgIDs ...int) {
 	})
 }
 
+func (u *userContextImpl) setMainMessage(msgID int) {
+	u.mu.Lock()
+	u.user.Messages.MainID = msgID
+
+	// Capture values for the DB update
+	userID := u.user.ID
+	mainID := msgID
+	u.mu.Unlock()
+
+	u.db.UpdateAsync(userID, &UserModelDiff{
+		Messages: &UserMessagesDiff{
+			MainID: &mainID,
+		},
+	})
+}
+
 func (u *userContextImpl) setHeadMessage(msgID int) {
 	u.mu.Lock()
 	u.user.Messages.HeadID = msgID
