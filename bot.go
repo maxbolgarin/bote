@@ -291,20 +291,23 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			}
 		}()
 
-		msgID := ctx.MessageID()
-		if !ctx.user.isMsgInited(msgID) && b.stateMap.Len() > 0 {
-			if err = b.initUserHandler(ctx, msgID); err != nil {
-				return ctx.handleError(err)
+		// If chat is private run user flow
+		if ctx.user != nil {
+			msgID := ctx.MessageID()
+			if !ctx.user.isMsgInited(msgID) && b.stateMap.Len() > 0 {
+				if err = b.initUserHandler(ctx, msgID); err != nil {
+					return ctx.handleError(err)
+				}
 			}
-		}
 
-		if ep, ok := endpoint.(string); ok && ep == tele.OnText {
-			lastMsg := ctx.user.lastTextMessage()
-			ctx.textMsgID = lastMsg
+			if ep, ok := endpoint.(string); ok && ep == tele.OnText {
+				lastMsg := ctx.user.lastTextMessage()
+				ctx.textMsgID = lastMsg
 
-			// /start was already handled
-			if ctx.ct.Text() == startCommand {
-				return nil
+				// /start was already handled
+				if ctx.ct.Text() == startCommand {
+					return nil
+				}
 			}
 		}
 
