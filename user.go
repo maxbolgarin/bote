@@ -789,38 +789,46 @@ func (u *userContextImpl) updateBase(updateBase bool, languageCode Language, isB
 }
 
 func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
+	if mainMsgID == 0 {
+		return
+	}
+
 	u.mu.Lock()
 
 	currentTime := time.Now().UTC()
 	u.user.Stats.LastSeenTime = currentTime
 	u.user.Messages.LastActions[mainMsgID] = currentTime
+	if headMsgID != 0 {
+		u.user.Messages.LastActions[headMsgID] = currentTime
+	}
 
 	// Append to history IDs
 	var historyIDs []int
+
+	// Second+ message - main already exists, so we need to add it to history IDs
 	if u.user.Messages.MainID != 0 {
 		historyIDs = make([]int, len(u.user.Messages.HistoryIDs)+1)
 		copy(historyIDs, u.user.Messages.HistoryIDs)
 		historyIDs[len(historyIDs)-1] = u.user.Messages.MainID
 		u.user.Messages.HistoryIDs = historyIDs
-	} else {
-		historyIDs = make([]int, len(u.user.Messages.HistoryIDs))
-		copy(historyIDs, u.user.Messages.HistoryIDs)
 	}
 
-	var stateMain *UserState
-	var messageStates map[int]UserState
+	stateDiff := &UserStateDiff{}
 
-	if newState.NotChanged() && u.user.State.Main == FirstRequest {
-		newState = Unknown
-	}
-
+	// If new state is changing, we need to update it
 	if !newState.NotChanged() {
 		u.user.State.Main = ConvertUserState(newState)
 		u.user.State.MessageStates[mainMsgID] = ConvertUserState(newState)
 
-		stateMain = &u.user.State.Main
-		messageStates = make(map[int]UserState, len(u.user.State.MessageStates))
-		maps.Copy(messageStates, u.user.State.MessageStates)
+		stateDiff.Main = &u.user.State.Main
+		stateDiff.MessageStates = make(map[int]UserState, len(u.user.State.MessageStates))
+		maps.Copy(stateDiff.MessageStates, u.user.State.MessageStates)
+	}
+
+	// If new state is text state, we need to add it to the stack
+	if newState.IsText() {
+		u.pushTextMessageLocked(mainMsgID)
+		stateDiff.MessagesAwaitingText = u.user.State.MessagesAwaitingText
 	}
 
 	u.user.Messages.MainID = mainMsgID
@@ -845,18 +853,14 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 			HistoryIDs:  historyIDs,
 			LastActions: lastActions,
 		},
+		State: stateDiff,
 		Stats: &UserStatDiff{LastSeenTime: &lastSeenTime},
 	}
 
-	if !newState.NotChanged() {
-		diff.State = &UserStateDiff{
-			Main:          stateMain,
-			MessageStates: messageStates,
-		}
-	}
-
 	u.isInitedMsg.Set(mainMsgID, true)
-	u.isInitedMsg.Set(headMsgID, true)
+	if headMsgID != 0 {
+		u.isInitedMsg.Set(headMsgID, true)
+	}
 
 	u.db.UpdateAsync(userID, diff)
 }
