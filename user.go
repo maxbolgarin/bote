@@ -444,12 +444,18 @@ func (u *userContextImpl) String() string {
 func (u *userContextImpl) GetValue(key string) (any, bool) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.user.Values == nil {
+		return nil, false
+	}
 	value, ok := u.user.Values[key]
 	return value, ok
 }
 
 func (u *userContextImpl) SetValue(key string, value any) {
 	u.mu.Lock()
+	if u.user.Values == nil {
+		u.user.Values = make(map[string]any)
+	}
 	u.user.Values[key] = value
 	values := make(map[string]any, len(u.user.Values))
 	maps.Copy(values, u.user.Values)
