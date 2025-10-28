@@ -14,10 +14,11 @@ type Context interface {
 	Tele() tele.Context
 
 	// User returns current User context if chat type is private.
-	// If chat type is not private, returns nil.
+	// WARNING: If chat type is not private, returns nil.
 	User() User
 
 	// IsPrivate returns true if the current chat type is private.
+	// WARNING: If chat type is not private, this is NOT user flow with nil User.
 	IsPrivate() bool
 
 	// ChatID returns the ID of the current chat.
@@ -69,26 +70,31 @@ type Context interface {
 	// Old head message will be deleted. Old main message will becomve historical.
 	// newState is a state of the user which will be set after sending message.
 	// opts are additional options for sending messages.
+	// WARNING: It works only in private chats.
 	Send(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) (err error)
 
 	// SendMain sends new main message to the user.
 	// Old head message will be deleted. Old main message will becomve historical.
 	// newState is a state of the user which will be set after sending message.
 	// opts are additional options for sending message.
+	// WARNING: It works only in private chats.
 	SendMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error
 
 	// SendNotification sends a notification message to the user.
 	// opts are additional options for sending message.
+	// WARNING: It works only in private chats.
 	SendNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error
 
 	// SendError sends an error message to the user.
 	// opts are additional options for sending message.
+	// WARNING: It works only in private chats.
 	SendError(msg string, opts ...any) error
 
 	// SendFile sends a file to the user.
 	// name is the name of the file to send.
 	// file is the file to send.
 	// opts are additional options for sending the file.
+	// WARNING: It works only in private chats.
 	SendFile(name string, file []byte, opts ...any) error
 
 	// SendInChat sends a message to a specific chat ID and thread ID.
@@ -101,33 +107,40 @@ type Context interface {
 	// Edit edits main and head messages of the user.
 	// newState is a state of the user which will be set after editing message.
 	// opts are additional options for editing messages.
+	// WARNING: It works only in private chats.
 	Edit(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) (err error)
 
 	// EditMain edits main message of the user.
 	// newState is a state of the user which will be set after editing message.
 	// opts are additional options for editing message.
+	// WARNING: It works only in private chats.
 	EditMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error
 
 	// EditMainReplyMarkup edits reply markup of the main message.
 	// opts are additional options for editing message.
+	// WARNING: It works only in private chats.
 	EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error
 
 	// EditHistory edits message of the user by provided ID.
 	// newState is a state of the user which will be set after editing message.
 	// msgID is the ID of the message to edit.
 	// opts are additional options for editing message.
+	// WARNING: It works only in private chats.
 	EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error
 
 	// EditHistoryReplyMarkup edits reply markup of the history message.
 	// opts are additional options for editing message.
+	// WARNING: It works only in private chats.
 	EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, opts ...any) error
 
 	// EditHead edits head message of the user.
 	// opts are additional options for editing message.
+	// WARNING: It works only in private chats.
 	EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) error
 
 	// EditHeadReplyMarkup edits reply markup of the head message.
 	// opts are additional options for editing message.
+	// WARNING: It works only in private chats.
 	EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error
 
 	// EditInChat edits message in a specific chat ID and thread ID.
@@ -138,18 +151,24 @@ type Context interface {
 	EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error
 
 	// DeleteHead deletes head message of the user.
+	// WARNING: It works only in private chats.
 	DeleteHead() error
 
 	// DeleteHistory deletes provided history message.
+	// msgID is the ID of the history message to delete.
+	// WARNING: It works only in private chats.
 	DeleteHistory(msgID int) error
 
 	// DeleteNotification deletes notification message of the user.
+	// WARNING: It works only in private chats.
 	DeleteNotification() error
 
 	// DeleteError deletes error message of the user.
+	// WARNING: It works only in private chats.
 	DeleteError() error
 
 	// DeleteAll deletes all messages of the user from the specified ID.
+	// WARNING: It works only in private chats.
 	DeleteAll(from int)
 
 	// Delete deletes message by provided chat ID and message ID.
@@ -158,6 +177,7 @@ type Context interface {
 	// DeleteUser deletes user from the memory and deletes all messages of the user.
 	// Returns true if all messages were deleted successfully, false otherwise.
 	// It doesn't delete user from the persistent database, so you should make it manually.
+	// WARNING: It works only in private chats.
 	DeleteUser() bool
 }
 
@@ -788,9 +808,7 @@ func (c *contextImpl) DeleteInChat(chatID int64, msgID int) error {
 }
 
 func (c *contextImpl) DeleteUser() bool {
-	if c.user == nil {
-		c.bt.bot.log.Error("cannot use user methods (DeleteUser) in non-private chats", "chat_id", c.ChatID())
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+	if !c.validateUserInput("DeleteUser") {
 		return false
 	}
 	isOK := true
