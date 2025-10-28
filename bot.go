@@ -124,7 +124,17 @@ func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[
 	for k, v := range stateMap {
 		b.stateMap.Set(k.String(), v)
 	}
-	b.Handle(startCommand, b.startHandler)
+	b.Handle(startCommand, func(ctx Context) (err error) {
+		defer func() {
+			// Delete here to prevent from automatic double /start sending in telegram client
+			if ctx.Text() == startCommand {
+				if err = b.bot.delete(ctx.User().ID(), ctx.MessageID()); err != nil {
+					b.bot.log.Debug("failed to delete user message", "user_id", ctx.User().ID(), "msg_id", ctx.MessageID(), "error", err.Error())
+				}
+			}
+		}()
+		return b.startHandler(ctx)
+	})
 
 	b.bot.log.Info("bot is starting")
 
@@ -433,7 +443,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 		user.setErrorMessage(0)
 	}
 	if upd.Message != nil && b.deleteMessages {
-		if upd.Message.Text == startCommand && user.Messages().MainID == 0 {
+		if upd.Message.Text == startCommand {
 			return true
 		}
 		err := b.bot.delete(user.ID(), upd.Message.ID)
