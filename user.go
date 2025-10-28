@@ -101,6 +101,12 @@ type User interface {
 
 	// UpdateLanguage updates user language.
 	UpdateLanguage(language Language)
+
+	// GetValue returns value from user context.
+	GetValue(key string) (any, bool)
+
+	// SetValue sets value in user context.
+	SetValue(key string, value any)
 }
 
 // UsersStorage is a storage for users.
@@ -150,6 +156,9 @@ type UserModel struct {
 
 	// ForceLanguageCode is a custom language code for user that can be set by bot.
 	ForceLanguageCode Language `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
+
+	// Values is a map of user values.
+	Values map[string]any `bson:"values" json:"values" db:"values"`
 }
 
 type UserStat struct {
@@ -220,6 +229,7 @@ type UserModelDiff struct {
 	Stats             *UserStatDiff     `bson:"stats" json:"stats" db:"stats"`
 	IsDisabled        *bool             `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
 	IsBot             *bool             `bson:"is_bot" json:"is_bot" db:"is_bot"`
+	Values            map[string]any    `bson:"values" json:"values" db:"values"`
 }
 
 // UserInfoDiff contains changes that should be applied to user info.
@@ -429,6 +439,25 @@ func (u *userContextImpl) String() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return "[@" + u.user.Info.Username + "|" + strconv.Itoa(int(u.user.ID)) + "]"
+}
+
+func (u *userContextImpl) GetValue(key string) (any, bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	value, ok := u.user.Values[key]
+	return value, ok
+}
+
+func (u *userContextImpl) SetValue(key string, value any) {
+	u.mu.Lock()
+	u.user.Values[key] = value
+	values := make(map[string]any, len(u.user.Values))
+	maps.Copy(values, u.user.Values)
+	u.mu.Unlock()
+
+	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+		Values: values,
+	})
 }
 
 func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
