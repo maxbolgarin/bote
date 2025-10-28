@@ -284,6 +284,7 @@ type userContextImpl struct {
 
 	buttonMap   *abstract.SafeMap[string, InitBundle]
 	isInitedMsg *abstract.SafeMap[int, bool]
+	isPublic    bool
 
 	// Add mutex for protecting user state and message updates
 	mu sync.Mutex
@@ -297,6 +298,13 @@ func (m *userManagerImpl) newUserContext(user UserModel, priv PrivacyMode) *user
 		priv:        priv,
 		buttonMap:   abstract.NewSafeMap[string, InitBundle](),
 		isInitedMsg: abstract.NewSafeMap[int, bool](),
+	}
+}
+
+func newPublicUserContext(user *tele.User) *userContextImpl {
+	return &userContextImpl{
+		user:     newUserModel(user, PrivacyModeNo),
+		isPublic: true,
 	}
 }
 
@@ -320,6 +328,10 @@ func (u *userContextImpl) Language() Language {
 }
 
 func (u *userContextImpl) UpdateLanguage(language Language) {
+	if u.isPublic {
+		return
+	}
+
 	u.mu.Lock()
 	u.user.ForceLanguageCode = language
 	u.mu.Unlock()
@@ -347,6 +359,10 @@ func (u *userContextImpl) Stats() UserStat {
 }
 
 func (u *userContextImpl) State(msgID int) (State, bool) {
+	if u.isPublic {
+		return NoChange, false
+	}
+
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st, ok := u.user.State.MessageStates[msgID]
@@ -354,12 +370,20 @@ func (u *userContextImpl) State(msgID int) (State, bool) {
 }
 
 func (u *userContextImpl) StateMain() State {
+	if u.isPublic {
+		return NoChange
+	}
+
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return State(u.user.State.Main)
 }
 
 func (u *userContextImpl) Messages() UserMessages {
+	if u.isPublic {
+		return UserMessages{}
+	}
+
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	// Return a copy to avoid race conditions
@@ -382,6 +406,10 @@ func (u *userContextImpl) Messages() UserMessages {
 }
 
 func (u *userContextImpl) LastSeenTime(msgID ...int) time.Time {
+	if u.isPublic {
+		return time.Time{}
+	}
+
 	u.mu.Lock()
 	defer u.mu.Unlock()
 

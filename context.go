@@ -14,11 +14,10 @@ type Context interface {
 	Tele() tele.Context
 
 	// User returns current User context if chat type is private.
-	// WARNING: If chat type is not private, returns nil.
+	// WARNING: If chat type is not private, returns public read only user.
 	User() User
 
 	// IsPrivate returns true if the current chat type is private.
-	// WARNING: If chat type is not private, this is NOT user flow with nil User.
 	IsPrivate() bool
 
 	// ChatID returns the ID of the current chat.
@@ -183,20 +182,21 @@ type Context interface {
 
 func (b *Bot) newContext(c tele.Context) *contextImpl {
 	upd := c.Update()
+	result := &contextImpl{bt: b, ct: c}
 
-	var user *userContextImpl
+	sender := getSender(&upd)
+	if sender == nil {
+		return result
+	}
 
 	if chat := c.Chat(); chat != nil && chat.Type == tele.ChatPrivate {
-		if sender := getSender(&upd); sender != nil {
-			user = b.um.getUser(sender.ID)
-		}
+		result.user = b.um.getUser(sender.ID)
+	}
+	if result.user == nil {
+		result.user = newPublicUserContext(sender)
 	}
 
-	return &contextImpl{
-		bt:   b,
-		ct:   c,
-		user: user,
-	}
+	return result
 }
 
 func (b *Bot) newContextFromUpdate(upd tele.Update) *contextImpl {
@@ -863,8 +863,8 @@ func (c *contextImpl) prepareEditError(err error, msgID int) error {
 }
 
 func (c *contextImpl) validateUserInput(methodName string) bool {
-	if c.user == nil {
-		c.bt.bot.log.Error("cannot use user methods (", methodName, ") in non-private chats", "chat_id", c.ChatID())
+	if c.user.isPublic {
+		c.bt.bot.log.Error("cannot use user methods (", methodName, ") in public chats", "chat_id", c.ChatID())
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return false
 	}
