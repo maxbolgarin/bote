@@ -270,18 +270,8 @@ func (b *Bot) AddMiddleware(f MiddlewareFuncTele, chatType ...tele.ChatType) {
 // Handle sets handler for any endpoint. Endpoint can be string or callback button.
 func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 	b.bot.handle(endpoint, func(c tele.Context) (err error) {
-		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
-
-		b.bot.metr.recordHandlerStart()
-
 		// Measure handler execution time
 		start := time.Now()
-		defer func() {
-			b.bot.metr.recordHandlerFinish()
-
-			duration := time.Since(start)
-			b.bot.metr.observeHandlerDuration(duration)
-		}()
 
 		ctx := b.newContext(c)
 		defer func() {
@@ -289,7 +279,13 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 				upd := c.Update()
 				b.logUpdate(&upd, ctx.user)
 			}
+
+			b.bot.metr.recordHandlerFinish()
+			duration := time.Since(start)
+			b.bot.metr.observeHandlerDuration(duration)
 		}()
+
+		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
 
 		// If chat is private run user flow
 		if ctx.user != nil {
