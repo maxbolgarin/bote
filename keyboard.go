@@ -67,10 +67,12 @@ func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...strin
 	}
 	if callback != nil {
 		ctx.bt.Handle(&btn, callback)
-		ctx.user.buttonMap.Set(id, InitBundle{
-			Handler: callback,
-			Data:    data,
-		})
+		if !ctx.user.isPublic {
+			ctx.user.buttonMap.Set(id, InitBundle{
+				Handler: callback,
+				Data:    data,
+			})
+		}
 	}
 	return btn
 }
