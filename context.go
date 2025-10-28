@@ -535,7 +535,7 @@ func (c *contextImpl) SendInChat(chatID int64, threadID int, msg string, kb *tel
 
 	msgID, err := c.bt.bot.send(chatID, msg, append(opts, kb)...)
 	if err != nil {
-		return 0, err
+		return 0, c.prepareError(err, msgID)
 	}
 
 	return msgID, nil
@@ -664,8 +664,8 @@ func (c *contextImpl) EditInChat(chatID int64, msgID int, msg string, kb *tele.R
 		return nil
 	}
 
-	if err := c.edit(msgID, msg, kb, opts...); err != nil {
-		return c.prepareEditError(err, msgID)
+	if err := c.bt.bot.edit(chatID, msgID, msg, append(opts, kb)...); err != nil {
+		return c.prepareError(err, msgID)
 	}
 
 	return nil
