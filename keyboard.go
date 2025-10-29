@@ -291,6 +291,47 @@ func (k *KeyboardWithContext) AddBtnRow(name string, callback HandlerFunc, dataL
 	return k.Keyboard.AddRow(btn)
 }
 
+// AB is a shortcut for AddBtn.
+// It creates a button and adds it to the current row.
+// It creates a new row in Add if number of buttons is greater than max buttons in row.
+// It creates a new row in Add if number of runes is greater than max runes in row for selected rune type.
+func (k *KeyboardWithContext) AB(name string, callback HandlerFunc, dataList ...string) *Keyboard {
+	return k.AddBtn(name, callback, dataList...)
+}
+
+// ABR is a shortcut for AddBtnRow.
+// It creates a button and adds it to the current row.
+// It creates a new row if there is buttons in the current row after Add.
+func (k *KeyboardWithContext) ABR(name string, callback HandlerFunc, dataList ...string) *Keyboard {
+	return k.AddBtnRow(name, callback, dataList...)
+}
+
+// AddBtns creates buttons and adds them to the current row.
+// It creates a new row if number of buttons is greater than max buttons in row.
+// It creates a new row if number of runes is greater than max runes in row for selected rune type.
+func (k *KeyboardWithContext) AddBtns(cols int, pairs ...any) *Keyboard {
+	if cols <= 0 {
+		cols = maxButtonsInRow
+	}
+
+	var kb *Keyboard
+
+	countInRow := 0
+	for j := 0; j < len(pairs); j += 2 {
+		if countInRow == cols {
+			k.Keyboard.StartNewRow()
+			countInRow = 0
+		}
+
+		name := pairs[j].(string)
+		callback := pairs[j+1].(HandlerFunc)
+		kb = k.AddBtn(name, callback)
+		countInRow++
+	}
+
+	return kb
+}
+
 // Inline creates inline keyboard from provided rows of buttons.
 func Inline(rowLength int, btns ...tele.Btn) *tele.ReplyMarkup {
 	keyboard := NewKeyboard(rowLength)
