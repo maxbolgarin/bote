@@ -105,8 +105,11 @@ type User interface {
 	// GetValue returns value from user context.
 	GetValue(key string) (any, bool)
 
-	// SetValue sets value in user context.
+	// SetValue sets value in user context (persistent).
 	SetValue(key string, value any)
+
+	// ClearCache deletes all values from SetValue function.
+	ClearCache()
 }
 
 // UsersStorage is a storage for users.
@@ -463,6 +466,16 @@ func (u *userContextImpl) SetValue(key string, value any) {
 
 	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
 		Values: values,
+	})
+}
+
+func (u *userContextImpl) ClearCache() {
+	u.mu.Lock()
+	u.user.Values = nil
+	u.mu.Unlock()
+
+	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+		Values: make(map[string]any),
 	})
 }
 
