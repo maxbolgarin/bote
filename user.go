@@ -108,6 +108,9 @@ type User interface {
 	// SetValue sets value in user context (persistent).
 	SetValue(key string, value any)
 
+	// DeleteValue deletes value from user context (persistent).
+	DeleteValue(key string)
+
 	// ClearCache deletes all values from SetValue function.
 	ClearCache()
 }
@@ -460,6 +463,18 @@ func (u *userContextImpl) SetValue(key string, value any) {
 		u.user.Values = make(map[string]any)
 	}
 	u.user.Values[key] = value
+	values := make(map[string]any, len(u.user.Values))
+	maps.Copy(values, u.user.Values)
+	u.mu.Unlock()
+
+	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+		Values: values,
+	})
+}
+
+func (u *userContextImpl) DeleteValue(key string) {
+	u.mu.Lock()
+	delete(u.user.Values, key)
 	values := make(map[string]any, len(u.user.Values))
 	maps.Copy(values, u.user.Values)
 	u.mu.Unlock()
