@@ -153,11 +153,14 @@ func TestBotWithMiddleware(t *testing.T) {
 
 	middlewareCalled := false
 	var middlewareUser User
+	var middlewareMu sync.Mutex
 
 	// Add middleware
 	bot.AddUserMiddleware(func(upd *tele.Update, user User) bool {
+		middlewareMu.Lock()
 		middlewareCalled = true
 		middlewareUser = user
+		middlewareMu.Unlock()
 		return true // Continue processing
 	})
 
@@ -168,18 +171,41 @@ func TestBotWithMiddleware(t *testing.T) {
 		return nil
 	}
 
+	// Add a handler to process the update
+	bot.SetTextHandler(func(c Context) error {
+		// This will trigger after middleware
+		return nil
+	})
+
 	stopCh := bot.Start(ctx, startHandler, nil)
 
-	// Send a test update
+	// Wait for bot to be ready
+	time.Sleep(300 * time.Millisecond)
+
+	// Send a test update with a regular text message (not a command)
 	poller.sendUpdate(tele.Update{
+		ID: 1,
 		Message: &tele.Message{
-			Text:   "/start",
-			Sender: &tele.User{ID: 123},
+			ID:     1,
+			Text:   "test message",
+			Sender: &tele.User{ID: 123, Username: "testuser"},
+			Chat:   &tele.Chat{ID: 123, Type: "private"},
 		},
 	})
 
-	// Wait a bit for processing
-	time.Sleep(200 * time.Millisecond)
+	// Wait for processing with retry logic
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		middlewareMu.Lock()
+		called := middlewareCalled
+		middlewareMu.Unlock()
+		if called {
+			break
+		}
+	}
+
+	middlewareMu.Lock()
+	defer middlewareMu.Unlock()
 
 	if !middlewareCalled {
 		t.Error("Middleware was not called")
@@ -221,16 +247,21 @@ func TestBotHandlers(t *testing.T) {
 
 	textHandlerCalled := false
 	callbackHandlerCalled := false
+	var handlerMu sync.Mutex
 
 	// Set text handler
 	bot.SetTextHandler(func(c Context) error {
+		handlerMu.Lock()
 		textHandlerCalled = true
+		handlerMu.Unlock()
 		return nil
 	})
 
 	// Handle callback
 	bot.Handle(tele.OnCallback, func(c Context) error {
+		handlerMu.Lock()
 		callbackHandlerCalled = true
+		handlerMu.Unlock()
 		return nil
 	})
 
@@ -239,15 +270,28 @@ func TestBotHandlers(t *testing.T) {
 
 	stopCh := bot.Start(ctx, func(c Context) error { return nil }, nil)
 
+	// Wait for bot to be ready
+	time.Sleep(300 * time.Millisecond)
+
 	// Send text message
 	poller.sendUpdate(tele.Update{
 		Message: &tele.Message{
 			Text:   "Hello",
 			Sender: &tele.User{ID: 123},
+			Chat:   &tele.Chat{ID: 123},
 		},
 	})
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for text handler with retry logic
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		handlerMu.Lock()
+		called := textHandlerCalled
+		handlerMu.Unlock()
+		if called {
+			break
+		}
+	}
 
 	// Send callback
 	poller.sendUpdate(tele.Update{
@@ -257,11 +301,24 @@ func TestBotHandlers(t *testing.T) {
 			Message: &tele.Message{
 				ID:     1,
 				Sender: &tele.User{ID: 123},
+				Chat:   &tele.Chat{ID: 123},
 			},
 		},
 	})
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for callback handler with retry logic
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		handlerMu.Lock()
+		called := callbackHandlerCalled
+		handlerMu.Unlock()
+		if called {
+			break
+		}
+	}
+
+	handlerMu.Lock()
+	defer handlerMu.Unlock()
 
 	if !textHandlerCalled {
 		t.Error("Text handler was not called")
