@@ -946,6 +946,9 @@ func (c *contextImpl) handleNotModifiedError(errorMsg string) bool {
 
 // error when you want to edit message that is not found
 func (c *contextImpl) handleMessageNotFoundError(errorMsg string) bool {
+	if strings.Contains(errorMsg, "message to delete not found") {
+		return true
+	}
 	if !strings.Contains(errorMsg, "message to edit not found") {
 		return false
 	}

@@ -10,6 +10,7 @@ require (
 	github.com/maxbolgarin/servex/v2 v2.2.0
 	github.com/maypok86/otter v1.2.4
 	github.com/prometheus/client_golang v1.11.1
+	github.com/stretchr/testify v1.10.0
 	gopkg.in/telebot.v4 v4.0.0-beta.5
 )
 
@@ -31,7 +32,6 @@ require (
 	github.com/prometheus/common v0.26.0 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/stretchr/testify v1.10.0 // indirect
 	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
