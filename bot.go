@@ -53,18 +53,18 @@ type Bot struct {
 // New creates the bot with optional options.
 // It starts the bot in a separate goroutine.
 // You should call [Bot.Stop] to gracefully shutdown the bot.
-func New(token string, optsFuncs ...func(*Options)) (*Bot, error) {
+func New(ctx context.Context, token string, optsFuncs ...func(*Options)) (*Bot, error) {
 	var opts Options
 	for _, f := range optsFuncs {
 		f(&opts)
 	}
-	return NewWithOptions(token, opts)
+	return NewWithOptions(ctx, token, opts)
 }
 
 // NewWithOptions starts the bot with options.
 // It starts the bot in a separate goroutine.
 // You should call [Bot.Stop] to gracefully shutdown the bot.
-func NewWithOptions(token string, opts Options) (*Bot, error) {
+func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, error) {
 	if token == "" {
 		return nil, erro.New("token cannot be empty")
 	}
@@ -73,7 +73,7 @@ func NewWithOptions(token string, opts Options) (*Bot, error) {
 		return nil, erro.Wrap(err, "prepare opts")
 	}
 
-	b, err := newBaseBot(token, opts)
+	b, err := newBaseBot(ctx, token, opts)
 	if err != nil {
 		return nil, erro.Wrap(err, "start bot")
 	}
@@ -737,7 +737,7 @@ type baseBot struct {
 	middlewares    map[tele.ChatType][]func(upd *tele.Update) bool
 }
 
-func newBaseBot(token string, opts Options) (*baseBot, error) {
+func newBaseBot(ctx context.Context, token string, opts Options) (*baseBot, error) {
 	b := &baseBot{
 		metr:           opts.metrics,
 		log:            opts.Logger,
@@ -749,7 +749,7 @@ func newBaseBot(token string, opts Options) (*baseBot, error) {
 		b.defaultOptions = append(b.defaultOptions, tele.NoPreview)
 	}
 
-	bot, err := tele.NewBot(tele.Settings{
+	bot, err := tele.NewBot(ctx, tele.Settings{
 		Token:  token,
 		Poller: tele.NewMiddlewarePoller(opts.Poller, b.middleware),
 		Client: &http.Client{Timeout: 2 * opts.Config.LongPolling.Timeout},

@@ -63,7 +63,7 @@ func TestBotCreation(t *testing.T) {
 				tt.opts(&opts)
 			}
 
-			bot, err := NewWithOptions(tt.token, opts)
+			bot, err := NewWithOptions(t.Context(), tt.token, opts)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewWithOptions() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -98,7 +98,7 @@ func TestBotStartStop(t *testing.T) {
 		},
 	}
 
-	bot, err := NewWithOptions("test-token", opts)
+	bot, err := NewWithOptions(t.Context(), "test-token", opts)
 	if err != nil {
 		t.Fatalf("Failed to create bot: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestBotWithMiddleware(t *testing.T) {
 		Poller: poller,
 	}
 
-	bot, err := NewWithOptions("test-token", opts)
+	bot, err := NewWithOptions(t.Context(), "test-token", opts)
 	if err != nil {
 		t.Fatalf("Failed to create bot: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestBotHandlers(t *testing.T) {
 		Poller: poller,
 	}
 
-	bot, err := NewWithOptions("test-token", opts)
+	bot, err := NewWithOptions(t.Context(), "test-token", opts)
 	if err != nil {
 		t.Fatalf("Failed to create bot: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestBotLifecycleWithMockPoller(t *testing.T) {
 	opts.Config.Bot.DeleteMessages = boolPtr(false)
 	opts.Offline = true
 
-	b, err := NewWithOptions("dummy-token", opts)
+	b, err := NewWithOptions(t.Context(), "dummy-token", opts)
 	if err != nil {
 		t.Fatalf("NewWithOptions error: %v", err)
 	}

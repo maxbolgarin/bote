@@ -280,7 +280,7 @@ func setupTestBot(t *testing.T) *Bot {
 		Poller: &mockPoller{},
 	}
 
-	bot, err := NewWithOptions("test-token", opts)
+	bot, err := NewWithOptions(t.Context(), "test-token", opts)
 	if err != nil {
 		t.Fatalf("Failed to create test bot: %v", err)
 	}

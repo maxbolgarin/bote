@@ -19,7 +19,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	b, err := bote.New(token)
+	b, err := bote.New(ctx, token)
 	if err != nil {
 		log.Fatalln(err)
 	}

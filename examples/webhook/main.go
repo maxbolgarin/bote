@@ -22,7 +22,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	b, err := bote.New(token,
+	b, err := bote.New(ctx, token,
 		bote.WithWebhook(webhookURL),
 		// bote.WithWebhookGenerateCertificate(),
 	)
