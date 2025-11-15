@@ -27,7 +27,7 @@ func TestUserCreation(t *testing.T) {
 				LanguageCode: "en",
 			},
 			expected: UserModel{
-				ID:           123,
+				ID:           NewPlainUserID(123),
 				IsBot:        false,
 				LanguageCode: LanguageEnglish,
 				Info: UserInfo{
@@ -46,7 +46,7 @@ func TestUserCreation(t *testing.T) {
 				IsPremium: true,
 			},
 			expected: UserModel{
-				ID:           456,
+				ID:           NewPlainUserID(456),
 				LanguageCode: LanguageDefault,
 				Info: UserInfo{
 					FirstName: "Jane",
@@ -63,7 +63,7 @@ func TestUserCreation(t *testing.T) {
 				IsBot:    true,
 			},
 			expected: UserModel{
-				ID:           789,
+				ID:           NewPlainUserID(789),
 				LanguageCode: LanguageDefault,
 				IsBot:        true,
 				Info: UserInfo{
@@ -75,9 +75,12 @@ func TestUserCreation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user := newUserModel(tt.teleUser, PrivacyModeNo)
+			user, err := newUserModel(tt.teleUser, "", NewEncryptionKey(nil), nil)
+			if err != nil {
+				t.Fatalf("Failed to create user model: %v", err)
+			}
 
-			if user.ID != tt.expected.ID {
+			if lang.Deref(user.ID.IDPlain) != lang.Deref(tt.expected.ID.IDPlain) {
 				t.Errorf("Expected ID %d, got %d", tt.expected.ID, user.ID)
 			}
 
@@ -357,7 +360,7 @@ func TestInMemoryUserStorage(t *testing.T) {
 
 	t.Run("Insert", func(t *testing.T) {
 		user := UserModel{
-			ID: 555,
+			ID: NewPlainUserID(555),
 			Info: UserInfo{
 				Username: "test",
 			},
@@ -370,7 +373,7 @@ func TestInMemoryUserStorage(t *testing.T) {
 	})
 
 	t.Run("Find existing", func(t *testing.T) {
-		user, found, err := storage.Find(ctx, 555)
+		user, found, err := storage.Find(ctx, NewPlainUserID(555))
 		if err != nil {
 			t.Fatalf("Failed to find user: %v", err)
 		}
@@ -379,13 +382,13 @@ func TestInMemoryUserStorage(t *testing.T) {
 			t.Fatal("User should be found")
 		}
 
-		if user.ID != 555 {
+		if lang.Deref(user.ID.IDPlain) != 555 {
 			t.Errorf("Expected user ID 555, got %d", user.ID)
 		}
 	})
 
 	t.Run("Find non-existing", func(t *testing.T) {
-		_, found, err := storage.Find(ctx, 999)
+		_, found, err := storage.Find(ctx, NewPlainUserID(999))
 		if err != nil {
 			t.Fatalf("Failed to find user: %v", err)
 		}
@@ -408,12 +411,12 @@ func TestInMemoryUserStorage(t *testing.T) {
 			},
 		}
 
-		storage.UpdateAsync(555, diff)
+		storage.UpdateAsync(NewPlainUserID(555), diff)
 
 		// Give async update time to complete
 		time.Sleep(50 * time.Millisecond)
 
-		user, found, _ := storage.Find(ctx, 555)
+		user, found, _ := storage.Find(ctx, NewPlainUserID(555))
 		if found && user.State.Main != userState {
 			t.Errorf("Expected updated state %s, got %s", newState, user.State.Main)
 		}
@@ -421,7 +424,7 @@ func TestInMemoryUserStorage(t *testing.T) {
 
 	t.Run("Edge cases", func(t *testing.T) {
 		// Test with zero ID
-		err = storage.Insert(ctx, UserModel{ID: 0})
+		err = storage.Insert(ctx, UserModel{ID: NewPlainUserID(0)})
 		if err == nil {
 			t.Error("Expected error for zero ID")
 		}

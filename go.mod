@@ -4,7 +4,7 @@ go 1.24
 
 require (
 	github.com/caarlos0/env/v11 v11.3.1
-	github.com/maxbolgarin/abstract v1.15.0
+	github.com/maxbolgarin/abstract v1.18.0
 	github.com/maxbolgarin/erro v1.0.1
 	github.com/maxbolgarin/lang v1.9.0
 	github.com/maxbolgarin/servex/v2 v2.2.0

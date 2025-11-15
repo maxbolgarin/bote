@@ -183,13 +183,8 @@ func (b *Bot) Bot() *tele.Bot {
 	return b.bot.tbot
 }
 
-// GetUser returns user by its ID.
-func (b *Bot) GetUser(userID int64) User {
-	return b.um.getUser(userID)
-}
-
-// GetAllUsers returns all loaded users.
-func (b *Bot) GetAllUsers() []User {
+// GetAllUsersFromCache returns all loaded users.
+func (b *Bot) GetAllUsersFromCache() []User {
 	return b.um.getAllUsers()
 }
 
@@ -258,7 +253,7 @@ func (b *Bot) DeleteInChat(chatID int64, msgID int) error {
 func (b *Bot) CreateUserFromModel(model UserModel, addToCache bool) User {
 	user := b.um.newUserContext(model, b.um.priv)
 	if addToCache {
-		if ok := b.um.users.Set(user.user.ID, user); !ok {
+		if ok := b.um.users.set(user.user.ID, user); !ok {
 			b.bot.log.Warn("failed to add user to cache", "user_id", user.user.ID, "username", user.user.Info.Username)
 		}
 	}
@@ -293,6 +288,7 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			b.bot.metr.recordHandlerFinish()
 			duration := time.Since(start)
 			b.bot.metr.observeHandlerDuration(duration)
+			ctx.user.clearUserID()
 		}()
 
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
@@ -415,6 +411,7 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
 		return false
 	}
+	user.setUserID(sender.ID)
 	b.bot.metr.addActiveUser(user.ID())
 
 	if st, ok := user.State(getMsgID(upd)); ok {
@@ -616,7 +613,7 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 		Message: &tele.Message{
 			Text: bundle.Text,
 			Sender: &tele.User{
-				ID: user.user.ID,
+				ID: user.ID(),
 			},
 		},
 		Callback: &tele.Callback{
@@ -647,7 +644,7 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 
 	if mainBefore != newMainID {
 		b.bot.log.Debug("main message id changed in init", "user_id", user.user.ID, "msg_id", msgID)
-		if err := b.bot.delete(user.user.ID, mainBefore); err != nil {
+		if err := b.bot.delete(user.ID(), mainBefore); err != nil {
 			b.bot.log.Error("error deleting old main message", "user_id", user.user.ID, "msg_id", mainBefore, "error", err.Error())
 		}
 		user.forgetHistoryMessage(mainBefore)
@@ -655,7 +652,7 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 	}
 	if headBefore != newHeadID {
 		b.bot.log.Debug("head message id changed in init", "user_id", user.user.ID, "msg_id", msgID)
-		if err := b.bot.delete(user.user.ID, headBefore); err != nil {
+		if err := b.bot.delete(user.ID(), headBefore); err != nil {
 			b.bot.log.Error("error deleting old head message", "user_id", user.user.ID, "msg_id", headBefore, "error", err.Error())
 		}
 		user.forgetHistoryMessage(headBefore)
@@ -681,15 +678,15 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 }
 
 func (b *Bot) sendError(userID int64, msg string, opts ...any) {
-	user, ok := b.GetUser(userID).(*userContextImpl)
-	if !ok || user == nil {
+	user := b.um.getUser(userID)
+	if user == nil {
 		b.bot.log.Error("failed to send error message", "user_id", userID, "error", errEmptyUserID)
 		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
 		return
 	}
 	msgs := user.Messages()
 	if msgID := msgs.ErrorID; msgID != 0 {
-		err := b.bot.delete(user.user.ID, msgID)
+		err := b.bot.delete(user.ID(), msgID)
 		if err != nil {
 			b.bot.log.Debug("failed to delete error message", "user_id", user.user.ID, "msg_id", msgID, "error", err.Error())
 		}
@@ -707,7 +704,7 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 			if msgs.ErrorID == 0 {
 				return nil
 			}
-			err := b.bot.delete(user.user.ID, msgs.ErrorID)
+			err := b.bot.delete(user.ID(), msgs.ErrorID)
 			if err != nil {
 				b.bot.log.Error("failed to delete error message using close button", "user_id", user.user.ID, "msg_id", msgs.ErrorID, "error", err.Error())
 			}
@@ -715,7 +712,7 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 			return nil
 		})
 	}
-	msgID, err := b.bot.send(user.user.ID, msg, append(opts, tele.Silent)...)
+	msgID, err := b.bot.send(user.ID(), msg, append(opts, tele.Silent)...)
 	if err != nil {
 		b.bot.log.Error("failed to send error message", "user_id", user.user.ID, "error", err.Error())
 		return

@@ -2,6 +2,11 @@ package bote
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -30,6 +35,7 @@ type State interface {
 }
 
 // RegisterTextState registers a state that expects text input from the user.
+// It is used to handle text input from the user in a correct order.
 func RegisterTextStates(state ...State) bool {
 	textStateManager.mu.Lock()
 	defer textStateManager.mu.Unlock()
@@ -39,6 +45,7 @@ func RegisterTextStates(state ...State) bool {
 	return true
 }
 
+// UserState is a bote implementation of [State] interface.
 type UserState string
 
 const (
@@ -52,6 +59,14 @@ const (
 	Disabled UserState = "disabled"
 )
 
+func NewUserState(state string) UserState {
+	return UserState(state)
+}
+
+func ConvertUserState(state State) UserState {
+	return NewUserState(state.String())
+}
+
 func (s UserState) String() string {
 	return string(s)
 }
@@ -64,23 +79,176 @@ func (s UserState) NotChanged() bool {
 	return s == NoChange
 }
 
-func NewUserState(state string) UserState {
-	return UserState(state)
+// EncryptionKey is a type that represents an AES encryption key for private user ID.
+type EncryptionKey struct {
+	key     *[32]byte
+	version *int64
 }
 
-func ConvertUserState(state State) UserState {
-	return NewUserState(state.String())
+// NewEncryptionKey creates a new [EncryptionKey].
+func NewEncryptionKey(version *int64) *EncryptionKey {
+	return &EncryptionKey{
+		key:     abstract.NewEncryptionKey(),
+		version: version,
+	}
+}
+
+// NewEncryptionKeyFromString creates a new [EncryptionKey] from a string.
+// Key should be a hex encoded string of 32 bytes.
+func NewEncryptionKeyFromString(key string, version *int64) (*EncryptionKey, error) {
+	bytes, err := hex.DecodeString(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes) != 32 {
+		return nil, errors.New("invalid encryption key length")
+	}
+	result := [32]byte{}
+	copy(result[:], bytes)
+	return &EncryptionKey{
+		key:     &result,
+		version: version,
+	}, nil
+}
+
+// String converts [EncryptionKey] to a string.
+func (k *EncryptionKey) String() string {
+	return hex.EncodeToString(k.key[:])
+}
+
+// Clear clears the encryption key from memory to prevent reading it from memory dump.
+// Use it after using the key to avoid leaking it.
+func (k *EncryptionKey) Clear() {
+	k.key = nil
+	k.version = nil
+}
+
+// FullUserID is a structure that represents secure user ID with encrypted and HMAC parts.
+type FullUserID struct {
+	// IDPlain is Telegram user ID in plain format.
+	// It is empty if privacy mode is strict.
+	IDPlain *int64 `json:"id_plain,omitempty" bson:"id_plain,omitempty" db:"id_plain,omitempty"`
+
+	// IDHMAC is a HMAC of IDPlain. It is used for searching user in DB by ID with plain ID is disabled.
+	// It is used if privacy mode is strict.
+	IDHMAC []byte `json:"id_hmac,omitempty" bson:"id_hmac,omitempty" db:"id_hmac,omitempty"`
+	// IDEnc is an encrypted Telegram user ID. It is used to get readable IDPlain from IDEnc (HMAC is one way function).
+	// It is used instead of IDPlain when privacy mode is strict.
+	IDEnc []byte `json:"id_enc,omitempty" bson:"id_enc,omitempty" db:"id_enc,omitempty"`
+	// HMACKeyVersion is a version of HMAC key for IDHMAC that used for HMAC of IDHMAC.
+	// It is used if privacy mode is strict.
+	HMACKeyVersion *int64 `json:"hmac_key_version,omitempty" bson:"hmac_key_version,omitempty" db:"hmac_key_version,omitempty"`
+	// EncKeyVersion is a version of encryption key for IDEnc that used for encryption and decryption of IDEnc.
+	// It is used if privacy mode is strict.
+	EncKeyVersion *int64 `json:"enc_key_version,omitempty" bson:"enc_key_version,omitempty" db:"enc_key_version,omitempty"`
+}
+
+// NewPlainUserID creates a new [FullUserID] with the given ID as a plain text.
+func NewPlainUserID(id int64) FullUserID {
+	return FullUserID{
+		IDPlain: &id,
+	}
+}
+
+// NewPrivateUserID creates a new [FullUserID] with the given ID as an encrypted text.
+// It do not store plain user ID, only encrypted and HMAC parts.
+func NewPrivateUserID(id int64, hmacKey, encKey *EncryptionKey) (FullUserID, error) {
+	if hmacKey == nil || encKey == nil {
+		return FullUserID{}, errors.New("hmac key or enc key is nil")
+	}
+
+	var bytesID [8]byte
+	binary.BigEndian.PutUint64(bytesID[:], uint64(id))
+	idEnc, err := abstract.EncryptAES(bytesID[:], encKey.key)
+	if err != nil {
+		return FullUserID{}, err
+	}
+
+	mac := hmac.New(sha256.New, hmacKey.key[:])
+	mac.Write(bytesID[:])
+	idHMAC := mac.Sum(nil)
+
+	return FullUserID{
+		IDHMAC:         idHMAC,
+		IDEnc:          idEnc,
+		EncKeyVersion:  encKey.version,
+		HMACKeyVersion: hmacKey.version,
+	}, nil
+}
+
+// NewHMAC creates a new HMAC of provided ID using provided HMAC key.
+func NewHMAC(id int64, hmacKey *EncryptionKey) []byte {
+	if hmacKey == nil {
+		return nil
+	}
+	var bytesID [8]byte
+	binary.BigEndian.PutUint64(bytesID[:], uint64(id))
+	mac := hmac.New(sha256.New, hmacKey.key[:])
+	mac.Write(bytesID[:])
+	return mac.Sum(nil)
+}
+
+// NewHMAC creates a new HMAC of provided ID using provided HMAC key.
+func NewHMACString(id int64, hmacKey *EncryptionKey) string {
+	return hex.EncodeToString(NewHMAC(id, hmacKey))
+}
+
+// IsEmpty returns true if all fields are nil.
+func (u FullUserID) IsEmpty() bool {
+	return u.IDPlain == nil && u.IDEnc == nil && u.EncKeyVersion == nil
+}
+
+// ID returns plain user ID if it is set. Otherwise it tries to decrypt encrypted ID.
+// If encryption keys are provided, it tries to decrypt it with each key and returns plain user ID.
+// If key is not provided, it returns error.
+// If there is an error during decryption, it returns error.
+func (u FullUserID) ID(encKeys ...*EncryptionKey) (int64, error) {
+	if len(encKeys) == 0 || encKeys[0] == nil {
+		return 0, errors.New("encryption keys are not set")
+	}
+	if u.IDPlain != nil {
+		return *u.IDPlain, nil
+	}
+	if u.IDEnc == nil {
+		return 0, errors.New("encrypted ID is not set")
+	}
+	var errs []error
+	for i, encKey := range encKeys {
+		if encKey == nil || encKey.key == nil {
+			errs = append(errs, fmt.Errorf("%d: encryption key is nil", i+1))
+			continue
+		}
+		plaintext, err := abstract.DecryptAES(u.IDEnc, encKey.key)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%d: failed to decrypt encrypted ID with key version %d: %w", i+1, encKey.version, err))
+			continue
+		}
+		return int64(binary.BigEndian.Uint64(plaintext[:])), nil
+	}
+	return 0, fmt.Errorf("failed to decrypt encrypted ID: %w", errors.Join(errs...))
+}
+
+// String returns plain user ID as a string if it is set, otherwise returns "[ENCRYPTED]".
+func (u FullUserID) String() string {
+	if u.IDPlain != nil {
+		return strconv.FormatInt(*u.IDPlain, 10)
+	}
+	return "[ENCRYPTED]"
 }
 
 // User is an interface that represents user context in the bot.
 type User interface {
-	// ID is Telegram user ID.
+	// ID returns plain Telegram user ID if it is called from [Context.User] (in handler)
 	ID() int64
+	// IDFull returns full user ID with encrypted and HMAC parts if they are set.
+	IDFull() FullUserID
 	// Username returns Telegram username (without @).
+	// It is empty if privacy mode is strict.
 	Username() string
 	// Language returns Telegram user language code.
 	Language() Language
 	// Info returns user info.
+	// It is empty if privacy mode is strict.
 	Info() UserInfo
 	// State returns current state for the given message ID.
 	State(msgID int) (State, bool)
@@ -119,9 +287,10 @@ type User interface {
 // You should implement it in your application if you want to persist users between applicataion restarts.
 type UsersStorage interface {
 	// Insert inserts user in storage.
+	// It is better to NOT modify document before saving to make everything working properly.
 	Insert(ctx context.Context, userModel UserModel) error
 	// Find returns user from storage. It returns true as a second argument if user was found without error.
-	Find(ctx context.Context, id int64) (UserModel, bool, error)
+	Find(ctx context.Context, id FullUserID) (UserModel, bool, error)
 
 	// UpdateAsync updates user model in storage. The idea of that method is that it calls on every user action
 	// (e.g. for update state), so it should be async to make it faster for user (without IO latency).
@@ -134,18 +303,28 @@ type UsersStorage interface {
 	//
 	// If you want stable work of bote package, don't update user model by yourself. Bote will do it for you.
 	// If you want to expand user model by your additional fields, create an another table/collection in your db.
-	UpdateAsync(id int64, userModel *UserModelDiff)
+	UpdateAsync(id FullUserID, userModel *UserModelDiff)
 }
 
-// UserIDDBFieldName is a field name for user ID in DB.
-const UserIDDBFieldName = "id"
+const (
+	// UserIDDBFieldName is a field name for plain user ID in DB.
+	UserIDDBFieldName = "id"
+	// IDEncDBFieldName is a field name for encrypted user ID in DB.
+	IDEncDBFieldName = "id_enc"
+	// EncKeyVersionDBFieldName is a field name for encryption key version in DB.
+	EncKeyVersionDBFieldName = "enc_key_version"
+)
 
 // UserModel is a structure that represents user in DB.
 type UserModel struct {
-	// ID is Telegram user ID.
-	ID int64 `bson:"id" json:"id" db:"id"`
+	// ID is user ID.
+	ID FullUserID `bson:"id" json:"id" db:"id"`
 	// LanguageCode is Telegram user language code.
+	// It is not encrypted even in strict privacy mode because it has low cardinality and cannot be used for identification.
 	LanguageCode Language `bson:"language_code" json:"language_code" db:"language_code"`
+	// ForceLanguageCode is a custom language code for user that can be set by user actions in bot.
+	// It is not encrypted even in strict privacy mode because it has low cardinality and cannot be used for identification.
+	ForceLanguageCode Language `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
 	// Info contains user info, that can be obtained from Telegram.
 	// It is empty if privacy mode is strict.
 	Info UserInfo `bson:"info" json:"info" db:"info"`
@@ -159,9 +338,6 @@ type UserModel struct {
 	IsBot bool `bson:"is_bot" json:"is_bot" db:"is_bot"`
 	// IsDisabled returns true if user is disabled. Disabled means that user blocks bot.
 	IsDisabled bool `bson:"is_disabled" json:"is_disabled" db:"is_disabled"`
-
-	// ForceLanguageCode is a custom language code for user that can be set by bot.
-	ForceLanguageCode Language `bson:"force_language_code" json:"force_language_code" db:"force_language_code"`
 
 	// Values is a map of user values.
 	Values map[string]any `bson:"values" json:"values" db:"values"`
@@ -304,6 +480,10 @@ type userContextImpl struct {
 
 	// Add mutex for protecting user state and message updates
 	mu sync.Mutex
+
+	// We can get this id from Telegram Update in handler
+	// We should clear it in the end of handler to prevent from leak into memory dump
+	userID *int64
 }
 
 func (m *userManagerImpl) newUserContext(user UserModel, priv PrivacyMode) *userContextImpl {
@@ -318,13 +498,25 @@ func (m *userManagerImpl) newUserContext(user UserModel, priv PrivacyMode) *user
 }
 
 func newPublicUserContext(user *tele.User) *userContextImpl {
+	um, _ := newUserModel(user, "", nil, nil)
 	return &userContextImpl{
-		user:     newUserModel(user, PrivacyModeNo),
+		user:     um,
 		isPublic: true,
 	}
 }
 
 func (u *userContextImpl) ID() int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.userID == nil {
+		return lang.Deref(u.user.ID.IDPlain)
+	}
+	return *u.userID
+}
+
+func (u *userContextImpl) IDFull() FullUserID {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return u.user.ID
 }
 
@@ -444,7 +636,10 @@ func (u *userContextImpl) IsDisabled() bool {
 func (u *userContextImpl) String() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return "[@" + u.user.Info.Username + "|" + strconv.Itoa(int(u.user.ID)) + "]"
+	if u.user.Info.Username == "" {
+		return u.user.ID.String()
+	}
+	return "[@" + u.user.Info.Username + "|" + u.user.ID.String() + "]"
 }
 
 func (u *userContextImpl) GetValue(key string) (any, bool) {
@@ -477,9 +672,10 @@ func (u *userContextImpl) DeleteValue(key string) {
 	delete(u.user.Values, key)
 	values := make(map[string]any, len(u.user.Values))
 	maps.Copy(values, u.user.Values)
+	userID := u.user.ID
 	u.mu.Unlock()
 
-	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		Values: values,
 	})
 }
@@ -487,9 +683,10 @@ func (u *userContextImpl) DeleteValue(key string) {
 func (u *userContextImpl) ClearCache() {
 	u.mu.Lock()
 	u.user.Values = nil
+	userID := u.user.ID
 	u.mu.Unlock()
 
-	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		Values: make(map[string]any),
 	})
 }
@@ -640,11 +837,6 @@ func (u *userContextImpl) removeTextMessageLocked(msgID int) {
 		}
 	}
 
-	if indexToRemove >= len(u.user.State.MessagesAwaitingText)-1 {
-		u.user.State.MessagesAwaitingText = u.user.State.MessagesAwaitingText[:len(u.user.State.MessagesAwaitingText)-1]
-		return
-	}
-
 	if indexToRemove == 0 {
 		u.user.State.MessagesAwaitingText = u.user.State.MessagesAwaitingText[1:]
 		return
@@ -770,18 +962,19 @@ func (u *userContextImpl) forgetHistoryMessage(msgIDs ...int) (found bool) {
 			if historyID != msgIDToDelete {
 				continue
 			}
-			if i < len(u.user.Messages.HistoryIDs) {
-				u.user.Messages.HistoryIDs = slices.Delete(u.user.Messages.HistoryIDs, i, i+1)
-			}
+			u.user.Messages.HistoryIDs = slices.Delete(u.user.Messages.HistoryIDs, i, i+1)
 			delete(u.user.State.MessageStates, msgIDToDelete)
 			delete(u.user.Messages.LastActions, msgIDToDelete)
 
-			for j, textID := range u.user.State.MessagesAwaitingText {
-				if textID == msgIDToDelete {
+			// Remove from MessagesAwaitingText (iterate backwards to avoid index issues)
+			for j := len(u.user.State.MessagesAwaitingText) - 1; j >= 0; j-- {
+				if u.user.State.MessagesAwaitingText[j] == msgIDToDelete {
 					u.user.State.MessagesAwaitingText = slices.Delete(u.user.State.MessagesAwaitingText, j, j+1)
+					break
 				}
 			}
 			found = true
+			break // Break inner loop after finding and deleting
 		}
 	}
 
@@ -1057,9 +1250,38 @@ func (u *userContextImpl) getBtnAndPayload() (btnName, payload string) {
 	return u.btnName, u.payload
 }
 
-func newUserModel(tUser *tele.User, priv PrivacyMode) UserModel {
-	return UserModel{
-		ID:           tUser.ID,
+func (u *userContextImpl) setUserID(userID int64) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.userID = &userID
+}
+
+func (u *userContextImpl) clearUserID() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.userID = nil
+}
+
+func newUserModel(tUser *tele.User, priv PrivacyMode, encKey, hmacKey *EncryptionKey) (UserModel, error) {
+	var err error
+
+	id := NewPlainUserID(tUser.ID)
+
+	if priv.IsStrict() {
+		if encKey == nil {
+			return UserModel{}, erro.New("encryption key is nil")
+		}
+		if hmacKey == nil {
+			return UserModel{}, erro.New("HMAC key is nil")
+		}
+		id, err = NewPrivateUserID(tUser.ID, encKey, hmacKey)
+		if err != nil {
+			return UserModel{}, err
+		}
+	}
+
+	um := UserModel{
+		ID:           id,
 		IsBot:        tUser.IsBot,
 		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
 		Info:         newUserInfoWithSanitize(tUser, priv),
@@ -1074,7 +1296,10 @@ func newUserModel(tUser *tele.User, priv PrivacyMode) UserModel {
 			LastSeenTime: time.Now().UTC(),
 			CreatedTime:  time.Now().UTC(),
 		},
+		Values: make(map[string]any),
 	}
+
+	return um, nil
 }
 
 func newUserInfoWithSanitize(tUser *tele.User, priv PrivacyMode) UserInfo {
@@ -1113,35 +1338,31 @@ func newUserInfoNoSanitize(tUser *tele.User, priv PrivacyMode) UserInfo {
 }
 
 type userManagerImpl struct {
-	users otter.Cache[int64, *userContextImpl]
+	users *userCache
 	db    UsersStorage
 	log   Logger
-	priv  PrivacyMode
 	metr  *metrics
+
+	priv    PrivacyMode
+	encKey  *EncryptionKey
+	hmacKey *EncryptionKey
 }
 
 func newUserManager(opts Options) (*userManagerImpl, error) {
-	// Configure otter cache with proper eviction settings and TTL
-	c, err := otter.MustBuilder[int64, *userContextImpl](opts.Config.Bot.UserCacheCapacity).
-		// Add cost function to better manage memory
-		Cost(func(_ int64, value *userContextImpl) uint32 {
-			// Cost is roughly based on the number of messages a user has
-			// This helps prioritize eviction of users with more stored messages
-			return uint32(1 + len(value.user.Messages.HistoryIDs))
-		}).
-		// Set TTL for inactive users to prevent memory leaks
-		WithTTL(opts.Config.Bot.UserCacheTTL).
-		Build()
+	users, err := newUserCache(opts.Config.Bot.Privacy.Mode, opts.HMACKey,
+		opts.Config.Bot.UserCacheCapacity, opts.Config.Bot.UserCacheTTL)
 	if err != nil {
-		return nil, erro.Wrap(err, "failed to create user cache with capacity %d", opts.Config.Bot.UserCacheCapacity)
+		return nil, erro.Wrap(err, "failed to create user cache")
 	}
 
 	m := &userManagerImpl{
-		metr:  opts.metrics,
-		users: c,
-		db:    opts.UserDB,
-		log:   opts.Logger,
-		priv:  lang.Check(opts.Config.Bot.PrivacyMode, PrivacyModeNo),
+		metr:    opts.metrics,
+		users:   users,
+		db:      opts.UserDB,
+		log:     opts.Logger,
+		priv:    opts.Config.Bot.Privacy.Mode,
+		encKey:  opts.EncryptionKey,
+		hmacKey: opts.HMACKey,
 	}
 
 	return m, nil
@@ -1152,10 +1373,10 @@ func (m *userManagerImpl) prepareUser(tUser *tele.User) (*userContextImpl, error
 		return nil, erro.New("cannot prepare user: telegram user is nil")
 	}
 	defer func() {
-		m.metr.setUserCacheSize(m.users.Size())
+		m.metr.setUserCacheSize(m.users.size())
 	}()
 
-	user, found := m.users.Get(tUser.ID)
+	user, found := m.users.getByID(tUser.ID)
 	if found {
 		user.update(tUser)
 		return user, nil
@@ -1167,12 +1388,10 @@ func (m *userManagerImpl) prepareUser(tUser *tele.User) (*userContextImpl, error
 func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 	if userID == 0 {
 		m.log.Error("invalid user ID", "user_id", userID, "error", "userID cannot be zero")
-		tUser := &tele.User{ID: 1} // Fallback to a safe default
-		user := m.newUserContext(newUserModel(tUser, m.priv), m.priv)
-		return user
+		return m.createFallbackUser(&tele.User{ID: 1})
 	}
 
-	user, found := m.users.Get(userID)
+	user, found := m.users.getByID(userID)
 	if found {
 		return user
 	}
@@ -1188,17 +1407,24 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 			"error", err.Error(),
 			"error_type", fmt.Sprintf("%T", err))
 
-		// Create an emergency fallback user
-		m.log.Info("creating fallback user object", "user_id", userID)
-		user = m.newUserContext(newUserModel(tUser, m.priv), m.priv)
+		return m.createFallbackUser(tUser)
 	}
 
 	return user
 }
 
+func (m *userManagerImpl) createFallbackUser(tUser *tele.User) *userContextImpl {
+	um, err := newUserModel(tUser, m.priv, m.encKey, m.hmacKey)
+	if err != nil {
+		m.log.Error("failed to create fallback user", "error", err.Error())
+		return m.newUserContext(UserModel{}, m.priv)
+	}
+	return m.newUserContext(um, m.priv)
+}
+
 func (m *userManagerImpl) getAllUsers() []User {
-	out := make([]User, 0, m.users.Size())
-	m.users.Range(func(_ int64, value *userContextImpl) bool {
+	out := make([]User, 0, m.users.size())
+	m.users.forEach(func(value *userContextImpl) bool {
 		out = append(out, value)
 		return true
 	})
@@ -1213,20 +1439,34 @@ func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	userModel, isFound, err := m.db.Find(ctx, tUser.ID)
+	var err error
+
+	userID := NewPlainUserID(tUser.ID)
+
+	if m.priv.IsStrict() {
+		userID, err = NewPrivateUserID(tUser.ID, m.encKey, m.hmacKey)
+		if err != nil {
+			return nil, erro.Wrap(err, "failed to create user ID", "user_id", tUser.ID)
+		}
+	}
+
+	userModel, isFound, err := m.db.Find(ctx, userID)
 	if err != nil {
 		return nil, erro.Wrap(err, "failed to find user in database", "user_id", tUser.ID)
 	}
 
 	if !isFound {
-		userModel = newUserModel(tUser, m.priv)
+		userModel, err = newUserModel(tUser, m.priv, m.encKey, m.hmacKey)
+		if err != nil {
+			return nil, erro.Wrap(err, "failed to create user model", "user_id", tUser.ID)
+		}
 		if err := m.db.Insert(ctx, userModel); err != nil {
 			return nil, erro.Wrap(err, "failed to insert new user into database", "user_id", tUser.ID)
 		}
 	}
 
 	user := m.newUserContext(userModel, m.priv)
-	if ok := m.users.Set(user.user.ID, user); !ok {
+	if ok := m.users.set(userModel.ID, user); !ok {
 		m.log.Warn("failed to add user to cache", "user_id", user.user.ID, "username", user.user.Info.Username)
 	}
 
@@ -1243,16 +1483,16 @@ func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error)
 }
 
 func (m *userManagerImpl) disableUser(userID int64) {
-	u, ok := m.users.Get(userID)
+	u, ok := m.users.getByID(userID)
 	if !ok {
 		return
 	}
 	u.disable()
-	m.users.Delete(userID)
+	m.users.delete(NewPlainUserID(userID))
 }
 
 func (m *userManagerImpl) deleteUser(userID int64) {
-	m.users.Delete(userID)
+	m.users.delete(NewPlainUserID(userID))
 }
 
 type inMemoryUserStorage struct {
@@ -1260,21 +1500,12 @@ type inMemoryUserStorage struct {
 }
 
 func newInMemoryUserStorage(userCacheCapacity int, userCacheTTL time.Duration) (UsersStorage, error) {
-	// Configure in-memory storage with proper eviction settings
-	s, err := otter.MustBuilder[int64, UserModel](userCacheCapacity).
-		// Add cost function to better manage memory
-		Cost(func(_ int64, value UserModel) uint32 {
-			// Cost is roughly based on the number of messages a user has
-			return uint32(1 + len(value.Messages.HistoryIDs))
-		}).
-		// Set TTL for inactive users to prevent memory leaks
-		WithTTL(userCacheTTL).
-		Build()
+	c, err := otter.MustBuilder[int64, UserModel](userCacheCapacity).WithTTL(userCacheTTL).Build()
 	if err != nil {
-		return nil, erro.Wrap(err, "failed to create in-memory storage with capacity %d", userCacheCapacity)
+		return nil, erro.Wrap(err, "failed to create user cache with capacity %d", userCacheCapacity)
 	}
 	return &inMemoryUserStorage{
-		cache: s,
+		cache: c,
 	}, nil
 }
 
@@ -1283,26 +1514,31 @@ func (m *inMemoryUserStorage) Insert(ctx context.Context, user UserModel) error 
 		return erro.New("cannot insert user: context is nil")
 	}
 
-	if user.ID == 0 {
+	if user.ID.IsEmpty() {
 		return erro.New("cannot insert user: invalid user ID (zero)")
 	}
 
-	if !m.cache.Set(user.ID, user) {
-		return erro.Wrap(erro.New("cache rejected insertion"), fmt.Sprintf("failed to insert user %d into in-memory storage", user.ID))
+	id := lang.Deref(user.ID.IDPlain)
+	if id == 0 {
+		return erro.New("cannot insert user: invalid user ID (zero)")
+	}
+
+	if !m.cache.Set(id, user) {
+		return erro.Wrap(erro.New("cache rejected insertion"), fmt.Sprintf("failed to insert user %d into in-memory storage", id))
 	}
 	return nil
 }
 
-func (m *inMemoryUserStorage) Find(ctx context.Context, id int64) (UserModel, bool, error) {
+func (m *inMemoryUserStorage) Find(ctx context.Context, id FullUserID) (UserModel, bool, error) {
 	if ctx == nil {
 		return UserModel{}, false, erro.New("cannot find user: context is nil")
 	}
 
-	if id == 0 {
+	if id.IsEmpty() {
 		return UserModel{}, false, erro.New("cannot find user: invalid user ID (zero)")
 	}
 
-	user, found := m.cache.Get(id)
+	user, found := m.cache.Get(lang.Deref(id.IDPlain))
 	if !found {
 		return UserModel{}, false, nil
 	}
@@ -1318,11 +1554,14 @@ func (m *inMemoryUserStorage) FindAll(context.Context) ([]UserModel, error) {
 	return out, nil
 }
 
-func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
-	user, found := m.cache.Get(id)
+func (m *inMemoryUserStorage) UpdateAsync(id FullUserID, diff *UserModelDiff) {
+	user, found := m.cache.Get(lang.Deref(id.IDPlain))
 	if !found {
 		return
 	}
+
+	// Ensure user model is properly initialized
+	(&user).prepareAfterDB()
 
 	if diff.Info != nil {
 		user.Info = UserInfo{
@@ -1343,10 +1582,23 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 		}
 	}
 	if diff.State != nil {
+		// Preserve messagesStackInd when updating State
+		messagesStackInd := user.State.messagesStackInd
+		if messagesStackInd == nil {
+			messagesStackInd = make(map[int]int)
+		}
 		user.State = MessagesState{
 			Main:                 lang.Check(lang.Deref(diff.State.Main), user.State.Main),
 			MessageStates:        lang.If(len(diff.State.MessageStates) > 0, diff.State.MessageStates, user.State.MessageStates),
 			MessagesAwaitingText: lang.If(diff.State.MessagesAwaitingText != nil, diff.State.MessagesAwaitingText, user.State.MessagesAwaitingText),
+			messagesStackInd:     messagesStackInd,
+		}
+		// Rebuild messagesStackInd if MessagesAwaitingText was updated
+		if diff.State.MessagesAwaitingText != nil {
+			user.State.messagesStackInd = make(map[int]int, len(user.State.MessagesAwaitingText))
+			for i, v := range user.State.MessagesAwaitingText {
+				user.State.messagesStackInd[v] = i
+			}
 		}
 	}
 
@@ -1367,7 +1619,13 @@ func (m *inMemoryUserStorage) UpdateAsync(id int64, diff *UserModelDiff) {
 		user.LanguageCode = lang.Check(lang.Deref(diff.LanguageCode), user.LanguageCode)
 	}
 
-	m.cache.Set(id, user)
+	if diff.Values != nil {
+		// Make a copy to avoid sharing the same map reference
+		user.Values = make(map[string]any, len(diff.Values))
+		maps.Copy(user.Values, diff.Values)
+	}
+
+	m.cache.Set(lang.Deref(id.IDPlain), user)
 }
 
 type textStateManagerImpl struct {
@@ -1384,4 +1642,106 @@ func (t *textStateManagerImpl) has(state State) bool {
 	defer t.mu.RUnlock()
 	_, ok := t.states[state.String()]
 	return ok
+}
+
+type userCache struct {
+	usersByPlainID *otter.Cache[int64, *userContextImpl]
+	usersByHMACID  *otter.Cache[string, *userContextImpl]
+	hmacKey        *EncryptionKey
+}
+
+func newUserCache(priv PrivacyMode, hmacKey *EncryptionKey, userCacheCapacity int, userCacheTTL time.Duration) (out *userCache, err error) {
+	out = &userCache{
+		hmacKey: hmacKey,
+	}
+	if priv.IsStrict() {
+		out.usersByHMACID, err = newCache[string](userCacheCapacity, userCacheTTL)
+	} else {
+		out.usersByPlainID, err = newCache[int64](userCacheCapacity, userCacheTTL)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userCache) get(fullID FullUserID) (user *userContextImpl, found bool) {
+	if c.usersByPlainID != nil {
+		user, found = c.usersByPlainID.Get(lang.Deref(fullID.IDPlain))
+	} else if c.usersByHMACID != nil {
+		id := fullID.IDHMAC
+		if len(id) == 0 {
+			id = NewHMAC(lang.Deref(fullID.IDPlain), c.hmacKey)
+		}
+		user, found = c.usersByHMACID.Get(hex.EncodeToString(id))
+	}
+	return user, found
+}
+
+func (c *userCache) getByID(id int64) (user *userContextImpl, found bool) {
+	return c.get(NewPlainUserID(id))
+}
+
+func (c *userCache) set(fullID FullUserID, user *userContextImpl) bool {
+	if c.usersByPlainID != nil {
+		return c.usersByPlainID.Set(lang.Deref(fullID.IDPlain), user)
+	} else if c.usersByHMACID != nil {
+		id := fullID.IDHMAC
+		if len(id) == 0 {
+			id = NewHMAC(lang.Deref(fullID.IDPlain), c.hmacKey)
+		}
+		return c.usersByHMACID.Set(hex.EncodeToString(id), user)
+	}
+	return false
+}
+
+func (c *userCache) delete(fullID FullUserID) {
+	if c.usersByPlainID != nil {
+		c.usersByPlainID.Delete(lang.Deref(fullID.IDPlain))
+	} else if c.usersByHMACID != nil {
+		id := fullID.IDHMAC
+		if len(id) == 0 {
+			id = NewHMAC(lang.Deref(fullID.IDPlain), c.hmacKey)
+		}
+		c.usersByHMACID.Delete(hex.EncodeToString(id))
+	}
+}
+
+func (c *userCache) forEach(callback func(user *userContextImpl) bool) {
+	if c.usersByPlainID != nil {
+		c.usersByPlainID.Range(func(_ int64, value *userContextImpl) bool {
+			return callback(value)
+		})
+	} else if c.usersByHMACID != nil {
+		c.usersByHMACID.Range(func(_ string, value *userContextImpl) bool {
+			return callback(value)
+		})
+	}
+}
+
+func (c *userCache) size() int {
+	if c.usersByPlainID != nil {
+		return c.usersByPlainID.Size()
+	} else if c.usersByHMACID != nil {
+		return c.usersByHMACID.Size()
+	}
+	return 0
+}
+
+func newCache[K comparable](capacity int, ttl time.Duration) (*otter.Cache[K, *userContextImpl], error) {
+	// Configure in-memory storage with proper eviction settings
+	c, err := otter.MustBuilder[K, *userContextImpl](capacity).
+		// Add cost function to better manage memory
+		Cost(func(_ K, value *userContextImpl) uint32 {
+			// Cost is roughly based on the number of messages a user has
+			// This helps prioritize eviction of users with more stored messages
+			return uint32(1 + len(value.user.Messages.HistoryIDs))
+		}).
+		// Set TTL for inactive users to prevent memory leaks
+		WithTTL(ttl).
+		Build()
+	if err != nil {
+		return nil, erro.Wrap(err, "failed to create user cache with capacity %d", capacity)
+	}
+	return &c, nil
 }

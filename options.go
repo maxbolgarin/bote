@@ -118,6 +118,16 @@ type (
 		// It is used to create a bot without network for testing purposes.
 		Offline bool
 
+		// EncryptionKey is the encryption key for the bot.
+		// It is used to encrypt UserID in strict privacy mode.\
+		// You can set keys here or in [Config] bot privacy section.
+		EncryptionKey *EncryptionKey
+
+		// HMACKey is the HMAC key for the bot.
+		// It is used to HMAC UserID in strict privacy mode.
+		// You can set keys here or in [Config] bot privacy section.
+		HMACKey *EncryptionKey
+
 		metrics *metrics
 	}
 
@@ -131,9 +141,8 @@ type (
 	// PrivacyMode is a privacy mode for the bot.
 	// It is used to make compliance with GDPR (privacy by design).
 	// Possible values:
-	// - "no" - no privacy mode (all data is stored)
-	// - "low" - low privacy mode (UserID + Username)
-	// - "strict" - strict mode (only UserID is stored)
+	// - "low" - low privacy mode (UserID + Username are stored)
+	// - "strict" - strict mode (only encrypted and HMACed UserID is stored)
 	PrivacyMode string
 
 	// UpdateType is a type of update that is using in update logging.
@@ -142,6 +151,10 @@ type (
 	// PollingMode is the polling mode to use.
 	PollingMode string
 )
+
+func (p PrivacyMode) IsStrict() bool {
+	return p == PrivacyModeStrict
+}
 
 const (
 	PollingModeLong    PollingMode = "long"
@@ -163,7 +176,6 @@ const (
 )
 
 const (
-	PrivacyModeNo     PrivacyMode = "no"
 	PrivacyModeLow    PrivacyMode = "low"
 	PrivacyModeStrict PrivacyMode = "strict"
 )
@@ -202,14 +214,8 @@ type BotConfig struct {
 	// - "MarkdownV2"
 	ParseMode tele.ParseMode `yaml:"mode" json:"mode" env:"BOTE_PARSE_MODE"`
 
-	// PrivacyMode is the default privacy mode for the bot.
-	// Default: "no".
-	// Possible values:
-	// - "no" - no privacy mode (all data is stored)
-	// - "low" - low privacy mode (UserID + Username)
-	// - "strict" - strict mode (only UserID is stored)
-	// Environment variable: BOTE_PRIVACY_MODE.
-	PrivacyMode PrivacyMode `yaml:"privacy_mode" json:"privacy_mode" env:"BOTE_PRIVACY_MODE"`
+	// Privacy is a configuration for privacy mode.
+	Privacy PrivacyConfig `yaml:"privacy" json:"privacy"`
 
 	// DefaultLanguage is the default language code for the bot in ISO 639-1 format.
 	// Default: "en".
@@ -235,6 +241,43 @@ type BotConfig struct {
 	// Default: 24 hours.
 	// Environment variable: BOTE_USER_CACHE_TTL.
 	UserCacheTTL time.Duration `yaml:"user_cache_ttl" json:"user_cache_ttl" env:"BOTE_USER_CACHE_TTL"`
+}
+
+type PrivacyConfig struct {
+	// Mode is the privacy mode for the bot.
+	// Default: "no".
+	// Possible values:
+	// - "no" - no privacy mode (all data is stored and logged)
+	// - "low" - low privacy mode (store UserID + Username)
+	// - "strict" - strict mode (only encrypted and HMACed UserID is stored)
+	// Environment variable: BOTE_PRIVACY_MODE.
+	Mode PrivacyMode `yaml:"mode" json:"mode" env:"BOTE_PRIVACY_MODE"`
+
+	// EncryptionKey is the encryption key for the bot.
+	// It is used to encrypt and decrypt UserID in strict privacy mode.
+	// Key should be a hex encoded string of 32 bytes.
+	// Default: nil.
+	// Environment variable: BOTE_ENCRYPTION_KEY.
+	EncryptionKey *string `yaml:"encryption_key" json:"encryption_key" env:"BOTE_ENCRYPTION_KEY"`
+
+	// EncryptionKeyVersion is the version of the encryption key.
+	// It is used to identify the version of the encryption key.
+	// Default: nil.
+	// Environment variable: BOTE_ENCRYPTION_KEY_VERSION.
+	EncryptionKeyVersion *int64 `yaml:"enc_key_version" json:"enc_key_version" env:"BOTE_ENCRYPTION_KEY_VERSION"`
+
+	// HMACKey is the HMAC key for the bot.
+	// It is used to HMAC UserID in strict privacy mode.
+	// Key should be a hex encoded string of 32 bytes.
+	// Default: nil.
+	// Environment variable: BOTE_HMAC_KEY.
+	HMACKey *string `yaml:"hmac_key" json:"hmac_key" env:"BOTE_HMAC_KEY"`
+
+	// HMACKeyVersion is the version of the HMAC key.
+	// It is used to identify the version of the HMAC key.
+	// Default: nil.
+	// Environment variable: BOTE_HMAC_KEY_VERSION.
+	HMACKeyVersion *int64 `yaml:"hmac_key_version" json:"hmac_key_version" env:"BOTE_HMAC_KEY_VERSION"`
 }
 
 type LogConfig struct {
@@ -638,10 +681,30 @@ func WithDefaultLanguage(lang Language) func(opts *Options) {
 	}
 }
 
-// WithPrivacyMode returns an option that sets the privacy mode.
-func WithPrivacyMode(mode PrivacyMode) func(opts *Options) {
+// WithLowPrivacyMode returns an option that sets the low privacy mode.
+func WithLowPrivacyMode() func(opts *Options) {
 	return func(opts *Options) {
-		opts.Config.Bot.PrivacyMode = mode
+		opts.Config.Bot.Privacy.Mode = PrivacyModeLow
+	}
+}
+
+// WithLowPrivacyMode returns an option that sets the low privacy mode.
+func WithStrictPrivacyMode(encryptionKey *string, encryptionKeyVersion *int64, hmacKey *string, hmacKeyVersion *int64) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.Bot.Privacy.Mode = PrivacyModeStrict
+		opts.Config.Bot.Privacy.EncryptionKey = encryptionKey
+		opts.Config.Bot.Privacy.EncryptionKeyVersion = encryptionKeyVersion
+		opts.Config.Bot.Privacy.HMACKey = hmacKey
+		opts.Config.Bot.Privacy.HMACKeyVersion = hmacKeyVersion
+	}
+}
+
+// WithStrictPrivacyMode returns an option that sets the strict privacy mode.
+func WithStrictPrivacyModeKeys(encryptionKey *EncryptionKey, hmacKey *EncryptionKey) func(opts *Options) {
+	return func(opts *Options) {
+		opts.Config.Bot.Privacy.Mode = PrivacyModeStrict
+		opts.EncryptionKey = encryptionKey
+		opts.HMACKey = hmacKey
 	}
 }
 
@@ -768,7 +831,6 @@ func (cfg *Config) prepareAndValidate() error {
 	cfg.Webhook.MetricsPath = lang.Check(cfg.Webhook.MetricsPath, defaultWebhookMetricsPath)
 
 	cfg.Bot.ParseMode = lang.Check(cfg.Bot.ParseMode, defaultBotParseMode)
-	cfg.Bot.PrivacyMode = lang.Check(cfg.Bot.PrivacyMode, PrivacyModeNo)
 	cfg.Bot.DefaultLanguage = lang.Check(cfg.Bot.DefaultLanguage, defaultBotDefaultLanguage)
 	cfg.Bot.DeleteMessages = lang.Ptr(lang.CheckPtr(cfg.Bot.DeleteMessages, defaultBotDeleteMessages))
 	cfg.Bot.UserCacheCapacity = lang.Check(cfg.Bot.UserCacheCapacity, defaultUserCacheCapacity)
@@ -833,6 +895,27 @@ func prepareOpts(opts Options) (Options, error) {
 			return opts, erro.Wrap(err, "create webhook poller")
 		}
 		opts.Poller = webhookPoller
+	}
+
+	if opts.Config.Bot.Privacy.Mode.IsStrict() {
+		if opts.Config.Bot.Privacy.EncryptionKey == nil && opts.EncryptionKey == nil {
+			return opts, erro.New("encryption key is required for strict privacy mode")
+		}
+		if opts.Config.Bot.Privacy.HMACKey == nil && opts.HMACKey == nil {
+			return opts, erro.New("HMAC key is required for strict privacy mode")
+		}
+		if opts.Config.Bot.Privacy.EncryptionKey != nil {
+			opts.EncryptionKey, err = NewEncryptionKeyFromString(*opts.Config.Bot.Privacy.EncryptionKey, opts.Config.Bot.Privacy.EncryptionKeyVersion)
+			if err != nil {
+				return opts, erro.Wrap(err, "parse encryption key")
+			}
+		}
+		if opts.Config.Bot.Privacy.HMACKey != nil {
+			opts.HMACKey, err = NewEncryptionKeyFromString(*opts.Config.Bot.Privacy.HMACKey, opts.Config.Bot.Privacy.HMACKeyVersion)
+			if err != nil {
+				return opts, erro.Wrap(err, "parse HMAC key")
+			}
+		}
 	}
 
 	return opts, nil

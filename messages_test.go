@@ -64,7 +64,7 @@ func TestDefaultMessageProvider(t *testing.T) {
 		t.Fatal("default message provider returned nil")
 	}
 	// Ensure PrepareMessage is idempotent for simple case
-	u := &userContextImpl{user: UserModel{ID: 1}}
+	u := &userContextImpl{user: UserModel{ID: NewPlainUserID(1)}}
 	out := m.PrepareMessage("hello", u, NoChange, 0, false)
 	if out != "hello" {
 		t.Fatalf("unexpected PrepareMessage output: %q", out)
