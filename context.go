@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
@@ -221,6 +222,32 @@ func NewContext(b *Bot, userID int64, callbackMsgID int, data ...string) Context
 	}
 }
 
+// NewContextSecure creates a new context for the given user from encrypted ID simulating that callback button was pressed.
+// It creates a minimal update to handle all possible methods in [Context] without panics.
+// It can be useful if you want to start a handler without user action (by some external event).
+// If strict privacy mode is disabled, it will use [NewContext] instead.
+// Warning! IT WON'T WORK WITH TEXT HANDLERS. Use [NewContextText] instead.
+func NewContextSecure(b *Bot, userIDSecure FullUserID, callbackMsgID int, data ...string) (Context, error) {
+	if !b.um.priv.IsStrict() {
+		return NewContext(b, lang.Deref(userIDSecure.IDPlain), callbackMsgID, data...), nil
+	}
+	userID, err := userIDSecure.ID(b.um.keysProvider.GetEncryptionKey())
+	if err != nil {
+		return nil, erro.Wrap(err, "decrypt user ID")
+	}
+	upd := tele.Update{
+		Callback: &tele.Callback{
+			Message: &tele.Message{ID: callbackMsgID, Sender: &tele.User{ID: userID}},
+			Data:    CreateBtnData(data...),
+		},
+	}
+	return &contextImpl{
+		bt:   b,
+		ct:   b.bot.tbot.NewContext(upd),
+		user: b.um.getUser(userID),
+	}, nil
+}
+
 // NewContextText creates a new context for the given user simulating that text message was received.
 // It creates a minimal update to handle all possible methods in [Context] without panics.
 // It can be useful if you want to start a handler without user action (by some external event).
@@ -240,6 +267,35 @@ func NewContextText(b *Bot, userID int64, textMsgID int, text string) Context {
 		ct:   b.bot.tbot.NewContext(upd),
 		user: b.um.getUser(userID),
 	}
+}
+
+// NewContextTextSecure creates a new context for the given user from encrypted ID simulating that text message was received.
+// It creates a minimal update to handle all possible methods in [Context] without panics.
+// It can be useful if you want to start a handler without user action (by some external event).
+// If strict privacy mode is disabled, it will use [NewContextText] instead.
+// Warning! IT WON'T WORK WITH CALLBACK HANDLERS. Use [NewContext] instead.
+func NewContextTextSecure(b *Bot, userIDSecure FullUserID, textMsgID int, text string) (Context, error) {
+	if !b.um.priv.IsStrict() {
+		return NewContextText(b, lang.Deref(userIDSecure.IDPlain), textMsgID, text), nil
+	}
+	userID, err := userIDSecure.ID(b.um.keysProvider.GetEncryptionKey())
+	if err != nil {
+		return nil, erro.Wrap(err, "decrypt user ID")
+	}
+	upd := tele.Update{
+		Message: &tele.Message{
+			ID:   textMsgID,
+			Text: text,
+			Sender: &tele.User{
+				ID: userID,
+			},
+		},
+	}
+	return &contextImpl{
+		bt:   b,
+		ct:   b.bot.tbot.NewContext(upd),
+		user: b.um.getUser(userID),
+	}, nil
 }
 
 type contextImpl struct {

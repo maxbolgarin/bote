@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/lang"
 	tele "gopkg.in/telebot.v4"
 )
@@ -75,11 +76,7 @@ func TestUserCreation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user, err := newUserModel(tt.teleUser, "", NewEncryptionKey(nil), nil)
-			if err != nil {
-				t.Fatalf("Failed to create user model: %v", err)
-			}
-
+			user := newUserModel(tt.teleUser, NewPlainUserID(tt.teleUser.ID), "")
 			if lang.Deref(user.ID.IDPlain) != lang.Deref(tt.expected.ID.IDPlain) {
 				t.Errorf("Expected ID %d, got %d", tt.expected.ID, user.ID)
 			}
@@ -121,6 +118,16 @@ func TestUserManager(t *testing.T) {
 			Bot: BotConfig{
 				UserCacheCapacity: 100,
 				UserCacheTTL:      time.Hour,
+			},
+		},
+		KeysProvider: &simpleKeysProvider{
+			encryptionKey: &EncryptionKey{
+				key:     abstract.NewEncryptionKey(),
+				version: nil,
+			},
+			hmacKey: &EncryptionKey{
+				key:     abstract.NewEncryptionKey(),
+				version: nil,
 			},
 		},
 	}
@@ -596,6 +603,16 @@ func newTestOptions() Options {
 			Bot: BotConfig{
 				UserCacheCapacity: 100,
 				UserCacheTTL:      time.Hour,
+			},
+		},
+		KeysProvider: &simpleKeysProvider{
+			encryptionKey: &EncryptionKey{
+				key:     abstract.NewEncryptionKey(),
+				version: nil,
+			},
+			hmacKey: &EncryptionKey{
+				key:     abstract.NewEncryptionKey(),
+				version: nil,
 			},
 		},
 	}

@@ -82,6 +82,16 @@ type (
 		Log(UpdateType, ...any)
 	}
 
+	// KeysProvider is an interface for providing encryption and HMAC keys in strict privacy mode.
+	KeysProvider interface {
+		// GetEncryptionKey returns the encryption key for the bot.
+		// It is used to encrypt and decrypt UserID in strict privacy mode.
+		GetEncryptionKey() *EncryptionKey
+		// GetHMACKey returns the HMAC key for the bot.
+		// It is used to HMAC UserID in strict privacy mode.
+		GetHMACKey() *EncryptionKey
+	}
+
 	// Options contains bote additional options.
 	Options struct {
 		// Config contains bote configuration. It is optional and has default values for all fields.
@@ -118,15 +128,9 @@ type (
 		// It is used to create a bot without network for testing purposes.
 		Offline bool
 
-		// EncryptionKey is the encryption key for the bot.
-		// It is used to encrypt UserID in strict privacy mode.\
-		// You can set keys here or in [Config] bot privacy section.
-		EncryptionKey *EncryptionKey
-
-		// HMACKey is the HMAC key for the bot.
-		// It is used to HMAC UserID in strict privacy mode.
-		// You can set keys here or in [Config] bot privacy section.
-		HMACKey *EncryptionKey
+		// KeysProvider is a provider of encryption and HMAC keys for the bot.
+		// It is used to provide encryption and HMAC keys for the bot in strict privacy mode.
+		KeysProvider KeysProvider
 
 		metrics *metrics
 	}
@@ -700,11 +704,10 @@ func WithStrictPrivacyMode(encryptionKey *string, encryptionKeyVersion *int64, h
 }
 
 // WithStrictPrivacyMode returns an option that sets the strict privacy mode.
-func WithStrictPrivacyModeKeys(encryptionKey *EncryptionKey, hmacKey *EncryptionKey) func(opts *Options) {
+func WithStrictPrivacyModeKeyProvider(keysProvider KeysProvider) func(opts *Options) {
 	return func(opts *Options) {
 		opts.Config.Bot.Privacy.Mode = PrivacyModeStrict
-		opts.EncryptionKey = encryptionKey
-		opts.HMACKey = hmacKey
+		opts.KeysProvider = keysProvider
 	}
 }
 
@@ -898,23 +901,22 @@ func prepareOpts(opts Options) (Options, error) {
 	}
 
 	if opts.Config.Bot.Privacy.Mode.IsStrict() {
-		if opts.Config.Bot.Privacy.EncryptionKey == nil && opts.EncryptionKey == nil {
+		if opts.Config.Bot.Privacy.EncryptionKey == nil && opts.KeysProvider == nil {
 			return opts, erro.New("encryption key is required for strict privacy mode")
 		}
-		if opts.Config.Bot.Privacy.HMACKey == nil && opts.HMACKey == nil {
+		if opts.Config.Bot.Privacy.HMACKey == nil && opts.KeysProvider == nil {
 			return opts, erro.New("HMAC key is required for strict privacy mode")
 		}
-		if opts.Config.Bot.Privacy.EncryptionKey != nil {
-			opts.EncryptionKey, err = NewEncryptionKeyFromString(*opts.Config.Bot.Privacy.EncryptionKey, opts.Config.Bot.Privacy.EncryptionKeyVersion)
-			if err != nil {
-				return opts, erro.Wrap(err, "parse encryption key")
-			}
-		}
-		if opts.Config.Bot.Privacy.HMACKey != nil {
-			opts.HMACKey, err = NewEncryptionKeyFromString(*opts.Config.Bot.Privacy.HMACKey, opts.Config.Bot.Privacy.HMACKeyVersion)
-			if err != nil {
-				return opts, erro.Wrap(err, "parse HMAC key")
-			}
+	}
+	if opts.KeysProvider == nil {
+		opts.KeysProvider, err = newSimpleKeysProvider(
+			opts.Config.Bot.Privacy.EncryptionKey,
+			opts.Config.Bot.Privacy.HMACKey,
+			opts.Config.Bot.Privacy.EncryptionKeyVersion,
+			opts.Config.Bot.Privacy.HMACKeyVersion,
+		)
+		if err != nil {
+			return opts, erro.Wrap(err, "create keys provider")
 		}
 	}
 
@@ -999,4 +1001,32 @@ func NoPreview() any {
 
 func AllowWithoutReply() any {
 	return tele.AllowWithoutReply
+}
+
+type simpleKeysProvider struct {
+	encryptionKey *EncryptionKey
+	hmacKey       *EncryptionKey
+}
+
+func newSimpleKeysProvider(encryptionKeyString, hmacKeyString *string, encryptionKeyVersion, hmacKeyVersion *int64) (KeysProvider, error) {
+	encryptionKey, err := NewEncryptionKeyFromString(*encryptionKeyString, encryptionKeyVersion)
+	if err != nil {
+		return nil, erro.Wrap(err, "parse encryption key")
+	}
+	hmacKey, err := NewEncryptionKeyFromString(*hmacKeyString, hmacKeyVersion)
+	if err != nil {
+		return nil, erro.Wrap(err, "parse HMAC key")
+	}
+	return &simpleKeysProvider{
+		encryptionKey: encryptionKey,
+		hmacKey:       hmacKey,
+	}, nil
+}
+
+func (p *simpleKeysProvider) GetEncryptionKey() *EncryptionKey {
+	return p.encryptionKey
+}
+
+func (p *simpleKeysProvider) GetHMACKey() *EncryptionKey {
+	return p.hmacKey
 }

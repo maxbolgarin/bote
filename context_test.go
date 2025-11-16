@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/maxbolgarin/abstract"
 )
 
 // TestContextCreation tests various ways to create context
@@ -278,6 +280,16 @@ func setupTestBot(t *testing.T) *Bot {
 			},
 		},
 		Poller: &mockPoller{},
+		KeysProvider: &simpleKeysProvider{
+			encryptionKey: &EncryptionKey{
+				key:     abstract.NewEncryptionKey(),
+				version: nil,
+			},
+			hmacKey: &EncryptionKey{
+				key:     abstract.NewEncryptionKey(),
+				version: nil,
+			},
+		},
 	}
 
 	bot, err := NewWithOptions(t.Context(), "test-token", opts)

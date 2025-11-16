@@ -233,6 +233,9 @@ func (u FullUserID) String() string {
 	if u.IDPlain != nil {
 		return strconv.FormatInt(*u.IDPlain, 10)
 	}
+	if len(u.IDHMAC) > 0 {
+		return hex.EncodeToString(u.IDHMAC)
+	}
 	return "[ENCRYPTED]"
 }
 
@@ -308,11 +311,15 @@ type UsersStorage interface {
 
 const (
 	// UserIDDBFieldName is a field name for plain user ID in DB.
-	UserIDDBFieldName = "id"
+	UserIDDBFieldName = "id.id_plain"
 	// IDEncDBFieldName is a field name for encrypted user ID in DB.
-	IDEncDBFieldName = "id_enc"
+	UserIDEncDBFieldName = "id.id_enc"
 	// EncKeyVersionDBFieldName is a field name for encryption key version in DB.
-	EncKeyVersionDBFieldName = "enc_key_version"
+	UserIDEncKeyVersionDBFieldName = "id.enc_key_version"
+	// UserIDHMACDBFieldName is a field name for HMAC of user ID in DB.
+	UserIDHMACDBFieldName = "id.id_hmac"
+	// UserIDHMACKeyVersionDBFieldName is a field name for HMAC key version in DB.
+	UserIDHMACKeyVersionDBFieldName = "id.hmac_key_version"
 )
 
 // UserModel is a structure that represents user in DB.
@@ -498,9 +505,8 @@ func (m *userManagerImpl) newUserContext(user UserModel, priv PrivacyMode) *user
 }
 
 func newPublicUserContext(user *tele.User) *userContextImpl {
-	um, _ := newUserModel(user, "", nil, nil)
 	return &userContextImpl{
-		user:     um,
+		user:     newUserModel(user, NewPlainUserID(user.ID), ""),
 		isPublic: true,
 	}
 }
@@ -1262,26 +1268,12 @@ func (u *userContextImpl) clearUserID() {
 	u.userID = nil
 }
 
-func newUserModel(tUser *tele.User, priv PrivacyMode, encKey, hmacKey *EncryptionKey) (UserModel, error) {
-	var err error
-
-	id := NewPlainUserID(tUser.ID)
-
+func newUserModel(tUser *tele.User, userID FullUserID, priv PrivacyMode) UserModel {
 	if priv.IsStrict() {
-		if encKey == nil {
-			return UserModel{}, erro.New("encryption key is nil")
-		}
-		if hmacKey == nil {
-			return UserModel{}, erro.New("HMAC key is nil")
-		}
-		id, err = NewPrivateUserID(tUser.ID, encKey, hmacKey)
-		if err != nil {
-			return UserModel{}, err
-		}
+		userID.IDPlain = nil
 	}
-
-	um := UserModel{
-		ID:           id,
+	return UserModel{
+		ID:           userID,
 		IsBot:        tUser.IsBot,
 		LanguageCode: ParseLanguageOrDefault(tUser.LanguageCode),
 		Info:         newUserInfoWithSanitize(tUser, priv),
@@ -1298,8 +1290,6 @@ func newUserModel(tUser *tele.User, priv PrivacyMode, encKey, hmacKey *Encryptio
 		},
 		Values: make(map[string]any),
 	}
-
-	return um, nil
 }
 
 func newUserInfoWithSanitize(tUser *tele.User, priv PrivacyMode) UserInfo {
@@ -1343,26 +1333,24 @@ type userManagerImpl struct {
 	log   Logger
 	metr  *metrics
 
-	priv    PrivacyMode
-	encKey  *EncryptionKey
-	hmacKey *EncryptionKey
+	priv         PrivacyMode
+	keysProvider KeysProvider
 }
 
 func newUserManager(opts Options) (*userManagerImpl, error) {
-	users, err := newUserCache(opts.Config.Bot.Privacy.Mode, opts.HMACKey,
+	users, err := newUserCache(opts.Config.Bot.Privacy.Mode, opts.KeysProvider,
 		opts.Config.Bot.UserCacheCapacity, opts.Config.Bot.UserCacheTTL)
 	if err != nil {
 		return nil, erro.Wrap(err, "failed to create user cache")
 	}
 
 	m := &userManagerImpl{
-		metr:    opts.metrics,
-		users:   users,
-		db:      opts.UserDB,
-		log:     opts.Logger,
-		priv:    opts.Config.Bot.Privacy.Mode,
-		encKey:  opts.EncryptionKey,
-		hmacKey: opts.HMACKey,
+		metr:         opts.metrics,
+		users:        users,
+		db:           opts.UserDB,
+		log:          opts.Logger,
+		priv:         opts.Config.Bot.Privacy.Mode,
+		keysProvider: opts.KeysProvider,
 	}
 
 	return m, nil
@@ -1382,13 +1370,19 @@ func (m *userManagerImpl) prepareUser(tUser *tele.User) (*userContextImpl, error
 		return user, nil
 	}
 
-	return m.createUser(tUser)
+	return m.createUser(tUser,
+		m.keysProvider.GetEncryptionKey(),
+		m.keysProvider.GetHMACKey(),
+	)
 }
 
 func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 	if userID == 0 {
 		m.log.Error("invalid user ID", "user_id", userID, "error", "userID cannot be zero")
-		return m.createFallbackUser(&tele.User{ID: 1})
+		return m.createFallbackUser(&tele.User{ID: 1},
+			m.keysProvider.GetEncryptionKey(),
+			m.keysProvider.GetHMACKey(),
+		)
 	}
 
 	user, found := m.users.getByID(userID)
@@ -1399,26 +1393,29 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 	m.log.Warn("user not found in cache", "user_id", userID, "action", "attempting to create new user")
 
 	tUser := &tele.User{ID: userID}
+	encryptionKey := m.keysProvider.GetEncryptionKey()
+	hmacKey := m.keysProvider.GetHMACKey()
 
-	user, err := m.createUser(tUser)
+	user, err := m.createUser(tUser, encryptionKey, hmacKey)
 	if err != nil {
 		m.log.Error("cannot create user after cache miss",
 			"user_id", userID,
 			"error", err.Error(),
 			"error_type", fmt.Sprintf("%T", err))
 
-		return m.createFallbackUser(tUser)
+		return m.createFallbackUser(tUser, encryptionKey, hmacKey)
 	}
 
 	return user
 }
 
-func (m *userManagerImpl) createFallbackUser(tUser *tele.User) *userContextImpl {
-	um, err := newUserModel(tUser, m.priv, m.encKey, m.hmacKey)
+func (m *userManagerImpl) createFallbackUser(tUser *tele.User, encryptionKey, hmacKey *EncryptionKey) *userContextImpl {
+	userID, err := NewPrivateUserID(tUser.ID, encryptionKey, hmacKey)
 	if err != nil {
-		m.log.Error("failed to create fallback user", "error", err.Error())
-		return m.newUserContext(UserModel{}, m.priv)
+		m.log.Error("failed to create private user ID for fallback user", "error", err.Error())
+		userID = NewPlainUserID(tUser.ID)
 	}
+	um := newUserModel(tUser, userID, m.priv)
 	return m.newUserContext(um, m.priv)
 }
 
@@ -1431,7 +1428,7 @@ func (m *userManagerImpl) getAllUsers() []User {
 	return out
 }
 
-func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error) {
+func (m *userManagerImpl) createUser(tUser *tele.User, encryptionKey, hmacKey *EncryptionKey) (*userContextImpl, error) {
 	if tUser == nil {
 		return nil, erro.New("cannot create user: telegram user is nil")
 	}
@@ -1444,7 +1441,7 @@ func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error)
 	userID := NewPlainUserID(tUser.ID)
 
 	if m.priv.IsStrict() {
-		userID, err = NewPrivateUserID(tUser.ID, m.encKey, m.hmacKey)
+		userID, err = NewPrivateUserID(tUser.ID, encryptionKey, hmacKey)
 		if err != nil {
 			return nil, erro.Wrap(err, "failed to create user ID", "user_id", tUser.ID)
 		}
@@ -1456,10 +1453,7 @@ func (m *userManagerImpl) createUser(tUser *tele.User) (*userContextImpl, error)
 	}
 
 	if !isFound {
-		userModel, err = newUserModel(tUser, m.priv, m.encKey, m.hmacKey)
-		if err != nil {
-			return nil, erro.Wrap(err, "failed to create user model", "user_id", tUser.ID)
-		}
+		userModel = newUserModel(tUser, userID, m.priv)
 		if err := m.db.Insert(ctx, userModel); err != nil {
 			return nil, erro.Wrap(err, "failed to insert new user into database", "user_id", tUser.ID)
 		}
@@ -1647,12 +1641,12 @@ func (t *textStateManagerImpl) has(state State) bool {
 type userCache struct {
 	usersByPlainID *otter.Cache[int64, *userContextImpl]
 	usersByHMACID  *otter.Cache[string, *userContextImpl]
-	hmacKey        *EncryptionKey
+	keysProvider   KeysProvider
 }
 
-func newUserCache(priv PrivacyMode, hmacKey *EncryptionKey, userCacheCapacity int, userCacheTTL time.Duration) (out *userCache, err error) {
+func newUserCache(priv PrivacyMode, keysProvider KeysProvider, userCacheCapacity int, userCacheTTL time.Duration) (out *userCache, err error) {
 	out = &userCache{
-		hmacKey: hmacKey,
+		keysProvider: keysProvider,
 	}
 	if priv.IsStrict() {
 		out.usersByHMACID, err = newCache[string](userCacheCapacity, userCacheTTL)
@@ -1671,7 +1665,7 @@ func (c *userCache) get(fullID FullUserID) (user *userContextImpl, found bool) {
 	} else if c.usersByHMACID != nil {
 		id := fullID.IDHMAC
 		if len(id) == 0 {
-			id = NewHMAC(lang.Deref(fullID.IDPlain), c.hmacKey)
+			id = NewHMAC(lang.Deref(fullID.IDPlain), c.keysProvider.GetHMACKey())
 		}
 		user, found = c.usersByHMACID.Get(hex.EncodeToString(id))
 	}
@@ -1688,7 +1682,7 @@ func (c *userCache) set(fullID FullUserID, user *userContextImpl) bool {
 	} else if c.usersByHMACID != nil {
 		id := fullID.IDHMAC
 		if len(id) == 0 {
-			id = NewHMAC(lang.Deref(fullID.IDPlain), c.hmacKey)
+			id = NewHMAC(lang.Deref(fullID.IDPlain), c.keysProvider.GetHMACKey())
 		}
 		return c.usersByHMACID.Set(hex.EncodeToString(id), user)
 	}
@@ -1701,7 +1695,7 @@ func (c *userCache) delete(fullID FullUserID) {
 	} else if c.usersByHMACID != nil {
 		id := fullID.IDHMAC
 		if len(id) == 0 {
-			id = NewHMAC(lang.Deref(fullID.IDPlain), c.hmacKey)
+			id = NewHMAC(lang.Deref(fullID.IDPlain), c.keysProvider.GetHMACKey())
 		}
 		c.usersByHMACID.Delete(hex.EncodeToString(id))
 	}
