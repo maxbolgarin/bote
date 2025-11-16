@@ -920,7 +920,12 @@ func (c *contextImpl) prepareEditError(err error, msgID int) error {
 
 func (c *contextImpl) validateUserInput(methodName string) bool {
 	if c.user.isPublic {
-		c.bt.bot.log.Error("cannot use user methods (", methodName, ") in public chats", "chat_id", c.ChatID())
+		c.bt.bot.log.Error("cannot use user methods ("+methodName+") in public chats", "chat_id", c.ChatID())
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		return false
+	}
+	if c.user.ID() == 0 {
+		c.bt.bot.log.Error("cannot use user methods (" + methodName + ") outside of handler context")
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return false
 	}

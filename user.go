@@ -234,6 +234,9 @@ func (u FullUserID) String() string {
 		return strconv.FormatInt(*u.IDPlain, 10)
 	}
 	if len(u.IDHMAC) > 0 {
+		if len(u.IDHMAC) > 8 {
+			return hex.EncodeToString(u.IDHMAC)[:8]
+		}
 		return hex.EncodeToString(u.IDHMAC)
 	}
 	return "[ENCRYPTED]"
@@ -1364,7 +1367,7 @@ func (m *userManagerImpl) prepareUser(tUser *tele.User) (*userContextImpl, error
 		m.metr.setUserCacheSize(m.users.size())
 	}()
 
-	user, found := m.users.getByID(tUser.ID)
+	user, found := m.users.get(tUser.ID)
 	if found {
 		user.update(tUser)
 		return user, nil
@@ -1378,19 +1381,19 @@ func (m *userManagerImpl) prepareUser(tUser *tele.User) (*userContextImpl, error
 
 func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 	if userID == 0 {
-		m.log.Error("invalid user ID", "user_id", userID, "error", "userID cannot be zero")
+		m.log.Error("invalid user ID", "user_id", prepareUserID(userID, m.priv), "error", "userID cannot be zero")
 		return m.createFallbackUser(&tele.User{ID: 1},
 			m.keysProvider.GetEncryptionKey(),
 			m.keysProvider.GetHMACKey(),
 		)
 	}
 
-	user, found := m.users.getByID(userID)
+	user, found := m.users.get(userID)
 	if found {
 		return user
 	}
 
-	m.log.Warn("user not found in cache", "user_id", userID, "action", "attempting to create new user")
+	m.log.Warn("user not found in cache", "user_id", prepareUserID(userID, m.priv))
 
 	tUser := &tele.User{ID: userID}
 	encryptionKey := m.keysProvider.GetEncryptionKey()
@@ -1399,7 +1402,7 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 	user, err := m.createUser(tUser, encryptionKey, hmacKey)
 	if err != nil {
 		m.log.Error("cannot create user after cache miss",
-			"user_id", userID,
+			"user_id", prepareUserID(userID, m.priv),
 			"error", err.Error(),
 			"error_type", fmt.Sprintf("%T", err))
 
@@ -1443,50 +1446,50 @@ func (m *userManagerImpl) createUser(tUser *tele.User, encryptionKey, hmacKey *E
 	if m.priv.IsStrict() {
 		userID, err = NewPrivateUserID(tUser.ID, encryptionKey, hmacKey)
 		if err != nil {
-			return nil, erro.Wrap(err, "failed to create user ID", "user_id", tUser.ID)
+			return nil, erro.Wrap(err, "failed to create user ID", "user_id", userID.String())
 		}
 	}
 
 	userModel, isFound, err := m.db.Find(ctx, userID)
 	if err != nil {
-		return nil, erro.Wrap(err, "failed to find user in database", "user_id", tUser.ID)
+		return nil, erro.Wrap(err, "failed to find user in database", "user_id", userID.String())
 	}
 
 	if !isFound {
 		userModel = newUserModel(tUser, userID, m.priv)
 		if err := m.db.Insert(ctx, userModel); err != nil {
-			return nil, erro.Wrap(err, "failed to insert new user into database", "user_id", tUser.ID)
+			return nil, erro.Wrap(err, "failed to insert new user into database", "user_id", userID.String())
 		}
 	}
 
 	user := m.newUserContext(userModel, m.priv)
-	if ok := m.users.set(userModel.ID, user); !ok {
-		m.log.Warn("failed to add user to cache", "user_id", user.user.ID, "username", user.user.Info.Username)
+	if ok := m.users.set(tUser.ID, user); !ok {
+		m.log.Warn("failed to add user to cache", "user_id", user.user.ID.String())
 	}
 
 	// Disabled user -> user blocked bot
 	// If user gets here -> he makes request -> he unblock bot
 	if userModel.IsDisabled {
-		m.log.Info("enabling previously disabled user", "user_id", user.user.ID, "username", user.user.Info.Username)
+		m.log.Info("enabling previously disabled user", "user_id", user.user.ID.String())
 		user.enable()
 	} else {
-		m.log.Info("new user created", "user_id", user.user.ID, "username", user.user.Info.Username)
+		m.log.Info("new user created", "user_id", user.user.ID.String())
 	}
 
 	return user, nil
 }
 
 func (m *userManagerImpl) disableUser(userID int64) {
-	u, ok := m.users.getByID(userID)
+	u, ok := m.users.get(userID)
 	if !ok {
 		return
 	}
 	u.disable()
-	m.users.delete(NewPlainUserID(userID))
+	m.users.delete(userID)
 }
 
 func (m *userManagerImpl) deleteUser(userID int64) {
-	m.users.delete(NewPlainUserID(userID))
+	m.users.delete(userID)
 }
 
 type inMemoryUserStorage struct {
@@ -1518,7 +1521,7 @@ func (m *inMemoryUserStorage) Insert(ctx context.Context, user UserModel) error 
 	}
 
 	if !m.cache.Set(id, user) {
-		return erro.Wrap(erro.New("cache rejected insertion"), fmt.Sprintf("failed to insert user %d into in-memory storage", id))
+		return erro.Wrap(erro.New("cache rejected insertion"), "failed to insert user into in-memory storage")
 	}
 	return nil
 }
@@ -1659,45 +1662,33 @@ func newUserCache(priv PrivacyMode, keysProvider KeysProvider, userCacheCapacity
 	return out, nil
 }
 
-func (c *userCache) get(fullID FullUserID) (user *userContextImpl, found bool) {
+func (c *userCache) get(id int64) (user *userContextImpl, found bool) {
 	if c.usersByPlainID != nil {
-		user, found = c.usersByPlainID.Get(lang.Deref(fullID.IDPlain))
+		user, found = c.usersByPlainID.Get(id)
 	} else if c.usersByHMACID != nil {
-		id := fullID.IDHMAC
-		if len(id) == 0 {
-			id = NewHMAC(lang.Deref(fullID.IDPlain), c.keysProvider.GetHMACKey())
-		}
-		user, found = c.usersByHMACID.Get(hex.EncodeToString(id))
+		idHMAC := NewHMAC(id, c.keysProvider.GetHMACKey())
+		user, found = c.usersByHMACID.Get(hex.EncodeToString(idHMAC))
 	}
 	return user, found
 }
 
-func (c *userCache) getByID(id int64) (user *userContextImpl, found bool) {
-	return c.get(NewPlainUserID(id))
-}
-
-func (c *userCache) set(fullID FullUserID, user *userContextImpl) bool {
+func (c *userCache) set(id int64, user *userContextImpl) bool {
 	if c.usersByPlainID != nil {
-		return c.usersByPlainID.Set(lang.Deref(fullID.IDPlain), user)
+		return c.usersByPlainID.Set(id, user)
+
 	} else if c.usersByHMACID != nil {
-		id := fullID.IDHMAC
-		if len(id) == 0 {
-			id = NewHMAC(lang.Deref(fullID.IDPlain), c.keysProvider.GetHMACKey())
-		}
-		return c.usersByHMACID.Set(hex.EncodeToString(id), user)
+		idHMAC := NewHMAC(id, c.keysProvider.GetHMACKey())
+		return c.usersByHMACID.Set(hex.EncodeToString(idHMAC), user)
 	}
 	return false
 }
 
-func (c *userCache) delete(fullID FullUserID) {
+func (c *userCache) delete(id int64) {
 	if c.usersByPlainID != nil {
-		c.usersByPlainID.Delete(lang.Deref(fullID.IDPlain))
+		c.usersByPlainID.Delete(id)
 	} else if c.usersByHMACID != nil {
-		id := fullID.IDHMAC
-		if len(id) == 0 {
-			id = NewHMAC(lang.Deref(fullID.IDPlain), c.keysProvider.GetHMACKey())
-		}
-		c.usersByHMACID.Delete(hex.EncodeToString(id))
+		idHMAC := NewHMAC(id, c.keysProvider.GetHMACKey())
+		c.usersByHMACID.Delete(hex.EncodeToString(idHMAC))
 	}
 }
 
@@ -1738,4 +1729,11 @@ func newCache[K comparable](capacity int, ttl time.Duration) (*otter.Cache[K, *u
 		return nil, erro.Wrap(err, "failed to create user cache with capacity %d", capacity)
 	}
 	return &c, nil
+}
+
+func prepareUserID(userID int64, priv PrivacyMode) string {
+	if priv.IsStrict() {
+		return "[REDACTED]"
+	}
+	return strconv.FormatInt(userID, 10)
 }
