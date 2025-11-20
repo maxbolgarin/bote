@@ -307,6 +307,11 @@ type LogConfig struct {
 	// Environment variable: BOTE_LOG_LEVEL.
 	Level string `yaml:"level" json:"level" env:"BOTE_LOG_LEVEL"`
 
+	// HideUserData is a flag that enables hiding user messages, callback data and pressed buttons from logs.
+	// Default: false (even in strict privacy because in strict we use HMAC user_id that prevents from identification)
+	// Environment variable: BOTE_LOG_HIDE_USER_DATA.
+	HideUserData bool `yaml:"hide_user_data" json:"hide_user_data" env:"BOTE_LOG_HIDE_USER_DATA"`
+
 	// DebugIncomingUpdates is a flag that enables logging of incoming updates.
 	// It is not for production use.
 	// Default: false.

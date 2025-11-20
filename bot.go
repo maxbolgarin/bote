@@ -39,11 +39,12 @@ type Bot struct {
 
 	defaultLanguage Language
 
-	middlewares    *abstract.SafeSlice[MiddlewareFunc]
-	stateMap       *abstract.SafeMap[string, InitBundle]
-	startHandler   HandlerFunc
-	deleteMessages bool
-	logUpdates     bool
+	middlewares        *abstract.SafeSlice[MiddlewareFunc]
+	stateMap           *abstract.SafeMap[string, InitBundle]
+	startHandler       HandlerFunc
+	deleteMessages     bool
+	logUpdates         bool
+	hideUserDataInLogs bool
 
 	wp          *webhookPoller
 	webhookInit chan struct{}
@@ -88,12 +89,13 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 		msgs: opts.Msgs,
 		rlog: opts.UpdateLogger,
 
-		defaultLanguage: opts.Config.Bot.DefaultLanguage,
-		middlewares:     abstract.NewSafeSlice[MiddlewareFunc](),
-		stateMap:        abstract.NewSafeMap[string, InitBundle](),
-		deleteMessages:  lang.Deref(opts.Config.Bot.DeleteMessages),
-		logUpdates:      lang.Deref(opts.Config.Log.LogUpdates),
-		webhookInit:     make(chan struct{}),
+		defaultLanguage:    opts.Config.Bot.DefaultLanguage,
+		middlewares:        abstract.NewSafeSlice[MiddlewareFunc](),
+		stateMap:           abstract.NewSafeMap[string, InitBundle](),
+		deleteMessages:     lang.Deref(opts.Config.Bot.DeleteMessages),
+		logUpdates:         lang.Deref(opts.Config.Log.LogUpdates),
+		webhookInit:        make(chan struct{}),
+		hideUserDataInLogs: opts.Config.Log.HideUserData,
 	}
 
 	b.addMiddleware(bote.masterMiddleware, tele.ChatPrivate)
@@ -511,7 +513,7 @@ func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) bool {
 	switch {
 	case upd.Message != nil:
 		fields = append(fields, "state", user.user.State.Main, "msg_id", upd.Message.ID)
-		if !b.um.priv.IsStrict() {
+		if !b.hideUserDataInLogs {
 			fields = append(fields, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
 		}
 		if msgID, st := user.lastTextMessageState(); msgID != 0 {
@@ -530,7 +532,7 @@ func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) bool {
 			fields = append(fields, "state", user.user.State.Main)
 		}
 
-		if !b.um.priv.IsStrict() {
+		if !b.hideUserDataInLogs {
 			btnName, payload := user.getBtnAndPayload()
 			if btnName != "" {
 				fields = append(fields, "button", btnName)
