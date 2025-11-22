@@ -203,29 +203,29 @@ func (u FullUserID) IsEmpty() bool {
 // If key is not provided, it returns error.
 // If there is an error during decryption, it returns error.
 func (u FullUserID) ID(encKeys ...*EncryptionKey) (int64, error) {
-	if len(encKeys) == 0 || encKeys[0] == nil {
-		return 0, errors.New("encryption keys are not set")
-	}
 	if u.IDPlain != nil {
 		return *u.IDPlain, nil
 	}
 	if u.IDEnc == nil {
 		return 0, errors.New("encrypted ID is not set")
 	}
+	if len(encKeys) == 0 || encKeys[0] == nil {
+		return 0, errors.New("keys are not provided")
+	}
 	var errs []error
 	for i, encKey := range encKeys {
 		if encKey == nil || encKey.key == nil {
-			errs = append(errs, fmt.Errorf("%d: encryption key is nil", i+1))
+			errs = append(errs, fmt.Errorf("%d: key is nil", i+1))
 			continue
 		}
 		plaintext, err := abstract.DecryptAES(u.IDEnc, encKey.key)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%d: failed to decrypt encrypted ID with key version %d: %w", i+1, encKey.version, err))
+			errs = append(errs, fmt.Errorf("%d: decrypt with key version=%d: %w", i+1, lang.Deref(encKey.version), err))
 			continue
 		}
 		return int64(binary.BigEndian.Uint64(plaintext[:])), nil
 	}
-	return 0, fmt.Errorf("failed to decrypt encrypted ID: %w", errors.Join(errs...))
+	return 0, fmt.Errorf("decrypt ID: %w", errors.Join(errs...))
 }
 
 // String returns plain user ID as a string if it is set, otherwise returns "[ENCRYPTED]".
