@@ -345,6 +345,17 @@ func (b *Bot) SetMessageProvider(msgs MessageProvider) {
 	b.msgs = msgs
 }
 
+func (b *Bot) GetUserID(userID FullUserID) (int64, error) {
+	if userID.IDPlain != nil {
+		return *userID.IDPlain, nil
+	}
+	userIDPlain, err := userID.ID(b.um.keysProvider.GetEncryptionKey())
+	if err != nil {
+		return 0, erro.Wrap(err, "decrypt user ID")
+	}
+	return userIDPlain, nil
+}
+
 func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 	msgs := ctx.user.Messages()
 	defer func() {
