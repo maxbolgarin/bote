@@ -1008,6 +1008,12 @@ type simpleKeysProvider struct {
 }
 
 func newSimpleKeysProvider(encryptionKeyString, hmacKeyString *string, encryptionKeyVersion, hmacKeyVersion *int64) (KeysProvider, error) {
+	if encryptionKeyString == nil && hmacKeyString == nil {
+		return &simpleKeysProvider{
+			encryptionKey: nil,
+			hmacKey:       nil,
+		}, nil
+	}
 	encryptionKey, err := NewEncryptionKeyFromString(*encryptionKeyString, encryptionKeyVersion)
 	if err != nil {
 		return nil, erro.Wrap(err, "parse encryption key")
