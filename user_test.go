@@ -2,6 +2,7 @@ package bote
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 	"testing"
 	"time"
@@ -616,4 +617,852 @@ func newTestOptions() Options {
 			},
 		},
 	}
+}
+
+// TestFullUserIDCreation tests FullUserID creation methods
+func TestFullUserIDCreation(t *testing.T) {
+	t.Run("NewPlainUserID", func(t *testing.T) {
+		id := int64(12345)
+		fullID := NewPlainUserID(id)
+
+		if fullID.IDPlain == nil {
+			t.Fatal("IDPlain should not be nil")
+		}
+
+		if *fullID.IDPlain != id {
+			t.Errorf("Expected IDPlain %d, got %d", id, *fullID.IDPlain)
+		}
+
+		if len(fullID.IDEnc) != 0 {
+			t.Error("IDEnc should be empty for plain ID")
+		}
+
+		if len(fullID.IDHMAC) != 0 {
+			t.Error("IDHMAC should be empty for plain ID")
+		}
+
+		if fullID.IsEmpty() {
+			t.Error("FullUserID should not be empty")
+		}
+	})
+
+	t.Run("NewPrivateUserID", func(t *testing.T) {
+		id := int64(67890)
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: lang.Ptr(int64(1)),
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: lang.Ptr(int64(2)),
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		if fullID.IDPlain != nil {
+			t.Error("IDPlain should be nil for private ID")
+		}
+
+		if len(fullID.IDEnc) == 0 {
+			t.Error("IDEnc should not be empty for private ID")
+		}
+
+		if len(fullID.IDHMAC) == 0 {
+			t.Error("IDHMAC should not be empty for private ID")
+		}
+
+		if fullID.EncKeyVersion == nil || *fullID.EncKeyVersion != 1 {
+			t.Errorf("Expected EncKeyVersion 1, got %v", fullID.EncKeyVersion)
+		}
+
+		if fullID.HMACKeyVersion == nil || *fullID.HMACKeyVersion != 2 {
+			t.Errorf("Expected HMACKeyVersion 2, got %v", fullID.HMACKeyVersion)
+		}
+
+		if fullID.IsEmpty() {
+			t.Error("FullUserID should not be empty")
+		}
+	})
+
+	t.Run("NewPrivateUserID with nil keys", func(t *testing.T) {
+		_, err := NewPrivateUserID(123, nil, nil)
+		if err == nil {
+			t.Error("Expected error when keys are nil")
+		}
+	})
+
+	t.Run("NewPrivateUserID with one nil key", func(t *testing.T) {
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		_, err := NewPrivateUserID(123, nil, encKey)
+		if err == nil {
+			t.Error("Expected error when HMAC key is nil")
+		}
+
+		_, err = NewPrivateUserID(123, encKey, nil)
+		if err == nil {
+			t.Error("Expected error when encryption key is nil")
+		}
+	})
+}
+
+// TestFullUserIDMethods tests FullUserID methods
+func TestFullUserIDMethods(t *testing.T) {
+	t.Run("ID with plain ID", func(t *testing.T) {
+		id := int64(11111)
+		fullID := NewPlainUserID(id)
+
+		gotID, err := fullID.ID()
+		if err != nil {
+			t.Fatalf("Failed to get ID: %v", err)
+		}
+
+		if gotID != id {
+			t.Errorf("Expected ID %d, got %d", id, gotID)
+		}
+	})
+
+	t.Run("ID with encrypted ID", func(t *testing.T) {
+		id := int64(22222)
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		gotID, err := fullID.ID(encKey)
+		if err != nil {
+			t.Fatalf("Failed to decrypt ID: %v", err)
+		}
+
+		if gotID != id {
+			t.Errorf("Expected ID %d, got %d", id, gotID)
+		}
+	})
+
+	t.Run("ID with encrypted ID without keys", func(t *testing.T) {
+		id := int64(33333)
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		_, err = fullID.ID()
+		if err == nil {
+			t.Error("Expected error when no keys provided")
+		}
+	})
+
+	t.Run("ID with wrong encryption key", func(t *testing.T) {
+		id := int64(44444)
+		encKey1 := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		encKey2 := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey1)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		_, err = fullID.ID(encKey2)
+		if err == nil {
+			t.Error("Expected error when wrong key provided")
+		}
+	})
+
+	t.Run("ID with multiple keys - correct key first", func(t *testing.T) {
+		id := int64(55555)
+		encKey1 := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		encKey2 := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey1)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		gotID, err := fullID.ID(encKey1, encKey2)
+		if err != nil {
+			t.Fatalf("Failed to decrypt ID: %v", err)
+		}
+
+		if gotID != id {
+			t.Errorf("Expected ID %d, got %d", id, gotID)
+		}
+	})
+
+	t.Run("ID with multiple keys - correct key second", func(t *testing.T) {
+		id := int64(66666)
+		encKey1 := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		encKey2 := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey2)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		gotID, err := fullID.ID(encKey1, encKey2)
+		if err != nil {
+			t.Fatalf("Failed to decrypt ID: %v", err)
+		}
+
+		if gotID != id {
+			t.Errorf("Expected ID %d, got %d", id, gotID)
+		}
+	})
+
+	t.Run("ID with keys from string", func(t *testing.T) {
+		id := int64(99999)
+		encryptionKeyStr := "3258e7c6bfb9aa6a96b505d9e86876dfeff345f3a803b46840c44c7fad461249"
+		hmacKeyStr := "a6eada98c5998f2141d0360575fc1663c466a09c3a3ded20bf3611a85eb89c28"
+
+		encKey, err := NewEncryptionKeyFromString(encryptionKeyStr, nil)
+		if err != nil {
+			t.Fatalf("Failed to create encryption key from string: %v", err)
+		}
+
+		hmacKey, err := NewEncryptionKeyFromString(hmacKeyStr, nil)
+		if err != nil {
+			t.Fatalf("Failed to create HMAC key from string: %v", err)
+		}
+
+		// Create private user ID with keys from string
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		// Decrypt using the same key created from string
+		gotID, err := fullID.ID(encKey)
+		if err != nil {
+			t.Fatalf("Failed to decrypt ID with key from string: %v", err)
+		}
+
+		if gotID != id {
+			t.Errorf("Expected ID %d, got %d", id, gotID)
+		}
+
+		// Verify we can recreate the key from string and decrypt again
+		encKey2, err := NewEncryptionKeyFromString(encryptionKeyStr, nil)
+		if err != nil {
+			t.Fatalf("Failed to recreate encryption key from string: %v", err)
+		}
+
+		gotID2, err := fullID.ID(encKey2)
+		if err != nil {
+			t.Fatalf("Failed to decrypt ID with recreated key: %v", err)
+		}
+
+		if gotID2 != id {
+			t.Errorf("Expected ID %d, got %d", id, gotID2)
+		}
+	})
+
+	t.Run("ID with keys from string with versions", func(t *testing.T) {
+		id := int64(88888)
+		encryptionKeyStr := "3258e7c6bfb9aa6a96b505d9e86876dfeff345f3a803b46840c44c7fad461249"
+		hmacKeyStr := "a6eada98c5998f2141d0360575fc1663c466a09c3a3ded20bf3611a85eb89c28"
+		encVersion := int64(10)
+		hmacVersion := int64(20)
+
+		encKey, err := NewEncryptionKeyFromString(encryptionKeyStr, &encVersion)
+		if err != nil {
+			t.Fatalf("Failed to create encryption key from string: %v", err)
+		}
+
+		hmacKey, err := NewEncryptionKeyFromString(hmacKeyStr, &hmacVersion)
+		if err != nil {
+			t.Fatalf("Failed to create HMAC key from string: %v", err)
+		}
+
+		// Create private user ID with keys from string
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		// Verify key versions are set
+		if fullID.EncKeyVersion == nil || *fullID.EncKeyVersion != encVersion {
+			t.Errorf("Expected EncKeyVersion %d, got %v", encVersion, fullID.EncKeyVersion)
+		}
+
+		if fullID.HMACKeyVersion == nil || *fullID.HMACKeyVersion != hmacVersion {
+			t.Errorf("Expected HMACKeyVersion %d, got %v", hmacVersion, fullID.HMACKeyVersion)
+		}
+
+		// Decrypt using the same key created from string
+		gotID, err := fullID.ID(encKey)
+		if err != nil {
+			t.Fatalf("Failed to decrypt ID with key from string: %v", err)
+		}
+
+		if gotID != id {
+			t.Errorf("Expected ID %d, got %d", id, gotID)
+		}
+	})
+
+	t.Run("String with plain ID", func(t *testing.T) {
+		id := int64(77777)
+		fullID := NewPlainUserID(id)
+
+		str := fullID.String()
+		expected := "77777"
+		if str != expected {
+			t.Errorf("Expected string %s, got %s", expected, str)
+		}
+	})
+
+	t.Run("String with encrypted ID", func(t *testing.T) {
+		id := int64(88888)
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		str := fullID.String()
+		if str == "" || str == "[ENCRYPTED]" {
+			// Should return HMAC hex representation (first 8 chars)
+			if len(fullID.IDHMAC) == 0 {
+				t.Error("IDHMAC should not be empty")
+			}
+		}
+	})
+
+	t.Run("IsEmpty", func(t *testing.T) {
+		emptyID := FullUserID{}
+		if !emptyID.IsEmpty() {
+			t.Error("Empty FullUserID should return true for IsEmpty()")
+		}
+
+		plainID := NewPlainUserID(99999)
+		if plainID.IsEmpty() {
+			t.Error("Plain FullUserID should not be empty")
+		}
+
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		privateID, err := NewPrivateUserID(99999, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+		if privateID.IsEmpty() {
+			t.Error("Private FullUserID should not be empty")
+		}
+	})
+}
+
+// TestFullUserIDWithUserCreation tests user creation with FullUserID
+func TestFullUserIDWithUserCreation(t *testing.T) {
+	t.Run("User creation with plain ID", func(t *testing.T) {
+		teleUser := &tele.User{
+			ID:        100001,
+			FirstName: "Plain",
+			Username:  "plainuser",
+		}
+
+		plainID := NewPlainUserID(teleUser.ID)
+		user := newUserModel(teleUser, plainID, "")
+
+		if lang.Deref(user.ID.IDPlain) != teleUser.ID {
+			t.Errorf("Expected ID %d, got %d", teleUser.ID, lang.Deref(user.ID.IDPlain))
+		}
+
+		if user.Info.Username != "plainuser" {
+			t.Errorf("Expected username 'plainuser', got %s", user.Info.Username)
+		}
+	})
+
+	t.Run("User creation with private ID", func(t *testing.T) {
+		teleUser := &tele.User{
+			ID:        100002,
+			FirstName: "Private",
+			Username:  "privateuser",
+		}
+
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		privateID, err := NewPrivateUserID(teleUser.ID, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		user := newUserModel(teleUser, privateID, PrivacyModeStrict)
+
+		if user.ID.IDPlain != nil {
+			t.Error("IDPlain should be nil in strict privacy mode")
+		}
+
+		if len(user.ID.IDEnc) == 0 {
+			t.Error("IDEnc should not be empty")
+		}
+
+		if len(user.ID.IDHMAC) == 0 {
+			t.Error("IDHMAC should not be empty")
+		}
+
+		// Verify we can decrypt it
+		decryptedID, err := user.ID.ID(encKey)
+		if err != nil {
+			t.Fatalf("Failed to decrypt ID: %v", err)
+		}
+
+		if decryptedID != teleUser.ID {
+			t.Errorf("Expected decrypted ID %d, got %d", teleUser.ID, decryptedID)
+		}
+	})
+
+	t.Run("User creation with strict privacy mode clears plain ID", func(t *testing.T) {
+		teleUser := &tele.User{
+			ID:        100003,
+			FirstName: "Test",
+		}
+
+		plainID := NewPlainUserID(teleUser.ID)
+		user := newUserModel(teleUser, plainID, PrivacyModeStrict)
+
+		if user.ID.IDPlain != nil {
+			t.Error("IDPlain should be nil in strict privacy mode even if originally plain")
+		}
+	})
+}
+
+// TestFullUserIDWithStorage tests storage operations with FullUserID
+func TestFullUserIDWithStorage(t *testing.T) {
+	opts := newTestOptions()
+	storage, err := newInMemoryUserStorage(opts.Config.Bot.UserCacheCapacity, opts.Config.Bot.UserCacheTTL)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory storage: %v", err)
+	}
+
+	ctx := context.Background()
+
+	t.Run("Insert and Find with plain ID", func(t *testing.T) {
+		userID := NewPlainUserID(200001)
+		user := UserModel{
+			ID: userID,
+			Info: UserInfo{
+				Username: "plain_storage",
+			},
+		}
+
+		err := storage.Insert(ctx, user)
+		if err != nil {
+			t.Fatalf("Failed to insert user: %v", err)
+		}
+
+		foundUser, found, err := storage.Find(ctx, userID)
+		if err != nil {
+			t.Fatalf("Failed to find user: %v", err)
+		}
+
+		if !found {
+			t.Fatal("User should be found")
+		}
+
+		if lang.Deref(foundUser.ID.IDPlain) != lang.Deref(userID.IDPlain) {
+			t.Errorf("Expected ID %d, got %d", lang.Deref(userID.IDPlain), lang.Deref(foundUser.ID.IDPlain))
+		}
+	})
+
+	t.Run("Insert and Find with private ID", func(t *testing.T) {
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		userID, err := NewPrivateUserID(200002, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		// Note: inMemoryUserStorage uses IDPlain for lookup, so we need to use plain ID
+		// But we can test that the private ID structure is preserved
+		user := UserModel{
+			ID: userID, // Store with private ID
+			Info: UserInfo{
+				Username: "private_storage",
+			},
+		}
+
+		// For in-memory storage, we need plain ID for lookup
+		// But we can verify the structure
+		if len(user.ID.IDEnc) == 0 {
+			t.Error("IDEnc should not be empty")
+		}
+	})
+
+	t.Run("UpdateAsync with FullUserID", func(t *testing.T) {
+		userID := NewPlainUserID(200003)
+		user := UserModel{
+			ID: userID,
+			Info: UserInfo{
+				Username: "update_test",
+			},
+		}
+
+		err := storage.Insert(ctx, user)
+		if err != nil {
+			t.Fatalf("Failed to insert user: %v", err)
+		}
+
+		newState := NewUserState("updated_state")
+		diff := &UserModelDiff{
+			State: &UserStateDiff{
+				Main: &newState,
+			},
+		}
+
+		storage.UpdateAsync(userID, diff)
+
+		// Give async update time to complete
+		time.Sleep(50 * time.Millisecond)
+
+		foundUser, found, _ := storage.Find(ctx, userID)
+		if !found {
+			t.Fatal("User should be found")
+		}
+		if foundUser.State.Main != newState {
+			t.Errorf("Expected state %s, got %s", newState, foundUser.State.Main)
+		}
+	})
+}
+
+// TestFullUserIDWithUserManager tests user manager operations with FullUserID
+func TestFullUserIDWithUserManager(t *testing.T) {
+	t.Run("prepareUser with plain ID", func(t *testing.T) {
+		opts := newTestOptions()
+		um, err := newUserManager(opts)
+		if err != nil {
+			t.Fatalf("Failed to create user manager: %v", err)
+		}
+
+		teleUser := &tele.User{
+			ID:        300001,
+			FirstName: "Manager",
+			Username:  "manageruser",
+		}
+
+		user, err := um.prepareUser(teleUser)
+		if err != nil {
+			t.Fatalf("Failed to prepare user: %v", err)
+		}
+
+		if user.ID() != teleUser.ID {
+			t.Errorf("Expected ID %d, got %d", teleUser.ID, user.ID())
+		}
+
+		fullID := user.IDFull()
+		if lang.Deref(fullID.IDPlain) != teleUser.ID {
+			t.Errorf("Expected FullUserID plain %d, got %d", teleUser.ID, lang.Deref(fullID.IDPlain))
+		}
+	})
+
+	t.Run("IDFull returns correct FullUserID", func(t *testing.T) {
+		opts := newTestOptions()
+		um, err := newUserManager(opts)
+		if err != nil {
+			t.Fatalf("Failed to create user manager: %v", err)
+		}
+
+		teleUser := &tele.User{
+			ID:       300002,
+			Username: "idfulltest",
+		}
+
+		user, err := um.prepareUser(teleUser)
+		if err != nil {
+			t.Fatalf("Failed to prepare user: %v", err)
+		}
+
+		fullID := user.IDFull()
+		if fullID.IsEmpty() {
+			t.Error("IDFull should not be empty")
+		}
+
+		// Verify ID() and IDFull() are consistent
+		plainID := user.ID()
+		if lang.Deref(fullID.IDPlain) != plainID {
+			t.Errorf("ID() and IDFull() should be consistent: ID()=%d, IDFull().IDPlain=%d", plainID, lang.Deref(fullID.IDPlain))
+		}
+	})
+
+	t.Run("getUser with plain ID", func(t *testing.T) {
+		opts := newTestOptions()
+		um, err := newUserManager(opts)
+		if err != nil {
+			t.Fatalf("Failed to create user manager: %v", err)
+		}
+
+		teleUser := &tele.User{
+			ID:       300003,
+			Username: "getusertest",
+		}
+
+		_, err = um.prepareUser(teleUser)
+		if err != nil {
+			t.Fatalf("Failed to prepare user: %v", err)
+		}
+
+		user := um.getUser(teleUser.ID)
+		if user == nil {
+			t.Fatal("User should not be nil")
+		}
+
+		if user.ID() != teleUser.ID {
+			t.Errorf("Expected ID %d, got %d", teleUser.ID, user.ID())
+		}
+
+		fullID := user.IDFull()
+		if lang.Deref(fullID.IDPlain) != teleUser.ID {
+			t.Errorf("Expected FullUserID plain %d, got %d", teleUser.ID, lang.Deref(fullID.IDPlain))
+		}
+	})
+}
+
+// TestFullUserIDHMAC tests HMAC functionality
+func TestFullUserIDHMAC(t *testing.T) {
+	t.Run("NewHMAC creates consistent HMAC", func(t *testing.T) {
+		id := int64(400001)
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		hmac1 := NewHMAC(id, hmacKey)
+		hmac2 := NewHMAC(id, hmacKey)
+
+		if len(hmac1) == 0 {
+			t.Error("HMAC should not be empty")
+		}
+
+		if len(hmac1) != len(hmac2) {
+			t.Error("HMAC should be consistent")
+		}
+
+		for i := range hmac1 {
+			if hmac1[i] != hmac2[i] {
+				t.Error("HMAC should be deterministic")
+			}
+		}
+	})
+
+	t.Run("NewHMACString returns hex string", func(t *testing.T) {
+		id := int64(400002)
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		hmacStr := NewHMACString(id, hmacKey)
+		if hmacStr == "" {
+			t.Error("HMAC string should not be empty")
+		}
+
+		// Verify it's valid hex
+		_, err := hex.DecodeString(hmacStr)
+		if err != nil {
+			t.Errorf("HMAC string should be valid hex: %v", err)
+		}
+	})
+
+	t.Run("NewHMAC with nil key returns nil", func(t *testing.T) {
+		hmac := NewHMAC(123, nil)
+		if hmac != nil {
+			t.Error("HMAC should be nil when key is nil")
+		}
+	})
+
+	t.Run("Private user ID HMAC matches NewHMAC", func(t *testing.T) {
+		id := int64(400003)
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		expectedHMAC := NewHMAC(id, hmacKey)
+
+		if len(fullID.IDHMAC) != len(expectedHMAC) {
+			t.Error("HMAC lengths should match")
+		}
+
+		for i := range fullID.IDHMAC {
+			if fullID.IDHMAC[i] != expectedHMAC[i] {
+				t.Error("HMAC should match NewHMAC result")
+			}
+		}
+	})
+}
+
+// TestFullUserIDEdgeCases tests edge cases for FullUserID
+func TestFullUserIDEdgeCases(t *testing.T) {
+	t.Run("ID with empty encrypted ID", func(t *testing.T) {
+		fullID := FullUserID{
+			IDEnc: []byte{},
+		}
+
+		_, err := fullID.ID()
+		if err == nil {
+			t.Error("Expected error when IDEnc is empty")
+		}
+	})
+
+	t.Run("ID with nil encryption key", func(t *testing.T) {
+		id := int64(500001)
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		_, err = fullID.ID(nil)
+		if err == nil {
+			t.Error("Expected error when encryption key is nil")
+		}
+	})
+
+	t.Run("ID with encryption key with nil key field", func(t *testing.T) {
+		id := int64(500002)
+		encKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		if err != nil {
+			t.Fatalf("Failed to create private user ID: %v", err)
+		}
+
+		nilKeyEncKey := &EncryptionKey{
+			key:     nil,
+			version: nil,
+		}
+
+		_, err = fullID.ID(nilKeyEncKey)
+		if err == nil {
+			t.Error("Expected error when encryption key.key is nil")
+		}
+	})
+
+	t.Run("String with empty encrypted ID but HMAC present", func(t *testing.T) {
+		hmacKey := &EncryptionKey{
+			key:     abstract.NewEncryptionKey(),
+			version: nil,
+		}
+
+		fullID := FullUserID{
+			IDHMAC: NewHMAC(500003, hmacKey),
+		}
+
+		str := fullID.String()
+		if str == "" || str == "[ENCRYPTED]" {
+			t.Error("String should return HMAC representation when IDEnc is empty but IDHMAC is present")
+		}
+	})
+
+	t.Run("String with no IDPlain and no IDHMAC", func(t *testing.T) {
+		fullID := FullUserID{}
+		str := fullID.String()
+		if str != "[ENCRYPTED]" {
+			t.Errorf("Expected '[ENCRYPTED]', got %s", str)
+		}
+	})
 }

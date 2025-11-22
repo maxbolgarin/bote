@@ -111,6 +111,21 @@ func NewEncryptionKeyFromString(key string, version *int64) (*EncryptionKey, err
 	}, nil
 }
 
+// Key returns the encryption key.
+func (k *EncryptionKey) Key() *[32]byte {
+	return k.key
+}
+
+// KeyBytes returns the encryption key as a byte slice.
+func (k *EncryptionKey) KeyBytes() []byte {
+	return k.key[:]
+}
+
+// Version returns the version of the encryption key.
+func (k *EncryptionKey) Version() *int64 {
+	return k.version
+}
+
 // String converts [EncryptionKey] to a string.
 func (k *EncryptionKey) String() string {
 	return hex.EncodeToString(k.key[:])
@@ -152,7 +167,7 @@ func NewPlainUserID(id int64) FullUserID {
 
 // NewPrivateUserID creates a new [FullUserID] with the given ID as an encrypted text.
 // It do not store plain user ID, only encrypted and HMAC parts.
-func NewPrivateUserID(id int64, hmacKey, encKey *EncryptionKey) (FullUserID, error) {
+func NewPrivateUserID(id int64, encKey, hmacKey *EncryptionKey) (FullUserID, error) {
 	if hmacKey == nil || encKey == nil {
 		return FullUserID{}, errors.New("hmac key or enc key is nil")
 	}
