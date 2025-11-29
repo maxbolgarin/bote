@@ -1405,6 +1405,7 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 
 	user, found := m.users.get(userID)
 	if found {
+		user.setUserID(userID)
 		return user
 	}
 
