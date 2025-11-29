@@ -457,7 +457,7 @@ func (c *contextImpl) Get(key string) string {
 }
 
 func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) (err error) {
-	if !c.validateUserInputWithMessage(mainMsg, "Send") {
+	if !c.validateUserInputWithMessage(mainMsg, "Send", newState) {
 		return nil
 	}
 
@@ -492,7 +492,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 }
 
 func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithMessage(msg, "SendMain") {
+	if !c.validateUserInputWithMessage(msg, "SendMain", newState) {
 		return nil
 	}
 
@@ -514,7 +514,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 }
 
 func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithMessage(msg, "SendNotification") {
+	if !c.validateUserInputWithMessage(msg, "SendNotification", NoChange) {
 		return nil
 	}
 
@@ -534,7 +534,7 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 }
 
 func (c *contextImpl) SendError(msg string, opts ...any) error {
-	if !c.validateUserInputWithMessage(msg, "SendError") {
+	if !c.validateUserInputWithMessage(msg, "SendError", NoChange) {
 		return nil
 	}
 
@@ -555,7 +555,7 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 }
 
 func (c *contextImpl) SendFile(name string, file []byte, opts ...any) error {
-	if !c.validateUserInputWithMessage(name, "SendFile") {
+	if !c.validateUserInputWithMessage(name, "SendFile", NoChange) {
 		return nil
 	}
 
@@ -598,7 +598,7 @@ func (c *contextImpl) SendInChat(chatID int64, threadID int, msg string, kb *tel
 }
 
 func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithMessage(mainMsg, "Edit") {
+	if !c.validateUserInputWithMessage(mainMsg, "Edit", newState) {
 		return nil
 	}
 	if headMsg == "" && headKb == nil {
@@ -623,7 +623,7 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 }
 
 func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithMessage(msg, "EditMain") {
+	if !c.validateUserInputWithMessage(msg, "EditMain", newState) {
 		return nil
 	}
 
@@ -640,7 +640,7 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 }
 
 func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithKeyboard(kb, "EditMainReplyMarkup") {
+	if !c.validateUserInputWithKeyboard(kb, "EditMainReplyMarkup", NoChange) {
 		return nil
 	}
 
@@ -654,7 +654,7 @@ func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 }
 
 func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithMessage(msg, "EditHistory") {
+	if !c.validateUserInputWithMessage(msg, "EditHistory", newState) {
 		return nil
 	}
 
@@ -669,7 +669,7 @@ func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tel
 }
 
 func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithKeyboard(kb, "EditHistoryReplyMarkup") {
+	if !c.validateUserInputWithKeyboard(kb, "EditHistoryReplyMarkup", NoChange) {
 		return nil
 	}
 
@@ -681,7 +681,7 @@ func (c *contextImpl) EditHistoryReplyMarkup(msgID int, kb *tele.ReplyMarkup, op
 }
 
 func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithMessage(msg, "EditHead") {
+	if !c.validateUserInputWithMessage(msg, "EditHead", NoChange) {
 		return nil
 	}
 
@@ -695,7 +695,7 @@ func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) er
 }
 
 func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
-	if !c.validateUserInputWithKeyboard(kb, "EditHeadReplyMarkup") {
+	if !c.validateUserInputWithKeyboard(kb, "EditHeadReplyMarkup", NoChange) {
 		return nil
 	}
 
@@ -728,7 +728,7 @@ func (c *contextImpl) EditInChat(chatID int64, msgID int, msg string, kb *tele.R
 }
 
 func (c *contextImpl) DeleteHistory(msgID int) error {
-	if !c.validateUserInput("DeleteHistory") {
+	if !c.validateUserInput("DeleteHistory", NoChange) {
 		return nil
 	}
 	if msgID == 0 {
@@ -748,7 +748,7 @@ func (c *contextImpl) DeleteHistory(msgID int) error {
 }
 
 func (c *contextImpl) DeleteHead() error {
-	if !c.validateUserInput("DeleteHead") {
+	if !c.validateUserInput("DeleteHead", NoChange) {
 		return nil
 	}
 	if c.user.Messages().HeadID == 0 {
@@ -762,7 +762,7 @@ func (c *contextImpl) DeleteHead() error {
 }
 
 func (c *contextImpl) DeleteNotification() error {
-	if !c.validateUserInput("DeleteNotification") {
+	if !c.validateUserInput("DeleteNotification", NoChange) {
 		return nil
 	}
 	if c.user.Messages().NotificationID == 0 {
@@ -776,7 +776,7 @@ func (c *contextImpl) DeleteNotification() error {
 }
 
 func (c *contextImpl) DeleteError() error {
-	if !c.validateUserInput("DeleteError") {
+	if !c.validateUserInput("DeleteError", NoChange) {
 		return nil
 	}
 	if c.user.Messages().ErrorID == 0 {
@@ -790,7 +790,7 @@ func (c *contextImpl) DeleteError() error {
 }
 
 func (c *contextImpl) DeleteAll(from int) {
-	if !c.validateUserInput("DeleteAll") {
+	if !c.validateUserInput("DeleteAll", NoChange) {
 		return
 	}
 	deleted := c.bt.bot.deleteHistory(c.user.ID(), from)
@@ -864,7 +864,7 @@ func (c *contextImpl) DeleteInChat(chatID int64, msgID int) error {
 }
 
 func (c *contextImpl) DeleteUser() bool {
-	if !c.validateUserInput("DeleteUser") {
+	if !c.validateUserInput("DeleteUser", NoChange) {
 		return false
 	}
 	isOK := true
@@ -918,22 +918,22 @@ func (c *contextImpl) prepareEditError(err error, msgID int) error {
 	return err
 }
 
-func (c *contextImpl) validateUserInput(methodName string) bool {
+func (c *contextImpl) validateUserInput(methodName string, state State) bool {
 	if c.user.isPublic {
-		c.bt.bot.log.Error("cannot use user methods ("+methodName+") in public chats", "chat_id", c.ChatID())
+		c.bt.bot.log.Error("cannot use user methods ("+methodName+") in public chats", "chat_id", c.ChatID(), "state", state)
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return false
 	}
 	if c.user.ID() == 0 {
-		c.bt.bot.log.Error("cannot use user methods (" + methodName + ") outside of handler context")
+		c.bt.bot.log.Error("cannot use user methods ("+methodName+") outside of handler context", "state", state)
 		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
 		return false
 	}
 	return true
 }
 
-func (c *contextImpl) validateUserInputWithMessage(msg string, methodName string) bool {
-	if !c.validateUserInput(methodName) {
+func (c *contextImpl) validateUserInputWithMessage(msg string, methodName string, state State) bool {
+	if !c.validateUserInput(methodName, state) {
 		return false
 	}
 	if msg == "" {
@@ -944,8 +944,8 @@ func (c *contextImpl) validateUserInputWithMessage(msg string, methodName string
 	return true
 }
 
-func (c *contextImpl) validateUserInputWithKeyboard(kb *tele.ReplyMarkup, methodName string) bool {
-	if !c.validateUserInput(methodName) {
+func (c *contextImpl) validateUserInputWithKeyboard(kb *tele.ReplyMarkup, methodName string, state State) bool {
+	if !c.validateUserInput(methodName, state) {
 		return false
 	}
 	if kb == nil {
