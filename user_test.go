@@ -633,11 +633,11 @@ func TestFullUserIDCreation(t *testing.T) {
 			t.Errorf("Expected IDPlain %d, got %d", id, *fullID.IDPlain)
 		}
 
-		if len(fullID.IDEnc) != 0 {
+		if fullID.IDEnc != nil {
 			t.Error("IDEnc should be empty for plain ID")
 		}
 
-		if len(fullID.IDHMAC) != 0 {
+		if fullID.IDHMAC != nil {
 			t.Error("IDHMAC should be empty for plain ID")
 		}
 
@@ -657,7 +657,7 @@ func TestFullUserIDCreation(t *testing.T) {
 			version: lang.Ptr(int64(2)),
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -666,11 +666,11 @@ func TestFullUserIDCreation(t *testing.T) {
 			t.Error("IDPlain should be nil for private ID")
 		}
 
-		if len(fullID.IDEnc) == 0 {
+		if fullID.IDEnc == nil {
 			t.Error("IDEnc should not be empty for private ID")
 		}
 
-		if len(fullID.IDHMAC) == 0 {
+		if fullID.IDHMAC == nil {
 			t.Error("IDHMAC should not be empty for private ID")
 		}
 
@@ -739,7 +739,7 @@ func TestFullUserIDMethods(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -765,7 +765,7 @@ func TestFullUserIDMethods(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -791,7 +791,7 @@ func TestFullUserIDMethods(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey1)
+		fullID, err := NewPrivateUserID(id, encKey1, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -817,7 +817,7 @@ func TestFullUserIDMethods(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey1)
+		fullID, err := NewPrivateUserID(id, encKey1, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -847,7 +847,7 @@ func TestFullUserIDMethods(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey2)
+		fullID, err := NewPrivateUserID(id, encKey2, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -878,7 +878,7 @@ func TestFullUserIDMethods(t *testing.T) {
 		}
 
 		// Create private user ID with keys from string
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -927,7 +927,7 @@ func TestFullUserIDMethods(t *testing.T) {
 		}
 
 		// Create private user ID with keys from string
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -974,7 +974,7 @@ func TestFullUserIDMethods(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -982,7 +982,7 @@ func TestFullUserIDMethods(t *testing.T) {
 		str := fullID.String()
 		if str == "" || str == "[ENCRYPTED]" {
 			// Should return HMAC hex representation (first 8 chars)
-			if len(fullID.IDHMAC) == 0 {
+			if fullID.IDHMAC == nil {
 				t.Error("IDHMAC should not be empty")
 			}
 		}
@@ -1008,7 +1008,7 @@ func TestFullUserIDMethods(t *testing.T) {
 			version: nil,
 		}
 
-		privateID, err := NewPrivateUserID(99999, hmacKey, encKey)
+		privateID, err := NewPrivateUserID(99999, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -1055,7 +1055,7 @@ func TestFullUserIDWithUserCreation(t *testing.T) {
 			version: nil,
 		}
 
-		privateID, err := NewPrivateUserID(teleUser.ID, hmacKey, encKey)
+		privateID, err := NewPrivateUserID(teleUser.ID, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -1066,11 +1066,11 @@ func TestFullUserIDWithUserCreation(t *testing.T) {
 			t.Error("IDPlain should be nil in strict privacy mode")
 		}
 
-		if len(user.ID.IDEnc) == 0 {
+		if user.ID.IDEnc == nil {
 			t.Error("IDEnc should not be empty")
 		}
 
-		if len(user.ID.IDHMAC) == 0 {
+		if user.ID.IDHMAC == nil {
 			t.Error("IDHMAC should not be empty")
 		}
 
@@ -1148,7 +1148,7 @@ func TestFullUserIDWithStorage(t *testing.T) {
 			version: nil,
 		}
 
-		userID, err := NewPrivateUserID(200002, hmacKey, encKey)
+		userID, err := NewPrivateUserID(200002, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -1164,7 +1164,7 @@ func TestFullUserIDWithStorage(t *testing.T) {
 
 		// For in-memory storage, we need plain ID for lookup
 		// But we can verify the structure
-		if len(user.ID.IDEnc) == 0 {
+		if user.ID.IDEnc == nil {
 			t.Error("IDEnc should not be empty")
 		}
 	})
@@ -1331,7 +1331,7 @@ func TestFullUserIDHMAC(t *testing.T) {
 			version: nil,
 		}
 
-		hmacStr := NewHMACString(id, hmacKey)
+		hmacStr := NewHMAC(id, hmacKey)
 		if hmacStr == "" {
 			t.Error("HMAC string should not be empty")
 		}
@@ -1345,7 +1345,7 @@ func TestFullUserIDHMAC(t *testing.T) {
 
 	t.Run("NewHMAC with nil key returns nil", func(t *testing.T) {
 		hmac := NewHMAC(123, nil)
-		if hmac != nil {
+		if hmac != "" {
 			t.Error("HMAC should be nil when key is nil")
 		}
 	})
@@ -1361,19 +1361,19 @@ func TestFullUserIDHMAC(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
 
 		expectedHMAC := NewHMAC(id, hmacKey)
 
-		if len(fullID.IDHMAC) != len(expectedHMAC) {
+		if len(lang.Deref(fullID.IDHMAC)) != len(expectedHMAC) {
 			t.Error("HMAC lengths should match")
 		}
 
-		for i := range fullID.IDHMAC {
-			if fullID.IDHMAC[i] != expectedHMAC[i] {
+		for i := range lang.Deref(fullID.IDHMAC) {
+			if lang.Deref(fullID.IDHMAC)[i] != expectedHMAC[i] {
 				t.Error("HMAC should match NewHMAC result")
 			}
 		}
@@ -1384,7 +1384,7 @@ func TestFullUserIDHMAC(t *testing.T) {
 func TestFullUserIDEdgeCases(t *testing.T) {
 	t.Run("ID with empty encrypted ID", func(t *testing.T) {
 		fullID := FullUserID{
-			IDEnc: []byte{},
+			IDEnc: lang.Ptr(""),
 		}
 
 		_, err := fullID.ID()
@@ -1404,7 +1404,7 @@ func TestFullUserIDEdgeCases(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -1426,7 +1426,7 @@ func TestFullUserIDEdgeCases(t *testing.T) {
 			version: nil,
 		}
 
-		fullID, err := NewPrivateUserID(id, hmacKey, encKey)
+		fullID, err := NewPrivateUserID(id, encKey, hmacKey)
 		if err != nil {
 			t.Fatalf("Failed to create private user ID: %v", err)
 		}
@@ -1449,7 +1449,7 @@ func TestFullUserIDEdgeCases(t *testing.T) {
 		}
 
 		fullID := FullUserID{
-			IDHMAC: NewHMAC(500003, hmacKey),
+			IDHMAC: lang.Ptr(NewHMAC(500003, hmacKey)),
 		}
 
 		str := fullID.String()

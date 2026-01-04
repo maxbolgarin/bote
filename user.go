@@ -145,11 +145,11 @@ type FullUserID struct {
 	IDPlain *int64 `json:"id_plain,omitempty" bson:"id_plain,omitempty" db:"id_plain,omitempty"`
 
 	// IDHMAC is a HMAC of IDPlain. It is used for searching user in DB by ID with plain ID is disabled.
-	// It is used if privacy mode is strict.
-	IDHMAC []byte `json:"id_hmac,omitempty" bson:"id_hmac,omitempty" db:"id_hmac,omitempty"`
+	// It is used if privacy mode is strict. It has a hex encoded string.
+	IDHMAC *string `json:"id_hmac,omitempty" bson:"id_hmac,omitempty" db:"id_hmac,omitempty"`
 	// IDEnc is an encrypted Telegram user ID. It is used to get readable IDPlain from IDEnc (HMAC is one way function).
-	// It is used instead of IDPlain when privacy mode is strict.
-	IDEnc []byte `json:"id_enc,omitempty" bson:"id_enc,omitempty" db:"id_enc,omitempty"`
+	// It is used instead of IDPlain when privacy mode is strict. It has a hex encoded string.
+	IDEnc *string `json:"id_enc,omitempty" bson:"id_enc,omitempty" db:"id_enc,omitempty"`
 	// HMACKeyVersion is a version of HMAC key for IDHMAC that used for HMAC of IDHMAC.
 	// It is used if privacy mode is strict.
 	HMACKeyVersion *int64 `json:"hmac_key_version,omitempty" bson:"hmac_key_version,omitempty" db:"hmac_key_version,omitempty"`
@@ -184,28 +184,23 @@ func NewPrivateUserID(id int64, encKey, hmacKey *EncryptionKey) (FullUserID, err
 	idHMAC := mac.Sum(nil)
 
 	return FullUserID{
-		IDHMAC:         idHMAC,
-		IDEnc:          idEnc,
+		IDHMAC:         lang.Ptr(hex.EncodeToString(idHMAC)),
+		IDEnc:          lang.Ptr(hex.EncodeToString(idEnc)),
 		EncKeyVersion:  encKey.version,
 		HMACKeyVersion: hmacKey.version,
 	}, nil
 }
 
 // NewHMAC creates a new HMAC of provided ID using provided HMAC key.
-func NewHMAC(id int64, hmacKey *EncryptionKey) []byte {
+func NewHMAC(id int64, hmacKey *EncryptionKey) string {
 	if hmacKey == nil {
-		return nil
+		return ""
 	}
 	var bytesID [8]byte
 	binary.BigEndian.PutUint64(bytesID[:], uint64(id))
 	mac := hmac.New(sha256.New, hmacKey.key[:])
 	mac.Write(bytesID[:])
-	return mac.Sum(nil)
-}
-
-// NewHMAC creates a new HMAC of provided ID using provided HMAC key.
-func NewHMACString(id int64, hmacKey *EncryptionKey) string {
-	return hex.EncodeToString(NewHMAC(id, hmacKey))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // IsEmpty returns true if all fields are nil.
@@ -233,7 +228,12 @@ func (u FullUserID) ID(encKeys ...*EncryptionKey) (int64, error) {
 			errs = append(errs, fmt.Errorf("%d: key is nil", i+1))
 			continue
 		}
-		plaintext, err := abstract.DecryptAES(u.IDEnc, encKey.key)
+		encryptedBytes, err := hex.DecodeString(lang.Deref(u.IDEnc))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%d: decode hex: %w", i+1, err))
+			continue
+		}
+		plaintext, err := abstract.DecryptAES(encryptedBytes, encKey.key)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%d: decrypt with key version=%d: %w", i+1, lang.Deref(encKey.version), err))
 			continue
@@ -248,11 +248,11 @@ func (u FullUserID) String() string {
 	if u.IDPlain != nil {
 		return strconv.FormatInt(*u.IDPlain, 10)
 	}
-	if len(u.IDHMAC) > 0 {
-		if len(u.IDHMAC) > 8 {
-			return hex.EncodeToString(u.IDHMAC)[:8]
+	if u.IDHMAC != nil {
+		if len(lang.Deref(u.IDHMAC)) > 8 {
+			return lang.Deref(u.IDHMAC)[:8]
 		}
-		return hex.EncodeToString(u.IDHMAC)
+		return lang.Deref(u.IDHMAC)
 	}
 	return "[ENCRYPTED]"
 }
@@ -1683,7 +1683,7 @@ func (c *userCache) get(id int64) (user *userContextImpl, found bool) {
 		user, found = c.usersByPlainID.Get(id)
 	} else if c.usersByHMACID != nil {
 		idHMAC := NewHMAC(id, c.keysProvider.GetHMACKey())
-		user, found = c.usersByHMACID.Get(hex.EncodeToString(idHMAC))
+		user, found = c.usersByHMACID.Get(idHMAC)
 	}
 	return user, found
 }
@@ -1694,7 +1694,7 @@ func (c *userCache) set(id int64, user *userContextImpl) bool {
 
 	} else if c.usersByHMACID != nil {
 		idHMAC := NewHMAC(id, c.keysProvider.GetHMACKey())
-		return c.usersByHMACID.Set(hex.EncodeToString(idHMAC), user)
+		return c.usersByHMACID.Set(idHMAC, user)
 	}
 	return false
 }
@@ -1704,7 +1704,7 @@ func (c *userCache) delete(id int64) {
 		c.usersByPlainID.Delete(id)
 	} else if c.usersByHMACID != nil {
 		idHMAC := NewHMAC(id, c.keysProvider.GetHMACKey())
-		c.usersByHMACID.Delete(hex.EncodeToString(idHMAC))
+		c.usersByHMACID.Delete(idHMAC)
 	}
 }
 
