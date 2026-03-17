@@ -6,6 +6,7 @@ require (
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/maxbolgarin/abstract v1.18.0
 	github.com/maxbolgarin/erro v1.0.1
+	github.com/maxbolgarin/gorder v1.1.0
 	github.com/maxbolgarin/lang v1.9.0
 	github.com/maxbolgarin/servex/v2 v2.2.0
 	github.com/maypok86/otter v1.2.4
@@ -25,7 +26,6 @@ require (
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
-	github.com/maxbolgarin/gorder v1.1.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
