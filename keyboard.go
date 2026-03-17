@@ -58,7 +58,14 @@ func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...strin
 		ctx.bt.bot.log.Warn("button data length is greater than "+strconv.Itoa(maxDataLength)+" bytes, it will be truncated",
 			"length", len(data),
 		)
-		data = data[:maxDataLength]
+		// Truncate at rune boundary to avoid splitting multi-byte UTF-8 characters
+		runes := []rune(data)
+		for i := len(runes); i > 0; i-- {
+			if truncated := string(runes[:i]); len(truncated) <= maxDataLength {
+				data = truncated
+				break
+			}
+		}
 	}
 	btn := tele.Btn{
 		Text:   name,
@@ -78,24 +85,26 @@ func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...strin
 }
 
 // CreateBtnData creates data string from dataList, that should be passed as data to callback button.
+// Data items are separated by '|', so individual items must not contain the '|' character.
+// Any '|' characters in data items will be replaced with '-' to prevent parsing corruption.
 // This method can be useful when creating [InitBundle] with providing [InitBundle.Data].
 func CreateBtnData(dataList ...string) string {
 	switch len(dataList) {
 	case 0:
 		return ""
 	case 1:
-		return dataList[0]
+		return strings.ReplaceAll(dataList[0], "|", "-")
 	}
 
 	var b strings.Builder
 	b.Grow(len(dataList[0]) + len(dataList[1:]) + 1)
 
-	b.WriteString(dataList[0])
+	b.WriteString(strings.ReplaceAll(dataList[0], "|", "-"))
 	for _, s := range dataList[1:] {
 		if s == "" {
 			continue
 		}
-		b.WriteString("|" + s)
+		b.WriteString("|" + strings.ReplaceAll(s, "|", "-"))
 	}
 	return b.String()
 }

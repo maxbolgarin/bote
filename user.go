@@ -566,8 +566,10 @@ func (u *userContextImpl) UpdateLanguage(language Language) {
 
 	u.mu.Lock()
 	u.user.ForceLanguageCode = language
+	userID := u.user.ID
 	u.mu.Unlock()
-	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		ForceLanguageCode: &language,
 	})
 }
@@ -1079,6 +1081,9 @@ func (u *userContextImpl) update(user *tele.User) {
 
 	u.mu.Lock()
 
+	// Capture userID while holding the lock to avoid data race on pointer fields
+	userID := u.user.ID
+
 	var updateBase bool
 	if u.user.IsBot != user.IsBot || u.user.LanguageCode != newLanguageCode {
 		updateBase = true
@@ -1086,7 +1091,7 @@ func (u *userContextImpl) update(user *tele.User) {
 
 	if u.priv == PrivacyModeStrict {
 		u.mu.Unlock()
-		u.updateBase(updateBase, newLanguageCode, user.IsBot)
+		u.updateBase(updateBase, newLanguageCode, user.IsBot, userID)
 		return
 	}
 
@@ -1095,19 +1100,18 @@ func (u *userContextImpl) update(user *tele.User) {
 	// Fast check because sanitize is expensive
 	if infoToCheck == u.user.Info {
 		u.mu.Unlock()
-		u.updateBase(updateBase, newLanguageCode, user.IsBot)
+		u.updateBase(updateBase, newLanguageCode, user.IsBot, userID)
 		return
 	}
 
 	newInfo := newUserInfoWithSanitize(user, u.priv)
 	if newInfo == u.user.Info {
 		u.mu.Unlock()
-		u.updateBase(updateBase, newLanguageCode, user.IsBot)
+		u.updateBase(updateBase, newLanguageCode, user.IsBot, userID)
 		return
 	}
 
 	u.user.Info = newInfo
-	userID := u.user.ID
 
 	u.mu.Unlock()
 
@@ -1123,9 +1127,9 @@ func (u *userContextImpl) update(user *tele.User) {
 	})
 }
 
-func (u *userContextImpl) updateBase(updateBase bool, languageCode Language, isBot bool) {
+func (u *userContextImpl) updateBase(updateBase bool, languageCode Language, isBot bool, userID FullUserID) {
 	if updateBase {
-		u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+		u.db.UpdateAsync(userID, &UserModelDiff{
 			IsBot:        &isBot,
 			LanguageCode: &languageCode,
 		})

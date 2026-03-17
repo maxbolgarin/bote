@@ -388,21 +388,26 @@ func (c *contextImpl) IsMentioned() bool {
 		return false
 	}
 
-	// Check for mention entities
+	// Check for mention entities.
+	// Telegram entity offsets are in UTF-16 code units, so convert text to []rune
+	// (works for BMP characters; supplementary plane characters like some emoji are
+	// 2 UTF-16 code units but 1 rune, however mention usernames are ASCII-only,
+	// so rune-based slicing is safe here as long as we validate bounds).
+	runes := []rune(msg.Text)
 	for _, entity := range msg.Entities {
 		if entity.Type == "mention" {
-			// Extract the mentioned username from the text
 			start := entity.Offset
 			end := start + entity.Length
-			if end <= len(msg.Text) {
-				mentionedUsername := msg.Text[start:end]
-				// Remove @ symbol if present
-				if len(mentionedUsername) > 0 && mentionedUsername[0] == '@' {
-					mentionedUsername = mentionedUsername[1:]
-				}
-				if mentionedUsername == botUsername {
-					return true
-				}
+			if start < 0 || end > len(runes) || start > end {
+				continue
+			}
+			mentionedUsername := string(runes[start:end])
+			// Remove @ symbol if present
+			if len(mentionedUsername) > 0 && mentionedUsername[0] == '@' {
+				mentionedUsername = mentionedUsername[1:]
+			}
+			if mentionedUsername == botUsername {
+				return true
 			}
 		}
 	}

@@ -513,9 +513,9 @@ func (enMessages) PrepareMessage(msg string, _ User, _ State, _ int, _ bool) str
 	return msg
 }
 
-// Case-insensitive regex patterns to detect and remove malicious sequences
-// This pattern matches "javascript:" or "data:" with optional whitespace
-var maliciousPattern = regexp.MustCompile(`(?i)(?:javascript|data)\s*:`)
+// Case-insensitive regex pattern to detect and remove malicious URI schemes.
+// Matches javascript:, data:, vbscript:, blob: with optional whitespace before the colon.
+var maliciousPattern = regexp.MustCompile(`(?i)(?:javascript|data|vbscript|blob)\s*:`)
 
 // sanitizeText sanitizes text inputs to prevent injection attacks
 func sanitizeText(text string, maxLength ...int) string {
@@ -535,19 +535,10 @@ func sanitizeText(text string, maxLength ...int) string {
 	}
 	text = cleaned.String()
 
-	// Normalize to lowercase for pattern matching
-	lowerText := strings.ToLower(text)
-
-	// Remove malicious patterns from the original text by finding matches in lowercase
-	// and removing corresponding parts from the original text
-	matches := maliciousPattern.FindAllStringIndex(lowerText, -1)
-	if len(matches) > 0 {
-		// Remove matches in reverse order to maintain correct indices
-		for i := len(matches) - 1; i >= 0; i-- {
-			match := matches[i]
-			text = text[:match[0]] + text[match[1]:]
-		}
-	}
+	// Remove malicious URI scheme patterns directly on the original text.
+	// The regex uses (?i) for case-insensitive matching, so no need for a separate
+	// lowercase copy (which could cause index misalignment with multi-byte characters).
+	text = maliciousPattern.ReplaceAllString(text, "")
 
 	// Do not trim or HTML-escape: keep original user formatting and symbols.
 
