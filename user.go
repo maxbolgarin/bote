@@ -804,7 +804,7 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 
 func (u *userContextImpl) prepareTextStates() {
 	// This method is always called with the lock held
-	if len(u.user.State.MessagesAwaitingText) != len(u.user.State.messagesStackInd) {
+	if u.user.State.messagesStackInd == nil || len(u.user.State.MessagesAwaitingText) != len(u.user.State.messagesStackInd) {
 		u.user.State.messagesStackInd = make(map[int]int, len(u.user.State.MessagesAwaitingText))
 		for i, v := range u.user.State.MessagesAwaitingText {
 			u.user.State.messagesStackInd[v] = i
@@ -1194,7 +1194,8 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 		u.user.State.Main = ConvertUserState(newState)
 		u.user.State.MessageStates[mainMsgID] = ConvertUserState(newState)
 
-		stateDiff.Main = &u.user.State.Main
+		mainState := u.user.State.Main
+		stateDiff.Main = &mainState
 		stateDiff.MessageStates = make(map[int]UserState, len(u.user.State.MessageStates))
 		maps.Copy(stateDiff.MessageStates, u.user.State.MessageStates)
 	}

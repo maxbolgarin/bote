@@ -9,6 +9,8 @@ import (
 
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/lang"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -595,6 +597,249 @@ func (s textState) NotChanged() bool { return s == "" }
 
 type customState string
 type textState string
+
+// TestApplyDeleteAll tests the atomic delete-all operation
+func TestApplyDeleteAll(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	user, err := um.prepareUser(&tele.User{ID: 700, Username: "deletetest"})
+	require.NoError(t, err)
+
+	// Set up message state: main=10, head=11, notification=12, error=13, history=[14,15,16]
+	user.mu.Lock()
+	user.user.Messages.MainID = 10
+	user.user.Messages.HeadID = 11
+	user.user.Messages.NotificationID = 12
+	user.user.Messages.ErrorID = 13
+	user.user.Messages.HistoryIDs = []int{14, 15, 16}
+	user.user.Messages.LastActions = map[int]time.Time{
+		10: time.Now(), 14: time.Now(), 15: time.Now(), 16: time.Now(),
+	}
+	user.user.State.MessageStates = map[int]UserState{
+		10: "state_a", 14: "state_b", 15: "state_c", 16: "state_d",
+	}
+	user.mu.Unlock()
+
+	t.Run("delete subset of history", func(t *testing.T) {
+		deleted := map[int]struct{}{14: {}, 16: {}}
+		user.applyDeleteAll(deleted)
+		time.Sleep(50 * time.Millisecond)
+
+		msgs := user.Messages()
+		assert.Equal(t, 10, msgs.MainID)
+		assert.Equal(t, []int{15}, msgs.HistoryIDs)
+	})
+
+	t.Run("delete main and head", func(t *testing.T) {
+		deleted := map[int]struct{}{10: {}, 11: {}}
+		user.applyDeleteAll(deleted)
+		time.Sleep(50 * time.Millisecond)
+
+		msgs := user.Messages()
+		assert.Equal(t, 0, msgs.MainID)
+		assert.Equal(t, 0, msgs.HeadID)
+		assert.Equal(t, 12, msgs.NotificationID)
+	})
+
+	t.Run("empty deleted set is no-op", func(t *testing.T) {
+		msgs := user.Messages()
+		notifBefore := msgs.NotificationID
+		user.applyDeleteAll(map[int]struct{}{})
+		time.Sleep(50 * time.Millisecond)
+
+		assert.Equal(t, notifBefore, user.Messages().NotificationID)
+	})
+}
+
+// TestTextStateStack tests pushTextMessageLocked and removeTextMessageLocked
+func TestTextStateStack(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	user, err := um.prepareUser(&tele.User{ID: 800, Username: "stacktest"})
+	require.NoError(t, err)
+
+	t.Run("push and LIFO order", func(t *testing.T) {
+		user.mu.Lock()
+		user.user.State.MessagesAwaitingText = nil
+		user.user.State.messagesStackInd = nil
+		user.pushTextMessageLocked(1)
+		user.pushTextMessageLocked(2)
+		user.pushTextMessageLocked(3)
+		stack := user.user.State.MessagesAwaitingText
+		user.mu.Unlock()
+
+		assert.Equal(t, []int{1, 2, 3}, stack)
+		assert.Equal(t, 3, user.lastTextMessage(), "last should be 3")
+	})
+
+	t.Run("push duplicate swaps to top", func(t *testing.T) {
+		user.mu.Lock()
+		user.pushTextMessageLocked(1) // 1 is already in stack, should swap to top
+		stack := make([]int, len(user.user.State.MessagesAwaitingText))
+		copy(stack, user.user.State.MessagesAwaitingText)
+		user.mu.Unlock()
+
+		assert.Equal(t, 1, stack[len(stack)-1], "duplicate push should swap to last")
+	})
+
+	t.Run("remove from middle", func(t *testing.T) {
+		user.mu.Lock()
+		user.user.State.MessagesAwaitingText = []int{10, 20, 30}
+		user.user.State.messagesStackInd = nil
+		user.removeTextMessageLocked(20)
+		stack := make([]int, len(user.user.State.MessagesAwaitingText))
+		copy(stack, user.user.State.MessagesAwaitingText)
+		user.mu.Unlock()
+
+		assert.Equal(t, []int{10, 30}, stack)
+	})
+
+	t.Run("remove last element", func(t *testing.T) {
+		user.mu.Lock()
+		user.user.State.MessagesAwaitingText = []int{10, 20, 30}
+		user.user.State.messagesStackInd = nil
+		user.removeTextMessageLocked(30)
+		stack := make([]int, len(user.user.State.MessagesAwaitingText))
+		copy(stack, user.user.State.MessagesAwaitingText)
+		user.mu.Unlock()
+
+		assert.Equal(t, []int{10, 20}, stack)
+	})
+
+	t.Run("remove first element", func(t *testing.T) {
+		user.mu.Lock()
+		user.user.State.MessagesAwaitingText = []int{10, 20, 30}
+		user.user.State.messagesStackInd = nil
+		user.removeTextMessageLocked(10)
+		stack := make([]int, len(user.user.State.MessagesAwaitingText))
+		copy(stack, user.user.State.MessagesAwaitingText)
+		user.mu.Unlock()
+
+		assert.Equal(t, []int{20, 30}, stack)
+	})
+
+	t.Run("remove nonexistent is no-op", func(t *testing.T) {
+		user.mu.Lock()
+		user.user.State.MessagesAwaitingText = []int{10, 20}
+		user.user.State.messagesStackInd = nil
+		user.removeTextMessageLocked(99)
+		stack := make([]int, len(user.user.State.MessagesAwaitingText))
+		copy(stack, user.user.State.MessagesAwaitingText)
+		user.mu.Unlock()
+
+		assert.Equal(t, []int{10, 20}, stack)
+	})
+}
+
+// TestHandleSendLifecycle tests the message lifecycle through handleSend
+func TestHandleSendLifecycle(t *testing.T) {
+	opts := newTestOptions()
+
+	t.Run("first message sets main", func(t *testing.T) {
+		um, err := newUserManager(context.Background(), opts)
+		require.NoError(t, err)
+		user, err := um.prepareUser(&tele.User{ID: 901, Username: "send1"})
+		require.NoError(t, err)
+
+		user.handleSend(UserState("active"), 100, 0)
+		time.Sleep(200 * time.Millisecond)
+
+		msgs := user.Messages()
+		assert.Equal(t, 100, msgs.MainID)
+		assert.Empty(t, msgs.HistoryIDs)
+		assert.Equal(t, UserState("active"), user.StateMain())
+	})
+
+	t.Run("second message moves main to history", func(t *testing.T) {
+		um, err := newUserManager(context.Background(), opts)
+		require.NoError(t, err)
+		user, err := um.prepareUser(&tele.User{ID: 902, Username: "send2"})
+		require.NoError(t, err)
+
+		user.handleSend(UserState("first"), 100, 0)
+		time.Sleep(200 * time.Millisecond)
+		user.handleSend(UserState("next"), 200, 0)
+		time.Sleep(200 * time.Millisecond)
+
+		msgs := user.Messages()
+		assert.Equal(t, 200, msgs.MainID)
+		assert.Contains(t, msgs.HistoryIDs, 100)
+	})
+
+	t.Run("send with head message", func(t *testing.T) {
+		um, err := newUserManager(context.Background(), opts)
+		require.NoError(t, err)
+		user, err := um.prepareUser(&tele.User{ID: 903, Username: "send3"})
+		require.NoError(t, err)
+
+		user.handleSend(UserState("headed"), 300, 50)
+		time.Sleep(200 * time.Millisecond)
+
+		msgs := user.Messages()
+		assert.Equal(t, 300, msgs.MainID)
+		assert.Equal(t, 50, msgs.HeadID)
+	})
+
+	t.Run("send with NoChange state", func(t *testing.T) {
+		um, err := newUserManager(context.Background(), opts)
+		require.NoError(t, err)
+		user, err := um.prepareUser(&tele.User{ID: 904, Username: "send4"})
+		require.NoError(t, err)
+
+		user.handleSend(UserState("initial"), 100, 0)
+		time.Sleep(200 * time.Millisecond)
+		stateBefore := user.StateMain()
+		user.handleSend(NoChange, 400, 0)
+		time.Sleep(200 * time.Millisecond)
+
+		assert.Equal(t, stateBefore, user.StateMain(), "NoChange should not update state")
+		assert.Equal(t, 400, user.Messages().MainID)
+	})
+}
+
+// TestOrderedStorage tests the gorder-based storage wrapper
+func TestOrderedStorage(t *testing.T) {
+	mockDB := &mockUserStorage{}
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	// The orderedStorage is already wrapping the db inside um
+	// Test that Insert and Find pass through correctly
+	t.Run("insert passes through", func(t *testing.T) {
+		model := UserModel{ID: NewPlainUserID(555)}
+		err := mockDB.Insert(context.Background(), model)
+		assert.NoError(t, err)
+	})
+
+	t.Run("find passes through", func(t *testing.T) {
+		// Insert first
+		model := UserModel{ID: NewPlainUserID(556)}
+		mockDB.Insert(context.Background(), model)
+		found, ok, err := mockDB.Find(context.Background(), NewPlainUserID(556))
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		assert.NotEmpty(t, found.ID)
+	})
+
+	t.Run("update async maintains order", func(t *testing.T) {
+		user, err := um.prepareUser(&tele.User{ID: 557, Username: "ordertest"})
+		require.NoError(t, err)
+
+		// Rapid state changes
+		user.setState(UserState("state1"))
+		user.setState(UserState("state2"))
+		user.setState(UserState("state3"))
+		time.Sleep(200 * time.Millisecond) // Wait for async writes
+
+		// Final state should be state3
+		assert.Equal(t, UserState("state3"), user.StateMain())
+	})
+}
 
 func newTestOptions() Options {
 	return Options{

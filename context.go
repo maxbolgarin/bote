@@ -318,7 +318,7 @@ func (c *contextImpl) MessageID() int {
 	if c.textMsgID != 0 {
 		return c.textMsgID
 	}
-	if cb := c.ct.Callback(); cb != nil {
+	if cb := c.ct.Callback(); cb != nil && cb.Message != nil {
 		return cb.Message.ID
 	}
 	return lang.Deref(c.ct.Message()).ID

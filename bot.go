@@ -1159,7 +1159,7 @@ func getSender(upd *tele.Update) *tele.User {
 
 func getMsgID(upd *tele.Update) int {
 	switch {
-	case upd.Callback != nil:
+	case upd.Callback != nil && upd.Callback.Message != nil:
 		return upd.Callback.Message.ID
 	case upd.Message != nil:
 		return upd.Message.ID

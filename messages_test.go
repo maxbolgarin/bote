@@ -122,6 +122,52 @@ func TestSanitizeText(t *testing.T) {
 	}
 }
 
+// TestSanitizeTextExtended tests the sanitization fixes for URI schemes and multi-byte handling
+func TestSanitizeTextExtended(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		blocked  string // substring that must NOT appear in output
+		allowed  string // substring that MUST appear in output (optional)
+	}{
+		{"javascript lowercase", "javascript:alert(1)", "javascript:", ""},
+		{"javascript mixed case", "JaVaScRiPt:alert(1)", "JaVaScRiPt:", ""},
+		{"javascript uppercase", "JAVASCRIPT:alert(1)", "JAVASCRIPT:", ""},
+		{"data scheme", "data:text/html,<h1>hi</h1>", "data:", ""},
+		{"vbscript scheme", "vbscript:MsgBox", "vbscript:", ""},
+		{"blob scheme", "blob:http://example.com", "blob:", ""},
+		{"javascript with spaces", "javascript  :alert(1)", "javascript  :", ""},
+		{"legitimate colon", "time: 12:30pm", "", "time: 12:30pm"},
+		{"null bytes removed", "hello\x00world", "\x00", "helloworld"},
+		{"DEL character removed", "hello\x7Fworld", "\x7F", "helloworld"},
+		{"tabs preserved", "hello\tworld", "", "hello\tworld"},
+		{"newlines preserved", "hello\nworld", "", "hello\nworld"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := sanitizeText(tt.input)
+			if tt.blocked != "" && contains(out, tt.blocked) {
+				t.Errorf("expected %q to be removed, got %q", tt.blocked, out)
+			}
+			if tt.allowed != "" && !contains(out, tt.allowed) {
+				t.Errorf("expected %q to be preserved, got %q", tt.allowed, out)
+			}
+		})
+	}
+
+	// Turkish İ followed by javascript: should not cause index mismatch
+	t.Run("turkish character before pattern", func(t *testing.T) {
+		out := sanitizeText("İİİ javascript:alert(1)")
+		if contains(out, "javascript:") {
+			t.Errorf("expected javascript: to be removed with Turkish chars, got %q", out)
+		}
+		if !contains(out, "İİİ") {
+			t.Errorf("expected Turkish chars to be preserved, got %q", out)
+		}
+	})
+}
+
 func contains(s, sub string) bool { return len(s) >= len(sub) && (len(sub) == 0 || index(s, sub) >= 0) }
 
 func index(s, sub string) int {

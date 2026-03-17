@@ -57,6 +57,79 @@ func TestCreateBtnData(t *testing.T) {
 	}
 }
 
+// TestCreateBtnDataPipeEscaping tests that pipe characters in data items are escaped
+func TestCreateBtnDataPipeEscaping(t *testing.T) {
+	tests := []struct {
+		name     string
+		dataList []string
+		expected string
+	}{
+		{
+			name:     "single item with pipe",
+			dataList: []string{"item|with|pipes"},
+			expected: "item-with-pipes",
+		},
+		{
+			name:     "multiple items with pipes",
+			dataList: []string{"a|b", "c|d"},
+			expected: "a-b|c-d",
+		},
+		{
+			name:     "no pipes unchanged",
+			dataList: []string{"clean", "data"},
+			expected: "clean|data",
+		},
+		{
+			name:     "only pipes",
+			dataList: []string{"|||"},
+			expected: "---",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CreateBtnData(tt.dataList...)
+			assert.Equal(t, tt.expected, result)
+			// Verify DataParsed round-trip produces expected number of parts
+			parts := strings.Split(result, "|")
+			nonEmptyParts := 0
+			for _, p := range parts {
+				if p != "" {
+					nonEmptyParts++
+				}
+			}
+			assert.Equal(t, len(tt.dataList), nonEmptyParts, "part count should match input count")
+		})
+	}
+}
+
+// TestBtnDataTruncationUTF8 tests that button data truncation respects rune boundaries
+func TestBtnDataTruncationUTF8(t *testing.T) {
+	t.Run("emoji not split", func(t *testing.T) {
+		// Each emoji is 4 bytes. Create data that would be split mid-emoji at byte boundary.
+		data := strings.Repeat("😀", 20) // 80 bytes, well over MaxDataLengthBytes
+		result := CreateBtnData(data)
+		// Result should be valid UTF-8 after truncation
+		for _, r := range result {
+			assert.NotEqual(t, rune(0xFFFD), r, "should not contain replacement character")
+		}
+	})
+
+	t.Run("russian text not split", func(t *testing.T) {
+		// Each Russian char is 2 bytes
+		data := strings.Repeat("Б", 40) // 80 bytes
+		result := CreateBtnData(data)
+		for _, r := range result {
+			assert.NotEqual(t, rune(0xFFFD), r, "should not contain replacement character")
+		}
+	})
+
+	t.Run("data within limit unchanged", func(t *testing.T) {
+		data := "short"
+		result := CreateBtnData(data)
+		assert.Equal(t, "short", result)
+	})
+}
+
 // TestGetBtnIDAndUnique tests button ID and unique generation
 func TestGetBtnIDAndUnique(t *testing.T) {
 	t.Run("generates valid id and unique", func(t *testing.T) {
