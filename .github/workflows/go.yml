@@ -5,9 +5,9 @@ name: Go
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "v2" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "v2" ]
 
 jobs:
 
@@ -16,8 +16,14 @@ jobs:
     strategy:
       matrix:
         go:
+          - '1.17'
+          - '1.18'
+          - '1.19'
+          - '1.20'
+          - '1.21'
+          - '1.22'
+          - '1.23'
           - '1.24'
-          - '1.x'
 
     steps:
     - uses: actions/checkout@v4
@@ -31,4 +37,12 @@ jobs:
       run: go build -v ./...
 
     - name: Test
-      run: go test -v -race -cover ./...
+      run: go test -v -race -coverprofile=coverage.txt ./...
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        slug: maxbolgarin/logze
+        files: coverage.txt
+        fail_ci_if_error: true
