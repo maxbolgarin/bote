@@ -78,7 +78,7 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 		return nil, erro.Wrap(err, "start bot")
 	}
 
-	um, err := newUserManager(opts)
+	um, err := newUserManager(ctx, opts)
 	if err != nil {
 		return nil, erro.Wrap(err, "new user manager")
 	}
@@ -172,6 +172,16 @@ func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[
 
 			if err := b.wp.shutdown(ctx); err != nil {
 				b.bot.log.Error("failed to shutdown webhook poller", "error", err.Error())
+			}
+		}
+
+		// Flush pending DB writes
+		if b.um.writeQueue != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			if err := b.um.writeQueue.Shutdown(ctx); err != nil {
+				b.bot.log.Error("failed to shutdown write queue", "error", err.Error())
 			}
 		}
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/erro"
+	"github.com/maxbolgarin/gorder"
 	"github.com/maxbolgarin/lang"
 	"github.com/maypok86/otter"
 	tele "gopkg.in/telebot.v4"
@@ -1411,26 +1412,34 @@ func newUserInfoNoSanitize(tUser *tele.User, priv PrivacyMode) UserInfo {
 }
 
 type userManagerImpl struct {
-	users *userCache
-	db    UsersStorage
-	log   Logger
-	metr  *metrics
+	users      *userCache
+	db         UsersStorage
+	writeQueue *gorder.Gorder[string]
+	log        Logger
+	metr       *metrics
 
 	priv         PrivacyMode
 	keysProvider KeysProvider
 }
 
-func newUserManager(opts Options) (*userManagerImpl, error) {
+func newUserManager(ctx context.Context, opts Options) (*userManagerImpl, error) {
 	users, err := newUserCache(opts.Config.Bot.Privacy.Mode, opts.KeysProvider,
 		opts.Config.Bot.UserCacheCapacity, opts.Config.Bot.UserCacheTTL)
 	if err != nil {
 		return nil, erro.Wrap(err, "failed to create user cache")
 	}
 
+	writeQueue := gorder.New[string](ctx, gorder.Options{
+		NoRetries:            true,
+		DoNotThrowOnShutdown: true,
+		Logger:               opts.Logger,
+	})
+
 	m := &userManagerImpl{
 		metr:         opts.metrics,
 		users:        users,
-		db:           opts.UserDB,
+		db:           newOrderedStorage(opts.UserDB, writeQueue),
+		writeQueue:   writeQueue,
 		log:          opts.Logger,
 		priv:         opts.Config.Bot.Privacy.Mode,
 		keysProvider: opts.KeysProvider,
@@ -1571,6 +1580,32 @@ func (m *userManagerImpl) disableUser(userID int64) {
 
 func (m *userManagerImpl) deleteUser(userID int64) {
 	m.users.delete(userID)
+}
+
+// orderedStorage wraps UsersStorage to guarantee per-user FIFO ordering of UpdateAsync calls
+// using a gorder write queue. Insert and Find are passed through directly.
+type orderedStorage struct {
+	db    UsersStorage
+	queue *gorder.Gorder[string]
+}
+
+func newOrderedStorage(db UsersStorage, queue *gorder.Gorder[string]) *orderedStorage {
+	return &orderedStorage{db: db, queue: queue}
+}
+
+func (s *orderedStorage) Insert(ctx context.Context, userModel UserModel) error {
+	return s.db.Insert(ctx, userModel)
+}
+
+func (s *orderedStorage) Find(ctx context.Context, id FullUserID) (UserModel, bool, error) {
+	return s.db.Find(ctx, id)
+}
+
+func (s *orderedStorage) UpdateAsync(id FullUserID, userModel *UserModelDiff) {
+	s.queue.Push(id.String(), "update", func(_ context.Context) error {
+		s.db.UpdateAsync(id, userModel)
+		return nil
+	})
 }
 
 type inMemoryUserStorage struct {

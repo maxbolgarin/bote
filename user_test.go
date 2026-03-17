@@ -133,7 +133,7 @@ func TestUserManager(t *testing.T) {
 		},
 	}
 
-	um, err := newUserManager(opts)
+	um, err := newUserManager(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestUserManager(t *testing.T) {
 // TestUserState tests user state management
 func TestUserState(t *testing.T) {
 	opts := newTestOptions()
-	um, err := newUserManager(opts)
+	um, err := newUserManager(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestUserState(t *testing.T) {
 // TestUserMessages tests user message management
 func TestUserMessages(t *testing.T) {
 	opts := newTestOptions()
-	um, err := newUserManager(opts)
+	um, err := newUserManager(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestInMemoryUserStorage(t *testing.T) {
 // TestUserContextImplementation tests userContextImpl methods
 func TestUserContextImplementation(t *testing.T) {
 	opts := newTestOptions()
-	um, err := newUserManager(opts)
+	um, err := newUserManager(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -508,7 +508,7 @@ func TestUserContextImplementation(t *testing.T) {
 // TestConcurrentUserAccess tests concurrent access to user data
 func TestConcurrentUserAccess(t *testing.T) {
 	opts := newTestOptions()
-	um, err := newUserManager(opts)
+	um, err := newUserManager(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("Failed to create user manager: %v", err)
 	}
@@ -1209,7 +1209,7 @@ func TestFullUserIDWithStorage(t *testing.T) {
 func TestFullUserIDWithUserManager(t *testing.T) {
 	t.Run("prepareUser with plain ID", func(t *testing.T) {
 		opts := newTestOptions()
-		um, err := newUserManager(opts)
+		um, err := newUserManager(context.Background(), opts)
 		if err != nil {
 			t.Fatalf("Failed to create user manager: %v", err)
 		}
@@ -1237,7 +1237,7 @@ func TestFullUserIDWithUserManager(t *testing.T) {
 
 	t.Run("IDFull returns correct FullUserID", func(t *testing.T) {
 		opts := newTestOptions()
-		um, err := newUserManager(opts)
+		um, err := newUserManager(context.Background(), opts)
 		if err != nil {
 			t.Fatalf("Failed to create user manager: %v", err)
 		}
@@ -1266,7 +1266,7 @@ func TestFullUserIDWithUserManager(t *testing.T) {
 
 	t.Run("getUser with plain ID", func(t *testing.T) {
 		opts := newTestOptions()
-		um, err := newUserManager(opts)
+		um, err := newUserManager(context.Background(), opts)
 		if err != nil {
 			t.Fatalf("Failed to create user manager: %v", err)
 		}
