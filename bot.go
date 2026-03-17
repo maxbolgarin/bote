@@ -475,6 +475,11 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 	if upd.Callback != nil {
 		if match := cbackRx.FindAllStringSubmatch(upd.Callback.Data, -1); match != nil {
 			user.setBtnAndPayload(getNameFromUnique(match[0][1]), match[0][3])
+		} else if upd.Callback.Data != "" {
+			b.bot.log.Debug("callback data did not match expected format",
+				"user_id", user.user.ID.String(),
+				"data", upd.Callback.Data,
+			)
 		}
 	}
 
