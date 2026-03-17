@@ -200,12 +200,12 @@ func (b *Bot) GetAllUsersFromCache() []User {
 func (b *Bot) SendInChat(chatID int64, threadID int, msg string, kb *tele.ReplyMarkup, opts ...any) (int, error) {
 	if chatID == 0 {
 		b.bot.log.Error("chat ID cannot be empty", "chat_id", chatID, "thread_id", threadID)
-		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return 0, nil
 	}
 	if msg == "" {
 		b.bot.log.Error("message cannot be empty", "chat_id", chatID, "thread_id", threadID)
-		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return 0, nil
 	}
 
@@ -219,17 +219,17 @@ func (b *Bot) SendInChat(chatID int64, threadID int, msg string, kb *tele.ReplyM
 func (b *Bot) EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if chatID == 0 {
 		b.bot.log.Error("chat ID cannot be empty", "chat_id", chatID, "msg_id", msgID)
-		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 	if msgID == 0 {
 		b.bot.log.Error("message ID cannot be empty", "chat_id", chatID, "msg_id", msgID)
-		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 	if msg == "" {
 		b.bot.log.Error("message cannot be empty", "chat_id", chatID, "msg_id", msgID)
-		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 
@@ -239,12 +239,12 @@ func (b *Bot) EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMark
 func (b *Bot) DeleteInChat(chatID int64, msgID int) error {
 	if chatID == 0 {
 		b.bot.log.Error("chat ID cannot be empty", "chat_id", chatID, "msg_id", msgID)
-		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 	if msgID == 0 {
 		b.bot.log.Error("message ID cannot be empty", "chat_id", chatID, "msg_id", msgID)
-		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 
@@ -381,7 +381,7 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 	targetHandler, ok := ctx.user.buttonMap.Lookup(btnID)
 	if !ok {
 		b.bot.log.Warn("button handler not found", "user_id", prepareUserID(ctx.user.ID(), b.um.priv), "button_id", btnID)
-		b.bot.metr.incError(MetricsErrorInvalidUserState, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorInvalidUserState, MetricsErrorSeverityHigh)
 		return nil
 	}
 
@@ -410,7 +410,7 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 	sender := getSender(upd)
 	if sender == nil {
 		b.bot.log.Error(fmt.Sprintf("cannot get sender from update: %+v", upd))
-		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeverityHigh)
 		return false
 	}
 
@@ -421,7 +421,7 @@ func (b *Bot) masterMiddleware(upd *tele.Update) bool {
 			"username", sender.Username,
 		)
 		b.sendError(sender.ID, b.msgs.Messages(b.defaultLanguage).GeneralError())
-		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeverityHigh)
 		return false
 	}
 	user.setUserID(sender.ID)
@@ -442,7 +442,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 		b.bot.log.Error("failed to cast user to userContextImpl",
 			"user_id", prepareUserID(userRaw.ID(), b.um.priv),
 		)
-		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeverityHigh)
 		return false
 	}
 
@@ -562,7 +562,8 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 		err := b.startHandler(b.newContextFromUpdate(*upd))
 		if err != nil {
 			b.bot.log.Error("failed to handle start command", "error", err.Error())
-			b.bot.metr.incError(MetricsErrorHandler, MetricsErrorSeveritHigh)
+			b.bot.metr.incError(MetricsErrorHandler, MetricsErrorSeverityHigh)
+			return false
 		}
 	}
 	return true
@@ -730,7 +731,7 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 	user := b.um.getUser(userID)
 	if user == nil {
 		b.bot.log.Error("failed to send error message", "user_id", prepareUserID(userID, b.um.priv), "error", errEmptyUserID)
-		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeveritHigh)
+		b.bot.metr.incError(MetricsErrorInternal, MetricsErrorSeverityHigh)
 		return
 	}
 	msgs := user.Messages()
@@ -810,7 +811,7 @@ func newBaseBot(ctx context.Context, token string, opts Options) (*baseBot, erro
 				userID = ctx.Chat().ID
 			}
 			b.log.Error("error callback", "error", err.Error(), "user_id", prepareUserID(userID, b.priv))
-			b.metr.incError(MetricsErrorHandler, MetricsErrorSeveritHigh)
+			b.metr.incError(MetricsErrorHandler, MetricsErrorSeverityHigh)
 		},
 		Updates: defaultUpdatesChannelCapacity,
 		Verbose: opts.Config.Log.DebugIncomingUpdates,

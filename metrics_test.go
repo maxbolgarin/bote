@@ -187,13 +187,13 @@ func TestMetricsIncError(t *testing.T) {
 	t.Run("increments error counters by type and severity", func(t *testing.T) {
 		m.incError(MetricsErrorHandler, MetricsErrorSeverityLow)
 		m.incError(MetricsErrorHandler, MetricsErrorSeverityLow)
-		m.incError(MetricsErrorHandler, MetricsErrorSeveritHigh)
+		m.incError(MetricsErrorHandler, MetricsErrorSeverityHigh)
 		m.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
 
 		countHandlerLow := testutil.ToFloat64(m.errorsTotal.WithLabelValues(
 			MetricsErrorHandler, MetricsErrorSeverityLow))
 		countHandlerHigh := testutil.ToFloat64(m.errorsTotal.WithLabelValues(
-			MetricsErrorHandler, MetricsErrorSeveritHigh))
+			MetricsErrorHandler, MetricsErrorSeverityHigh))
 		countTelegramLow := testutil.ToFloat64(m.errorsTotal.WithLabelValues(
 			MetricsErrorTelegramAPI, MetricsErrorSeverityLow))
 

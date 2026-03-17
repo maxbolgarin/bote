@@ -577,7 +577,32 @@ func (u *userContextImpl) UpdateLanguage(language Language) {
 func (u *userContextImpl) Model() UserModel {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.user
+
+	model := u.user
+
+	// Deep copy maps and slices to prevent shared backing data
+	if len(u.user.Values) > 0 {
+		model.Values = make(map[string]any, len(u.user.Values))
+		maps.Copy(model.Values, u.user.Values)
+	}
+	if len(u.user.Messages.HistoryIDs) > 0 {
+		model.Messages.HistoryIDs = make([]int, len(u.user.Messages.HistoryIDs))
+		copy(model.Messages.HistoryIDs, u.user.Messages.HistoryIDs)
+	}
+	if len(u.user.Messages.LastActions) > 0 {
+		model.Messages.LastActions = make(map[int]time.Time, len(u.user.Messages.LastActions))
+		maps.Copy(model.Messages.LastActions, u.user.Messages.LastActions)
+	}
+	if len(u.user.State.MessageStates) > 0 {
+		model.State.MessageStates = make(map[int]UserState, len(u.user.State.MessageStates))
+		maps.Copy(model.State.MessageStates, u.user.State.MessageStates)
+	}
+	if len(u.user.State.MessagesAwaitingText) > 0 {
+		model.State.MessagesAwaitingText = make([]int, len(u.user.State.MessagesAwaitingText))
+		copy(model.State.MessagesAwaitingText, u.user.State.MessagesAwaitingText)
+	}
+
+	return model
 }
 
 func (u *userContextImpl) Info() UserInfo {

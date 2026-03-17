@@ -211,7 +211,7 @@ func (wp *webhookPoller) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		wp.log.Warn("update channel full, dropping update")
-
+		wp.metrics.incError(MetricsErrorInternal, MetricsErrorSeverityHigh)
 		ctx.ServiceUnavailable(nil, "update channel full, dropping update")
 	}
 }

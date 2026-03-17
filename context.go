@@ -551,8 +551,8 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 	}
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, tele.Silent)...)
 	if err != nil {
-		c.bt.bot.log.Error("failed to send error message", c.bt.userFields(c.user)...)
-		return nil
+		c.bt.bot.log.Error("failed to send error message", c.bt.userFields(c.user, "error", err.Error())...)
+		return nil // return nil to avoid bot blocking because sending error message is not critical
 	}
 	c.user.setErrorMessage(msgID)
 
@@ -566,7 +566,7 @@ func (c *contextImpl) SendFile(name string, file []byte, opts ...any) error {
 
 	if len(file) == 0 {
 		c.bt.bot.log.Error("file cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 
@@ -581,12 +581,12 @@ func (c *contextImpl) SendFile(name string, file []byte, opts ...any) error {
 func (c *contextImpl) SendInChat(chatID int64, threadID int, msg string, kb *tele.ReplyMarkup, opts ...any) (int, error) {
 	if chatID == 0 {
 		c.bt.bot.log.Error("chat ID cannot be empty")
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return 0, nil
 	}
 	if msg == "" {
 		c.bt.bot.log.Error("message cannot be empty")
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return 0, nil
 	}
 
@@ -716,12 +716,12 @@ func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 func (c *contextImpl) EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if chatID == 0 {
 		c.bt.bot.log.Error("chat ID cannot be empty")
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 	if msg == "" {
 		c.bt.bot.log.Error("message cannot be empty")
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 
@@ -738,7 +738,7 @@ func (c *contextImpl) DeleteHistory(msgID int) error {
 	}
 	if msgID == 0 {
 		c.bt.bot.log.Error("message ID cannot be empty")
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 	for _, id := range c.User().Messages().HistoryIDs {
@@ -805,12 +805,12 @@ func (c *contextImpl) DeleteAll(from int) {
 func (c *contextImpl) DeleteInChat(chatID int64, msgID int) error {
 	if chatID == 0 {
 		c.bt.bot.log.Error("chat ID cannot be empty")
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 	if msgID == 0 {
 		c.bt.bot.log.Error("message ID cannot be empty")
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return nil
 	}
 
@@ -899,12 +899,12 @@ func (c *contextImpl) prepareEditError(err error, msgID int) error {
 func (c *contextImpl) validateUserInput(methodName string, state State) bool {
 	if c.user.isPublic {
 		c.bt.bot.log.Error("cannot use user methods ("+methodName+") in public chats", "chat_id", c.ChatID(), "state", state)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return false
 	}
 	if c.user.ID() == 0 {
 		c.bt.bot.log.Error("cannot use user methods ("+methodName+") outside of handler context", "state", state)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return false
 	}
 	return true
@@ -916,7 +916,7 @@ func (c *contextImpl) validateUserInputWithMessage(msg string, methodName string
 	}
 	if msg == "" {
 		c.bt.bot.log.Error("message cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return false
 	}
 	return true
@@ -928,7 +928,7 @@ func (c *contextImpl) validateUserInputWithKeyboard(kb *tele.ReplyMarkup, method
 	}
 	if kb == nil {
 		c.bt.bot.log.Error("keyboard cannot be empty", c.bt.userFields(c.User())...)
-		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeveritHigh)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
 		return false
 	}
 	return true
@@ -1044,19 +1044,10 @@ func (c *contextImpl) handleConnectionError(errorMsg string, err error) bool {
 
 func (c *contextImpl) handleGenericError(err error) {
 	c.bt.bot.log.Error("handler", c.bt.userFields(c.user, "error", err.Error())...)
-	c.bt.bot.metr.incError(MetricsErrorHandler, MetricsErrorSeveritHigh)
+	c.bt.bot.metr.incError(MetricsErrorHandler, MetricsErrorSeverityHigh)
 
-	// Create error message with optional close button
-	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()
-	opts := []any{tele.Silent}
-
-	if closeBtn != "" {
-		opts = append(opts, SingleRow(c.Btn(closeBtn, func(c Context) error {
-			return c.DeleteError()
-		})))
-	}
-
-	c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError(), opts...)
+	// sendError already handles close button creation, so just delegate to it
+	c.bt.sendError(c.user.ID(), c.bt.msgs.Messages(c.user.Language()).GeneralError())
 }
 
 func (c *contextImpl) edit(msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error {

@@ -25,8 +25,8 @@ const (
 	MetricsErrorConnectionError  = "connection_error"   // Connection error
 
 	// Error severity levels
-	MetricsErrorSeverityLow = "low"  // Low severity error
-	MetricsErrorSeveritHigh = "high" // High severity error
+	MetricsErrorSeverityLow  = "low"  // Low severity error
+	MetricsErrorSeverityHigh = "high" // High severity error
 
 	// Time window constants for active user metrics
 	MetricsWindow1h  = "1h"  // 1 hour window
