@@ -570,20 +570,11 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 
 func (b *Bot) userFields(user User, fields ...any) []any {
 	f := make([]any, 0, len(fields)+6)
-	if u, ok := user.(*userContextImpl); ok {
-		// No mutex lock for the price of type assertion
-		f = append(f, "user_id", u.user.ID.String())
-		if !b.um.priv.IsStrict() {
-			f = append(f, "username", u.user.Info.Username)
-		}
-		f = append(f, "state", u.user.State.Main)
-	} else {
-		f = append(f, "user_id", prepareUserID(user.ID(), b.um.priv))
-		if !b.um.priv.IsStrict() {
-			f = append(f, "username", user.Username())
-		}
-		f = append(f, "state", user.StateMain())
+	f = append(f, "user_id", prepareUserID(user.ID(), b.um.priv))
+	if !b.um.priv.IsStrict() {
+		f = append(f, "username", user.Username())
 	}
+	f = append(f, "state", user.StateMain())
 	return append(f, fields...)
 }
 

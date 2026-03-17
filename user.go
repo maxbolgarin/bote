@@ -869,22 +869,41 @@ func (u *userContextImpl) removeTextMessageLocked(msgID int) {
 	u.user.State.MessagesAwaitingText = slices.Delete(u.user.State.MessagesAwaitingText, indexToRemove, indexToRemove+1)
 }
 
-func (u *userContextImpl) setMessages(msgIDs ...int) {
+// applyDeleteAll atomically updates all message IDs and history based on the set of deleted messages.
+// This avoids the race between separate forgetHistoryMessage and setMessages calls.
+func (u *userContextImpl) applyDeleteAll(deleted map[int]struct{}) {
 	u.mu.Lock()
 
-	msgs := make([]int, 4)
-	copy(msgs, msgIDs)
-	u.user.Messages.MainID = msgs[0]
-	u.user.Messages.HeadID = msgs[1]
-	u.user.Messages.NotificationID = msgs[2]
-	u.user.Messages.ErrorID = msgs[3]
-
-	var historyIDs []int
-	if len(msgs) > 4 {
-		historyIDs = make([]int, len(msgs)-4)
-		copy(historyIDs, msgs[4:])
-		u.user.Messages.HistoryIDs = historyIDs
+	if _, ok := deleted[u.user.Messages.MainID]; ok {
+		u.user.Messages.MainID = 0
 	}
+	if _, ok := deleted[u.user.Messages.HeadID]; ok {
+		u.user.Messages.HeadID = 0
+	}
+	if _, ok := deleted[u.user.Messages.NotificationID]; ok {
+		u.user.Messages.NotificationID = 0
+	}
+	if _, ok := deleted[u.user.Messages.ErrorID]; ok {
+		u.user.Messages.ErrorID = 0
+	}
+
+	// Remove deleted history IDs, message states, last actions, and awaiting text entries
+	remaining := u.user.Messages.HistoryIDs[:0]
+	for _, id := range u.user.Messages.HistoryIDs {
+		if _, ok := deleted[id]; ok {
+			delete(u.user.State.MessageStates, id)
+			delete(u.user.Messages.LastActions, id)
+			for j := len(u.user.State.MessagesAwaitingText) - 1; j >= 0; j-- {
+				if u.user.State.MessagesAwaitingText[j] == id {
+					u.user.State.MessagesAwaitingText = slices.Delete(u.user.State.MessagesAwaitingText, j, j+1)
+					break
+				}
+			}
+		} else {
+			remaining = append(remaining, id)
+		}
+	}
+	u.user.Messages.HistoryIDs = remaining
 
 	// Capture values for the DB update
 	userID := u.user.ID
@@ -892,6 +911,18 @@ func (u *userContextImpl) setMessages(msgIDs ...int) {
 	headID := u.user.Messages.HeadID
 	notificationID := u.user.Messages.NotificationID
 	errorID := u.user.Messages.ErrorID
+
+	historyIDs := make([]int, len(u.user.Messages.HistoryIDs))
+	copy(historyIDs, u.user.Messages.HistoryIDs)
+
+	messageStates := make(map[int]UserState, len(u.user.State.MessageStates))
+	maps.Copy(messageStates, u.user.State.MessageStates)
+
+	lastActions := make(map[int]time.Time, len(u.user.Messages.LastActions))
+	maps.Copy(lastActions, u.user.Messages.LastActions)
+
+	awaitingText := make([]int, len(u.user.State.MessagesAwaitingText))
+	copy(awaitingText, u.user.State.MessagesAwaitingText)
 
 	u.mu.Unlock()
 
@@ -902,6 +933,11 @@ func (u *userContextImpl) setMessages(msgIDs ...int) {
 			NotificationID: &notificationID,
 			ErrorID:        &errorID,
 			HistoryIDs:     historyIDs,
+			LastActions:     lastActions,
+		},
+		State: &UserStateDiff{
+			MessageStates:        messageStates,
+			MessagesAwaitingText: awaitingText,
 		},
 	})
 }

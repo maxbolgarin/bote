@@ -794,34 +794,7 @@ func (c *contextImpl) DeleteAll(from int) {
 		return
 	}
 	deleted := c.bt.bot.deleteHistory(c.user.ID(), from)
-	msgs := c.user.Messages()
-	if _, ok := deleted[msgs.MainID]; ok {
-		msgs.MainID = 0
-	}
-	if _, ok := deleted[msgs.HeadID]; ok {
-		msgs.HeadID = 0
-	}
-	if _, ok := deleted[msgs.NotificationID]; ok {
-		msgs.NotificationID = 0
-	}
-	if _, ok := deleted[msgs.ErrorID]; ok {
-		msgs.ErrorID = 0
-	}
-
-	historyIDsToDelete := make([]int, 0, len(msgs.HistoryIDs))
-	for _, id := range msgs.HistoryIDs {
-		if _, ok := deleted[id]; ok {
-			historyIDsToDelete = append(historyIDsToDelete, id)
-		}
-	}
-	c.user.forgetHistoryMessage(historyIDsToDelete...)
-
-	c.user.setMessages(
-		append(
-			append(
-				make([]int, 0, len(msgs.HistoryIDs)+4),
-				msgs.MainID, msgs.HeadID, msgs.NotificationID, msgs.ErrorID),
-			msgs.HistoryIDs...)...)
+	c.user.applyDeleteAll(deleted)
 }
 
 func (c *contextImpl) DeleteInChat(chatID int64, msgID int) error {
