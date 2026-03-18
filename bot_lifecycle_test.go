@@ -83,6 +83,13 @@ func (m *mockUserStorage) UpdateAsync(id FullUserID, diff *UserModelDiff) {
 	}
 }
 
+func (m *mockUserStorage) Delete(_ context.Context, id FullUserID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.users, lang.Deref(id.IDPlain))
+	return nil
+}
+
 // mockPoller implements tele.Poller; it sends a minimal update then stops.
 type mockPoller struct{ sent bool }
 

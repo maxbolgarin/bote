@@ -326,6 +326,9 @@ type UsersStorage interface {
 	// If you want stable work of bote package, don't update user model by yourself. Bote will do it for you.
 	// If you want to expand user model by your additional fields, create an another table/collection in your db.
 	UpdateAsync(id FullUserID, userModel *UserModelDiff)
+
+	// Delete deletes user from storage.
+	Delete(ctx context.Context, id FullUserID) error
 }
 
 const (
@@ -1579,7 +1582,12 @@ func (m *userManagerImpl) disableUser(userID int64) {
 	m.users.delete(userID)
 }
 
-func (m *userManagerImpl) deleteUser(userID int64) {
+func (m *userManagerImpl) deleteUser(userID int64, fullID FullUserID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.db.Delete(ctx, fullID); err != nil {
+		m.log.Error("cannot delete user from db", "user_id", fullID.String(), "error", err)
+	}
 	m.users.delete(userID)
 }
 
@@ -1607,6 +1615,10 @@ func (s *orderedStorage) UpdateAsync(id FullUserID, userModel *UserModelDiff) {
 		s.db.UpdateAsync(id, userModel)
 		return nil
 	})
+}
+
+func (s *orderedStorage) Delete(ctx context.Context, id FullUserID) error {
+	return s.db.Delete(ctx, id)
 }
 
 type inMemoryUserStorage struct {
@@ -1657,6 +1669,17 @@ func (m *inMemoryUserStorage) Find(ctx context.Context, id FullUserID) (UserMode
 		return UserModel{}, false, nil
 	}
 	return user, true, nil
+}
+
+func (m *inMemoryUserStorage) Delete(ctx context.Context, id FullUserID) error {
+	if ctx == nil {
+		return erro.New("cannot delete user: context is nil")
+	}
+	if id.IsEmpty() {
+		return erro.New("cannot delete user: invalid user ID (zero)")
+	}
+	m.cache.Delete(lang.Deref(id.IDPlain))
+	return nil
 }
 
 func (m *inMemoryUserStorage) FindAll(context.Context) ([]UserModel, error) {

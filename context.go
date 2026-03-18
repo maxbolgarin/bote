@@ -174,9 +174,9 @@ type Context interface {
 	// Delete deletes message by provided chat ID and message ID.
 	DeleteInChat(chatID int64, msgID int) error
 
-	// DeleteUser deletes user from the memory and deletes all messages of the user.
+	// DeleteUser deletes user from the persistent database, removes user from the memory
+	// and deletes all messages of the user.
 	// Returns true if all messages were deleted successfully, false otherwise.
-	// It doesn't delete user from the persistent database, so you should make it manually.
 	// WARNING: It works only in private chats.
 	DeleteUser() bool
 }
@@ -876,7 +876,7 @@ func (c *contextImpl) DeleteUser() bool {
 			isOK = false
 		}
 	}
-	c.bt.um.deleteUser(c.user.ID())
+	c.bt.um.deleteUser(c.user.ID(), c.user.IDFull())
 	return isOK
 }
 

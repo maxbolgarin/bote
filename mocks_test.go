@@ -27,6 +27,11 @@ func (m *MockUsersStorage) UpdateAsync(id int64, userModel *UserModelDiff) {
 	m.Called(id, userModel)
 }
 
+func (m *MockUsersStorage) Delete(ctx context.Context, id FullUserID) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 // MockPoller is a mock implementation of tele.Poller interface using testify/mock
 type MockPoller struct {
 	mock.Mock
