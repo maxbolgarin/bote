@@ -73,12 +73,17 @@ func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...strin
 		Data:   data,
 	}
 	if callback != nil {
-		ctx.bt.Handle(&btn, callback)
 		if !ctx.user.isPublic {
+			// Register in buttonMap for dispatch via callbackFallbackHandler.
+			// We intentionally do NOT register per-button telebot handlers to avoid
+			// unbounded growth of telebot's internal handler map.
 			ctx.user.buttonMap.Set(id, InitBundle{
 				Handler: callback,
 				Data:    data,
 			})
+		} else {
+			// Public (non-private) chats don't have buttonMap, use telebot handler directly
+			ctx.bt.Handle(&btn, callback)
 		}
 	}
 	return btn
