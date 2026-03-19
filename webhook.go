@@ -383,8 +383,8 @@ func generateSelfSignedCert(certFile, keyFile, domain string, logger Logger) (st
 		return "", "", erro.Wrap(err, "encode certificate")
 	}
 
-	// Save private key
-	keyOut, err := os.Create(keyFile)
+	// Save private key (owner read/write only to protect key material)
+	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return "", "", erro.Wrap(err, "create key file")
 	}
