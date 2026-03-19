@@ -767,18 +767,17 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	if ok && newState != State(currentState) && State(currentState).IsText() {
 		// If we got new state we should remove current pending text state
 		u.removeTextMessageLocked(msgID)
-		upd.MessagesAwaitingText = u.user.State.MessagesAwaitingText
 	}
 
 	if newState.IsText() {
 		// If new state - text state, we shoudld add it
 		u.pushTextMessageLocked(msgID)
-		upd.MessagesAwaitingText = u.user.State.MessagesAwaitingText
 	}
 
 	if msgID == u.user.Messages.MainID {
 		u.user.State.Main = ConvertUserState(newState)
-		upd.Main = &u.user.State.Main
+		mainState := u.user.State.Main
+		upd.Main = &mainState
 	}
 
 	u.user.Stats.LastSeenTime = time.Now().UTC()
@@ -786,9 +785,15 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	u.user.State.MessageStates[msgID] = ConvertUserState(newState)
 	u.user.Messages.LastActions[msgID] = u.user.Stats.LastSeenTime
 
-	upd.MessageStates = u.user.State.MessageStates
+	// Make copies of all shared data before releasing the lock
+	messageStatesCopy := make(map[int]UserState, len(u.user.State.MessageStates))
+	maps.Copy(messageStatesCopy, u.user.State.MessageStates)
+	upd.MessageStates = messageStatesCopy
 
-	// Make a copy of the data for the database update
+	awaitingTextCopy := make([]int, len(u.user.State.MessagesAwaitingText))
+	copy(awaitingTextCopy, u.user.State.MessagesAwaitingText)
+	upd.MessagesAwaitingText = awaitingTextCopy
+
 	userID := u.user.ID
 	lastActions := make(map[int]time.Time, len(u.user.Messages.LastActions))
 	maps.Copy(lastActions, u.user.Messages.LastActions)
@@ -1701,37 +1706,49 @@ func (m *inMemoryUserStorage) UpdateAsync(id FullUserID, diff *UserModelDiff) {
 	(&user).prepareAfterDB()
 
 	if diff.Info != nil {
-		user.Info = UserInfo{
-			FirstName: lang.Check(lang.Deref(diff.Info.FirstName), user.Info.FirstName),
-			LastName:  lang.Check(lang.Deref(diff.Info.LastName), user.Info.LastName),
-			Username:  lang.Check(lang.Deref(diff.Info.Username), user.Info.Username),
-			IsPremium: user.Info.IsPremium,
+		if diff.Info.FirstName != nil {
+			user.Info.FirstName = *diff.Info.FirstName
+		}
+		if diff.Info.LastName != nil {
+			user.Info.LastName = *diff.Info.LastName
+		}
+		if diff.Info.Username != nil {
+			user.Info.Username = *diff.Info.Username
+		}
+		if diff.Info.IsPremium != nil {
+			user.Info.IsPremium = diff.Info.IsPremium
 		}
 	}
 	if diff.Messages != nil {
-		user.Messages = UserMessages{
-			MainID:         lang.Check(lang.Deref(diff.Messages.MainID), user.Messages.MainID),
-			HeadID:         lang.Check(lang.Deref(diff.Messages.HeadID), user.Messages.HeadID),
-			NotificationID: lang.Check(lang.Deref(diff.Messages.NotificationID), user.Messages.NotificationID),
-			ErrorID:        lang.Check(lang.Deref(diff.Messages.ErrorID), user.Messages.ErrorID),
-			HistoryIDs:     lang.If(len(diff.Messages.HistoryIDs) > 0, diff.Messages.HistoryIDs, user.Messages.HistoryIDs),
-			LastActions:    lang.If(len(diff.Messages.LastActions) > 0, diff.Messages.LastActions, user.Messages.LastActions),
+		if diff.Messages.MainID != nil {
+			user.Messages.MainID = *diff.Messages.MainID
+		}
+		if diff.Messages.HeadID != nil {
+			user.Messages.HeadID = *diff.Messages.HeadID
+		}
+		if diff.Messages.NotificationID != nil {
+			user.Messages.NotificationID = *diff.Messages.NotificationID
+		}
+		if diff.Messages.ErrorID != nil {
+			user.Messages.ErrorID = *diff.Messages.ErrorID
+		}
+		if diff.Messages.HistoryIDs != nil {
+			user.Messages.HistoryIDs = diff.Messages.HistoryIDs
+		}
+		if diff.Messages.LastActions != nil {
+			user.Messages.LastActions = diff.Messages.LastActions
 		}
 	}
 	if diff.State != nil {
-		// Preserve messagesStackInd when updating State
-		messagesStackInd := user.State.messagesStackInd
-		if messagesStackInd == nil {
-			messagesStackInd = make(map[int]int)
+		if diff.State.Main != nil {
+			user.State.Main = *diff.State.Main
 		}
-		user.State = MessagesState{
-			Main:                 lang.Check(lang.Deref(diff.State.Main), user.State.Main),
-			MessageStates:        lang.If(len(diff.State.MessageStates) > 0, diff.State.MessageStates, user.State.MessageStates),
-			MessagesAwaitingText: lang.If(diff.State.MessagesAwaitingText != nil, diff.State.MessagesAwaitingText, user.State.MessagesAwaitingText),
-			messagesStackInd:     messagesStackInd,
+		if len(diff.State.MessageStates) > 0 {
+			user.State.MessageStates = diff.State.MessageStates
 		}
-		// Rebuild messagesStackInd if MessagesAwaitingText was updated
 		if diff.State.MessagesAwaitingText != nil {
+			user.State.MessagesAwaitingText = diff.State.MessagesAwaitingText
+			// Rebuild messagesStackInd when MessagesAwaitingText is updated
 			user.State.messagesStackInd = make(map[int]int, len(user.State.MessagesAwaitingText))
 			for i, v := range user.State.MessagesAwaitingText {
 				user.State.messagesStackInd[v] = i
@@ -1740,20 +1757,30 @@ func (m *inMemoryUserStorage) UpdateAsync(id FullUserID, diff *UserModelDiff) {
 	}
 
 	if diff.Stats != nil {
-		user.Stats.LastSeenTime = lang.CheckTime(lang.Deref(diff.Stats.LastSeenTime), user.Stats.LastSeenTime)
-		user.Stats.DisabledTime = lang.CheckTime(lang.Deref(diff.Stats.DisabledTime), user.Stats.DisabledTime)
-		user.Stats.NumberOfStateChangesTotal = lang.Check(lang.Deref(diff.Stats.NumberOfStateChanges), user.Stats.NumberOfStateChangesTotal)
+		if diff.Stats.LastSeenTime != nil {
+			user.Stats.LastSeenTime = *diff.Stats.LastSeenTime
+		}
+		if diff.Stats.DisabledTime != nil {
+			user.Stats.DisabledTime = *diff.Stats.DisabledTime
+		}
+		if diff.Stats.NumberOfStateChanges != nil {
+			user.Stats.NumberOfStateChangesTotal = *diff.Stats.NumberOfStateChanges
+		}
 	}
 	if diff.IsDisabled != nil {
-		user.IsDisabled = lang.Check(lang.Deref(diff.IsDisabled), user.IsDisabled)
+		user.IsDisabled = *diff.IsDisabled
 	}
 
 	if diff.IsBot != nil {
-		user.IsBot = lang.Check(lang.Deref(diff.IsBot), user.IsBot)
+		user.IsBot = *diff.IsBot
 	}
 
 	if diff.LanguageCode != nil {
-		user.LanguageCode = lang.Check(lang.Deref(diff.LanguageCode), user.LanguageCode)
+		user.LanguageCode = *diff.LanguageCode
+	}
+
+	if diff.ForceLanguageCode != nil {
+		user.ForceLanguageCode = *diff.ForceLanguageCode
 	}
 
 	if diff.Values != nil {
