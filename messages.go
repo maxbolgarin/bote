@@ -2,6 +2,7 @@ package bote
 
 import (
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -48,6 +49,13 @@ const (
 	underlineEnd = "</u>"
 	preEnd       = "</pre>"
 )
+
+// EscapeHTML escapes a string for safe inclusion in HTML-mode Telegram messages.
+// Use this function to escape user-provided text before passing it to F, FBold, FItalic, etc.
+// to prevent HTML injection. For example: FBold(EscapeHTML(username)).
+func EscapeHTML(s string) string {
+	return html.EscapeString(s)
+}
 
 // F returns a formatted string.
 func F(msg string, formats ...Format) string {
