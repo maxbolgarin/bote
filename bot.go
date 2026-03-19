@@ -102,8 +102,9 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 	bote.AddUserMiddleware(bote.cleanMiddleware)
 	bote.AddUserMiddleware(bote.startMiddleware)
 
-	// To trigger initUserHandler on callback (there is no registered handlers if user is not inited)
-	bote.Handle(tele.OnCallback, bote.emptyHandler)
+	// To trigger initUserHandler on callback (there is no registered handlers if user is not inited).
+	// If the message is already inited, callbackFallbackHandler dispatches via buttonMap.
+	bote.Handle(tele.OnCallback, bote.callbackFallbackHandler)
 
 	if wp, ok := opts.Poller.(*webhookPoller); ok {
 		bote.wp = wp
@@ -410,8 +411,42 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 	})
 }
 
-func (*Bot) emptyHandler(Context) error {
-	return nil
+// callbackFallbackHandler dispatches callback button presses via buttonMap.
+// This handles the case when the message is already inited (so initUserHandler was skipped)
+// but the button's telebot handler was lost due to random unique ID regeneration.
+func (b *Bot) callbackFallbackHandler(ctx Context) error {
+	ctxImpl, ok := ctx.(*contextImpl)
+	if !ok || ctxImpl.user == nil {
+		return nil
+	}
+
+	btnID := ctx.ButtonID()
+	if btnID == "" {
+		return nil
+	}
+
+	targetHandler, ok := ctxImpl.user.buttonMap.Lookup(btnID)
+	if !ok {
+		b.bot.log.Warn("button handler not found in fallback",
+			"user_id", prepareUserID(ctxImpl.user.ID(), b.um.priv),
+			"button_id", btnID,
+		)
+		return nil
+	}
+
+	upd := tele.Update{
+		Callback: &tele.Callback{
+			Sender:  &tele.User{ID: ctxImpl.user.ID()},
+			Message: &tele.Message{ID: ctx.MessageID()},
+			Data:    targetHandler.Data,
+		},
+	}
+
+	return targetHandler.Handler(&contextImpl{
+		bt:   b,
+		ct:   b.bot.tbot.NewContext(upd),
+		user: ctxImpl.user,
+	})
 }
 
 func (b *Bot) masterMiddleware(upd *tele.Update) bool {
