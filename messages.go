@@ -378,7 +378,9 @@ func (b *MessageBuilder) WriteIf(condition bool, writeTrue string, writeFalse ..
 	}
 }
 
-// WriteIf writes either writeTrue or writeFalse depending on the value of first argument.
+// WriteIfF writes either writeTrue or writeFalse depending on the condition, formatting with args.
+// Note: args are applied to whichever branch is selected. Both format strings must accept the same
+// number and types of placeholders to avoid fmt.Sprintf producing %!(EXTRA ...) noise.
 func (b *MessageBuilder) WriteIfF(condition bool, writeTrue, writeFalse string, args ...any) {
 	if condition {
 		if len(args) > 0 {
@@ -407,7 +409,9 @@ func (b *MessageBuilder) WritelnIf(condition bool, writeTrue string, writeFalse 
 	}
 }
 
-// WriteIf writes either writeTrue or writeFalse depending on the value of first argument.
+// WritelnIfF writes either writeTrue or writeFalse depending on the condition, formatting with args, and appends a newline.
+// Note: args are applied to whichever branch is selected. Both format strings must accept the same
+// number and types of placeholders to avoid fmt.Sprintf producing %!(EXTRA ...) noise.
 func (b *MessageBuilder) WritelnIfF(condition bool, writeTrue, writeFalse string, args ...any) {
 	if condition {
 		if len(args) > 0 {
@@ -424,7 +428,7 @@ func (b *MessageBuilder) WritelnIfF(condition bool, writeTrue, writeFalse string
 	}
 }
 
-// WriteIf writes either writeTrue or writeFalse depending on the value of first argument.
+// WritelnIfFf writes writeTrue with formatting and a newline only when condition is true.
 func (b *MessageBuilder) WritelnIfFf(condition bool, writeTrue string, args ...any) {
 	if condition {
 		if len(args) > 0 {
