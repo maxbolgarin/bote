@@ -382,6 +382,9 @@ func getBtnIDAndUnique(name string) (id string, unique string) {
 }
 
 func getNameFromUnique(unique string) string {
+	if len(unique) <= randBytesInUnique {
+		return unique
+	}
 	notRand := unique[:len(unique)-randBytesInUnique]
 	raw, err := hex.DecodeString(notRand)
 	if err != nil {
