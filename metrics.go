@@ -84,7 +84,7 @@ type metrics struct {
 	onFlyHandlersCount int64                                    // Atomic counter for active handlers
 	onFlyRequestsCount int64                                    // Atomic counter for requests in flight
 	userLastSeen       *abstract.SafeMap[int64, activeUserStat] // Thread-safe map of user last seen times
-	lastUpdateTime     time.Time                                // Last time active users were updated
+	lastUpdateNano     atomic.Int64                             // Last time active users were updated (Unix nanos)
 
 	disabled bool // Whether metrics collection is disabled
 }
@@ -246,7 +246,8 @@ func (m *metrics) addActiveUser(userID int64) {
 	})
 
 	// Update active users every minute to prevent high load
-	if m.lastUpdateTime.IsZero() || time.Since(m.lastUpdateTime) > time.Minute {
+	lastNano := m.lastUpdateNano.Load()
+	if lastNano == 0 || time.Since(time.Unix(0, lastNano)) > time.Minute {
 		m.updateActiveUsers()
 	}
 }
@@ -310,7 +311,7 @@ func (m *metrics) updateActiveUsers() {
 		m.averageUsersActions.WithLabelValues(MetricsWindow24h).Set(float64(actions24h / users24h))
 	}
 
-	m.lastUpdateTime = now
+	m.lastUpdateNano.Store(now.UnixNano())
 }
 
 // setWebhookStatus sets the webhook status gauge for the given URL and address.
@@ -332,8 +333,8 @@ func (m *metrics) HandleRequest(r *http.Request) {
 		return
 	}
 	m.webhookRequestsTotal.WithLabelValues(r.URL.Path).Inc()
-	atomic.AddInt64(&m.onFlyRequestsCount, 1)
-	m.webhookRequestsInFlight.WithLabelValues(r.URL.Path).Set(float64(m.onFlyRequestsCount))
+	count := atomic.AddInt64(&m.onFlyRequestsCount, 1)
+	m.webhookRequestsInFlight.WithLabelValues(r.URL.Path).Set(float64(count))
 }
 
 // HandleResponse records webhook response metrics.
@@ -351,8 +352,11 @@ func (m *metrics) HandleResponse(r *http.Request, w http.ResponseWriter, statusC
 	}
 	// Record response time and update concurrency metrics
 	m.webhookResponseTimeSeconds.WithLabelValues(r.URL.Path).Observe(duration.Seconds())
-	atomic.AddInt64(&m.onFlyRequestsCount, -1)
-	m.webhookRequestsInFlight.WithLabelValues(r.URL.Path).Set(float64(m.onFlyRequestsCount))
+	count := atomic.AddInt64(&m.onFlyRequestsCount, -1)
+	if count < 0 {
+		count = 0
+	}
+	m.webhookRequestsInFlight.WithLabelValues(r.URL.Path).Set(float64(count))
 }
 
 // newCounter creates a new CounterVec with the given name, help text, and label names.

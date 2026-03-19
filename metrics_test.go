@@ -303,11 +303,11 @@ func TestMetricsActiveUsers(t *testing.T) {
 	})
 
 	t.Run("updates active users periodically", func(t *testing.T) {
-		m.lastUpdateTime = time.Now().Add(-2 * time.Minute)
+		m.lastUpdateNano.Store(time.Now().Add(-2 * time.Minute).UnixNano())
 		m.addActiveUser(500)
 
 		// Should trigger update since last update was > 1 minute ago
-		assert.NotZero(t, m.lastUpdateTime)
+		assert.NotZero(t, m.lastUpdateNano.Load())
 	})
 }
 
