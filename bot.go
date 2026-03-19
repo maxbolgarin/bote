@@ -1132,7 +1132,7 @@ func getChatID(upd *tele.Update) (int64, tele.ChatType, bool) {
 type userIDWrapper int64
 
 func (u userIDWrapper) Recipient() string {
-	return strconv.Itoa(int(u))
+	return strconv.FormatInt(int64(u), 10)
 }
 
 type noopLogger struct{}
