@@ -329,9 +329,15 @@ func generateSelfSignedCert(certFile, keyFile, domain string, logger Logger) (st
 		return "", "", erro.Wrap(err, "generate private key")
 	}
 
+	// Generate a random serial number for the certificate
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", "", erro.Wrap(err, "generate certificate serial number")
+	}
+
 	// Create certificate template
 	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization:  []string{"Bote Bot"},
 			Country:       []string{"US"},
