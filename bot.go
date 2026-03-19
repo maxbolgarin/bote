@@ -545,7 +545,10 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 	return true
 }
 
-var cbackRx = regexp.MustCompile(`^([-\w]+)(\|(.+))?$`)
+// Note: this regex is intentionally unanchored because telebot prefixes callback data
+// with \f (form-feed, 0x0C) which is not in [-\w]. The middleware runs before telebot
+// strips this prefix, so FindAllStringSubmatch must find the pattern within the string.
+var cbackRx = regexp.MustCompile(`([-\w]+)(\|(.+))?`)
 
 func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) {
 	if user == nil {
