@@ -522,8 +522,8 @@ func (enMessages) PrepareMessage(msg string, _ User, _ State, _ int, _ bool) str
 }
 
 // Case-insensitive regex pattern to detect and remove malicious URI schemes.
-// Matches javascript:, data:, vbscript:, blob: with optional whitespace before the colon.
-var maliciousPattern = regexp.MustCompile(`(?i)(?:javascript|data|vbscript|blob)\s*:`)
+// Matches javascript:, data:, vbscript:, blob:, file: with optional whitespace before the colon.
+var maliciousPattern = regexp.MustCompile(`(?i)(?:javascript|data|vbscript|blob|file)\s*:`)
 
 // sanitizeText sanitizes text inputs to prevent injection attacks
 func sanitizeText(text string, maxLength ...int) string {
