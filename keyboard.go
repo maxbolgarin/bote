@@ -1,6 +1,7 @@
 package bote
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
 	"strings"
@@ -371,13 +372,13 @@ const (
 )
 
 func getBtnIDAndUnique(name string) (id string, unique string) {
-	var (
-		btnID = hex.EncodeToString([]byte(name))
-		rnd   = abstract.GetRandomString(randBytesInUnique)
-	)
+	btnID := hex.EncodeToString([]byte(name))
 	if len(btnID) > idBytesInUnique {
-		btnID = btnID[:idBytesInUnique]
+		// Use SHA-256 hash to avoid collisions when names share a long hex prefix
+		hash := sha256.Sum256([]byte(name))
+		btnID = hex.EncodeToString(hash[:])[:idBytesInUnique]
 	}
+	rnd := abstract.GetRandomString(randBytesInUnique)
 	return btnID, btnID + rnd
 }
 
