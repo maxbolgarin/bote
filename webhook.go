@@ -43,7 +43,7 @@ type webhookPoller struct {
 
 // newWebhookPoller creates a new webhook poller with the given configuration.
 func newWebhookPoller(config WebhookConfig, metr *metrics, logger Logger) (*webhookPoller, error) {
-	if err := prepareCertificate(config, logger); err != nil {
+	if err := prepareCertificate(&config, logger); err != nil {
 		return nil, erro.Wrap(err, "prepare certificate")
 	}
 
@@ -278,7 +278,7 @@ func (wp *webhookPoller) deleteWebhook() error {
 
 // prepareCertificate prepares the certificate for the webhook.
 // It validates the certificate if it exists, and generates a self-signed certificate if it doesn't.
-func prepareCertificate(config WebhookConfig, logger Logger) error {
+func prepareCertificate(config *WebhookConfig, logger Logger) error {
 	genSelfSignedCert := lang.Deref(config.Security.GenerateSelfSignedCert)
 
 	if !genSelfSignedCert && (config.Security.CertFile == "" || config.Security.KeyFile == "") {

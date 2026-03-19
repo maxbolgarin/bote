@@ -145,7 +145,7 @@ func TestPrepareCertificate(t *testing.T) {
 		config := WebhookConfig{}
 		logger := &testLogger{}
 
-		err := prepareCertificate(config, logger)
+		err := prepareCertificate(&config, logger)
 		assert.NoError(t, err)
 	})
 
@@ -166,7 +166,7 @@ func TestPrepareCertificate(t *testing.T) {
 			},
 		}
 
-		err = prepareCertificate(config, logger)
+		err = prepareCertificate(&config, logger)
 		assert.NoError(t, err)
 	})
 
@@ -188,7 +188,7 @@ func TestPrepareCertificate(t *testing.T) {
 			},
 		}
 
-		err := prepareCertificate(config, logger)
+		err := prepareCertificate(&config, logger)
 		assert.NoError(t, err)
 		assert.FileExists(t, certFile)
 		assert.FileExists(t, keyFile)
@@ -213,7 +213,7 @@ func TestPrepareCertificate(t *testing.T) {
 			},
 		}
 
-		err = prepareCertificate(config, logger)
+		err = prepareCertificate(&config, logger)
 		assert.Error(t, err)
 	})
 }
