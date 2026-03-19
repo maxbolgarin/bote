@@ -606,11 +606,13 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 	if !c.validateUserInputWithMessage(mainMsg, "Edit", newState) {
 		return nil
 	}
-	if headMsg == "" && headKb == nil {
-		return c.EditMain(newState, mainMsg, mainKb, opts...)
-	}
 
 	msgIDs := c.user.Messages()
+
+	// Fall back to EditMain if no head content provided or head message doesn't exist yet
+	if headMsg == "" && headKb == nil || msgIDs.HeadID == 0 {
+		return c.EditMain(newState, mainMsg, mainKb, opts...)
+	}
 
 	headOpts := lang.If(len(opts) > 0, append(lang.Copy(opts), headKb), []any{headKb})
 	if err := c.edit(msgIDs.HeadID, headMsg, headKb, headOpts...); err != nil {
