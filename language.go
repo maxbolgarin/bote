@@ -288,15 +288,22 @@ func (l Language) String() string {
 // It accepts language codes in any case (e.g., "en", "EN", "En").
 // Returns an error if the language code is not recognized.
 func ParseLanguage(code string) (Language, error) {
+	code = strings.TrimSpace(code)
 	if code == "" {
 		return "", fmt.Errorf("language code cannot be empty")
 	}
+
+	// Strip BCP 47 region/script subtags (e.g. "zh-hans" -> "zh", "pt-BR" -> "pt")
+	if idx := strings.IndexAny(code, "-_"); idx != -1 {
+		code = code[:idx]
+	}
+
 	if len(code) > 3 {
 		return "", fmt.Errorf("language code cannot be longer than 3 characters")
 	}
 
 	// Normalize to lowercase for case-insensitive lookup
-	normalizedCode := strings.ToLower(strings.TrimSpace(code))
+	normalizedCode := strings.ToLower(code)
 
 	if lang, exists := languageMap[normalizedCode]; exists {
 		return lang, nil
