@@ -547,7 +547,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 
 var cbackRx = regexp.MustCompile(`^([-\w]+)(\|(.+))?$`)
 
-func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) bool {
+func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) {
 	if user == nil {
 		fields := make([]any, 0, 8)
 		chatID, chatType, ok := getChatID(upd)
@@ -562,7 +562,7 @@ func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) bool {
 			}
 		}
 		b.rlog.Log(NotPrivateUpdate, fields...)
-		return true
+		return
 	}
 
 	fields := make([]any, 0, 14)
@@ -606,10 +606,7 @@ func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) bool {
 		}
 
 		b.rlog.Log(CallbackUpdate, fields...)
-		return true
 	}
-
-	return true
 }
 
 func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
