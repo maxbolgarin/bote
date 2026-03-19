@@ -1,13 +1,14 @@
 package bote
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"net/url"
 	"os"
 	"time"
 
 	"github.com/caarlos0/env/v11"
-	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	"github.com/prometheus/client_golang/prometheus"
@@ -823,7 +824,11 @@ func (cfg *Config) prepareAndValidate() error {
 	}
 
 	if cfg.Webhook.Security.SecretToken == "" {
-		cfg.Webhook.Security.SecretToken = abstract.GetRandomString(32)
+		tokenBytes := make([]byte, 16)
+		if _, err := rand.Read(tokenBytes); err != nil {
+			return erro.Wrap(err, "generate webhook secret token")
+		}
+		cfg.Webhook.Security.SecretToken = hex.EncodeToString(tokenBytes)
 	}
 
 	cfg.Webhook.RateLimit.Enabled = lang.Ptr(lang.CheckPtr(cfg.Webhook.RateLimit.Enabled, defaultWebhookRateLimitEnabled))
@@ -874,6 +879,10 @@ func prepareOpts(opts Options) (Options, error) {
 		opts.UpdateLogger = &updateLogger{noopLogger{}}
 	}
 	if opts.UserDB == nil {
+		if opts.Config.Bot.Privacy.Mode.IsStrict() {
+			return opts, erro.New("in-memory user storage is not compatible with strict privacy mode: " +
+				"plain user IDs are not stored in strict mode, provide a custom UsersStorage implementation via WithUserDB")
+		}
 		opts.UserDB, err = newInMemoryUserStorage(opts.Config.Bot.UserCacheCapacity, opts.Config.Bot.UserCacheTTL)
 		if err != nil {
 			return opts, erro.Wrap(err, "new user storage")
