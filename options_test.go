@@ -1,6 +1,7 @@
 package bote
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,5 +74,59 @@ func TestGetLogLevel(t *testing.T) {
 	}
 	if got := getLogLevel("unknown"); got.String() == "" { // should fallback to info
 		t.Fatalf("expected fallback log level for unknown")
+	}
+}
+
+func TestSecretTokenGeneration(t *testing.T) {
+	cfg := Config{
+		Mode:    PollingModeWebhook,
+		Webhook: WebhookConfig{URL: "https://example.com/hook"},
+	}
+	if err := cfg.prepareAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	token := cfg.Webhook.Security.SecretToken
+	if token == "" {
+		t.Fatalf("secret token should be generated")
+	}
+	if len(token) != 32 {
+		t.Fatalf("expected 32 hex chars (16 bytes), got %d", len(token))
+	}
+
+	// Generate a second token and ensure they're different
+	cfg2 := Config{
+		Mode:    PollingModeWebhook,
+		Webhook: WebhookConfig{URL: "https://example.com/hook"},
+	}
+	if err := cfg2.prepareAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg2.Webhook.Security.SecretToken == token {
+		t.Fatalf("two generated tokens should differ")
+	}
+}
+
+func TestStrictPrivacyRequiresUserDB(t *testing.T) {
+	opts := Options{
+		Config: Config{
+			Mode: PollingModeCustom,
+			Bot: BotConfig{
+				Privacy: PrivacyConfig{
+					Mode: PrivacyModeStrict,
+				},
+			},
+		},
+		UserDB:  nil,
+		Offline: true,
+		Poller:  &mockPoller{},
+	}
+
+	_, err := prepareOpts(opts)
+	if err == nil {
+		t.Fatalf("expected error for strict privacy with nil UserDB")
+	}
+	if !strings.Contains(err.Error(), "strict privacy") {
+		t.Fatalf("error should mention strict privacy, got: %v", err)
 	}
 }

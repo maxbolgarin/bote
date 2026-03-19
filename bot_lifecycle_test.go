@@ -3,6 +3,7 @@ package bote
 import (
 	"context"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/maxbolgarin/lang"
@@ -112,3 +113,62 @@ func (m *mockPoller) Poll(bot *tele.Bot, updates chan tele.Update, stop chan str
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func TestUserIDWrapperRecipient(t *testing.T) {
+	tests := []struct {
+		name     string
+		id       int64
+		expected string
+	}{
+		{"zero", 0, "0"},
+		{"positive", 12345, "12345"},
+		{"negative_chat_id", -1001234567890, "-1001234567890"},
+		{"large_user_id", 9999999999999, "9999999999999"},
+		{"max_int32_plus_one", 2147483648, "2147483648"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := userIDWrapper(tt.id)
+			if got := w.Recipient(); got != tt.expected {
+				t.Errorf("Recipient() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCbackRxWithFormFeedPrefix(t *testing.T) {
+	tests := []struct {
+		name         string
+		data         string
+		expectMatch  bool
+		expectUnique string
+		expectData   string
+	}{
+		{"plain_unique_no_data", "btn12345678", true, "btn12345678", ""},
+		{"unique_with_data", "btn12345678|payload", true, "btn12345678", "payload"},
+		{"form_feed_prefix_with_data", "\fbtn12345678|payload", true, "btn12345678", "payload"},
+		{"form_feed_prefix_no_data", "\fbtn12345678", true, "btn12345678", ""},
+		{"empty_string", "", false, "", ""},
+		{"data_with_pipes", "btn1234|a|b|c", true, "btn1234", "a|b|c"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			match := cbackRx.FindAllStringSubmatch(tt.data, -1)
+			if !tt.expectMatch {
+				if match != nil {
+					t.Errorf("expected no match for %q", tt.data)
+				}
+				return
+			}
+			if match == nil {
+				t.Fatalf("expected match for %q, got nil", tt.data)
+			}
+			if got := match[0][1]; got != tt.expectUnique {
+				t.Errorf("unique = %q, want %q", got, tt.expectUnique)
+			}
+			if got := match[0][3]; got != tt.expectData {
+				t.Errorf("data = %q, want %q", got, tt.expectData)
+			}
+		})
+	}
+}

@@ -46,3 +46,29 @@ func TestMustLanguagePanics(t *testing.T) {
 	}()
 	_ = MustLanguage("xx")
 }
+
+func TestParseLanguageBCP47(t *testing.T) {
+	cases := []struct {
+		in  string
+		exp Language
+	}{
+		{"zh-hans", LanguageChinese},
+		{"zh-Hant", LanguageChinese},
+		{"pt-BR", LanguagePortuguese},
+		{"en-US", LanguageEnglish},
+		{"en-GB", LanguageEnglish},
+		{"fr_CA", LanguageFrench},
+		{"de-AT", LanguageGerman},
+		{"  en  ", LanguageEnglish},
+		{"  pt-BR  ", LanguagePortuguese},
+	}
+	for _, c := range cases {
+		lang, err := ParseLanguage(c.in)
+		if err != nil {
+			t.Fatalf("ParseLanguage(%q) unexpected error: %v", c.in, err)
+		}
+		if lang != c.exp {
+			t.Fatalf("ParseLanguage(%q) = %q, want %q", c.in, lang, c.exp)
+		}
+	}
+}

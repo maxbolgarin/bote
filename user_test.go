@@ -1711,3 +1711,205 @@ func TestFullUserIDEdgeCases(t *testing.T) {
 		}
 	})
 }
+
+// === Regression tests for bug fixes ===
+
+func TestInMemoryUserStorageZeroValues(t *testing.T) {
+	storage, err := newInMemoryUserStorage(100, time.Hour)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	userID := NewPlainUserID(42)
+	model := UserModel{
+		ID:           userID,
+		Messages:     UserMessages{MainID: 100, HeadID: 200, NotificationID: 300, ErrorID: 400, LastActions: map[int]time.Time{}},
+		State:        MessagesState{MessageStates: map[int]UserState{}},
+		IsDisabled:   true,
+		LanguageCode: "ru",
+	}
+	require.NoError(t, storage.Insert(ctx, model))
+
+	zero := 0
+	falseVal := false
+	emptyLang := Language("")
+	storage.UpdateAsync(userID, &UserModelDiff{
+		Messages:     &UserMessagesDiff{MainID: &zero, HeadID: &zero, NotificationID: &zero, ErrorID: &zero},
+		IsDisabled:   &falseVal,
+		LanguageCode: &emptyLang,
+	})
+
+	found, ok, err := storage.Find(ctx, userID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 0, found.Messages.MainID, "MainID should be zeroed")
+	assert.Equal(t, 0, found.Messages.HeadID, "HeadID should be zeroed")
+	assert.Equal(t, 0, found.Messages.NotificationID, "NotificationID should be zeroed")
+	assert.Equal(t, 0, found.Messages.ErrorID, "ErrorID should be zeroed")
+	assert.False(t, found.IsDisabled, "IsDisabled should be false")
+	assert.Equal(t, Language(""), found.LanguageCode, "LanguageCode should be empty")
+}
+
+func TestEnableDisableWithZeroMainID(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	model := newUserModel(&tele.User{ID: 555}, NewPlainUserID(555), "")
+	model.Messages.MainID = 0
+	user := um.newUserContext(model, "")
+
+	t.Run("disable", func(t *testing.T) {
+		user.disable()
+		assert.True(t, user.IsDisabled())
+		assert.Equal(t, Disabled, user.StateMain())
+		user.mu.Lock()
+		_, hasZeroKey := user.user.State.MessageStates[0]
+		user.mu.Unlock()
+		assert.False(t, hasZeroKey, "should not create entry for msgID 0")
+	})
+
+	t.Run("enable", func(t *testing.T) {
+		user.enable()
+		assert.False(t, user.IsDisabled())
+		assert.Equal(t, FirstRequest, user.StateMain())
+		user.mu.Lock()
+		_, hasZeroKey := user.user.State.MessageStates[0]
+		user.mu.Unlock()
+		assert.False(t, hasZeroKey, "should not create entry for msgID 0")
+	})
+}
+
+func TestEncryptionKeyClear(t *testing.T) {
+	key := NewEncryptionKey(nil)
+	require.NotNil(t, key.Key())
+
+	key.Clear()
+
+	assert.Nil(t, key.Key(), "key should be nil after Clear")
+	assert.Nil(t, key.Version(), "version should be nil after Clear")
+}
+
+func TestUpdateLanguageCodeInMemory(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	model := newUserModel(&tele.User{ID: 777, LanguageCode: "en"}, NewPlainUserID(777), "")
+	user := um.newUserContext(model, "")
+
+	assert.Equal(t, Language("en"), user.Language())
+
+	user.update(&tele.User{
+		ID:           777,
+		LanguageCode: "ru",
+		FirstName:    "Test",
+	})
+
+	assert.Equal(t, Language("ru"), user.Language(), "language should be updated in memory immediately")
+}
+
+func TestIsMsgInitedThreadSafety(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	model := newUserModel(&tele.User{ID: 888}, NewPlainUserID(888), "")
+	model.Messages.MainID = 10
+	model.Messages.HeadID = 11
+	user := um.newUserContext(model, "")
+
+	assert.True(t, user.isMsgInited(0), "zero msgID should always be inited")
+	assert.True(t, user.isMsgInited(999), "unknown msgID should be inited")
+	assert.False(t, user.isMsgInited(10), "known main msg should not be inited initially")
+
+	user.setMsgInited(10)
+	assert.True(t, user.isMsgInited(10), "should be inited after setMsgInited")
+
+	t.Run("concurrent_access", func(t *testing.T) {
+		model2 := newUserModel(&tele.User{ID: 889}, NewPlainUserID(889), "")
+		model2.Messages.MainID = 20
+		model2.Messages.HeadID = 21
+		user2 := um.newUserContext(model2, "")
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 1000; i++ {
+				user2.setMsgInited(20)
+				user2.isMsgInited(20)
+				user2.isMsgInited(21)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 1000; i++ {
+				user2.setMsgInited(21)
+				user2.isMsgInited(20)
+				user2.isMsgInited(21)
+			}
+		}()
+		wg.Wait()
+	})
+}
+
+func TestFullUserIDIsEmptyHMAC(t *testing.T) {
+	tests := []struct {
+		name     string
+		id       FullUserID
+		expected bool
+	}{
+		{"all_nil", FullUserID{}, true},
+		{"only_plain", NewPlainUserID(1), false},
+		{"only_hmac", FullUserID{IDHMAC: lang.Ptr("abc")}, false},
+		{"only_enc", FullUserID{IDEnc: lang.Ptr("def")}, false},
+		{"hmac_and_enc", FullUserID{IDHMAC: lang.Ptr("a"), IDEnc: lang.Ptr("b")}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.id.IsEmpty())
+		})
+	}
+}
+
+func TestButtonMapClearedOnMaxSize(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	model := newUserModel(&tele.User{ID: 444}, NewPlainUserID(444), "")
+	user := um.newUserContext(model, "")
+
+	for i := 0; i < maxButtonMapSize+1; i++ {
+		user.buttonMap.Set(hex.EncodeToString([]byte{byte(i), byte(i >> 8)}), InitBundle{
+			Handler: func(Context) error { return nil },
+		})
+	}
+	assert.Greater(t, user.buttonMap.Len(), maxButtonMapSize)
+
+	user.handleSend(NoChange, 100, 0)
+
+	assert.Equal(t, 0, user.buttonMap.Len(), "buttonMap should be cleared after exceeding max size")
+	assert.True(t, user.isInitedMsg.Get(100), "new main msg should be marked as inited")
+}
+
+func TestDeleteUserCacheEviction(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	tUser := &tele.User{ID: 333}
+	user, err := um.createUser(tUser,
+		opts.KeysProvider.GetEncryptionKey(),
+		opts.KeysProvider.GetHMACKey(),
+	)
+	require.NoError(t, err)
+
+	_, found := um.users.get(333)
+	require.True(t, found, "user should be cached after creation")
+
+	um.deleteUser(333, user.IDFull())
+
+	_, found = um.users.get(333)
+	assert.False(t, found, "user should be evicted after successful DB delete")
+}

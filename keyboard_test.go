@@ -565,3 +565,57 @@ func TestEmptyKeyboard(t *testing.T) {
 		assert.NotNil(t, EmptyKeyboard)
 	})
 }
+
+func TestGetNameFromUniqueShortStrings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty", "", ""},
+		{"one_char", "a", "a"},
+		{"two_chars", "ab", "ab"},
+		{"exactly_randBytes", "abcd", "abcd"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getNameFromUnique(tt.input)
+			assert.Equal(t, tt.expected, result, "short strings should be returned unchanged")
+		})
+	}
+}
+
+func TestGetBtnIDAndUniqueSHA256ForLongNames(t *testing.T) {
+	t.Run("short_name_hex_encoded", func(t *testing.T) {
+		name := "Ok"
+		id, unique := getBtnIDAndUnique(name)
+		expectedHex := hex.EncodeToString([]byte(name))
+		assert.Equal(t, expectedHex, id)
+		assert.True(t, strings.HasPrefix(unique, id))
+		assert.Equal(t, len(id)+randBytesInUnique, len(unique))
+	})
+
+	t.Run("long_name_uses_sha256", func(t *testing.T) {
+		longName := "this_is_a_long_button_name"
+		id, unique := getBtnIDAndUnique(longName)
+		plainHex := hex.EncodeToString([]byte(longName))
+		assert.NotEqual(t, plainHex[:idBytesInUnique], id, "long names should use SHA-256, not plain hex truncation")
+		assert.Equal(t, idBytesInUnique, len(id))
+		assert.Equal(t, maxBytesInUnique, len(unique))
+	})
+
+	t.Run("collision_resistance", func(t *testing.T) {
+		name1 := "long_button_name_alpha_version"
+		name2 := "long_button_name_beta_version_"
+		id1, _ := getBtnIDAndUnique(name1)
+		id2, _ := getBtnIDAndUnique(name2)
+		assert.NotEqual(t, id1, id2, "different long names should produce different IDs")
+	})
+
+	t.Run("deterministic", func(t *testing.T) {
+		name := "long_deterministic_button_name_test"
+		id1, _ := getBtnIDAndUnique(name)
+		id2, _ := getBtnIDAndUnique(name)
+		assert.Equal(t, id1, id2, "same name should produce same ID")
+	})
+}

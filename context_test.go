@@ -430,3 +430,73 @@ func setupTestBot(t *testing.T) *Bot {
 
 	return bot
 }
+
+func TestIsReplyNilSender(t *testing.T) {
+	bot := setupTestBot(t)
+	bot.Bot().Me = &tele.User{ID: 999}
+
+	t.Run("nil_message", func(t *testing.T) {
+		ctx := NewContextText(bot, 100, 1, "hi")
+		assert.False(t, ctx.IsReply())
+	})
+
+	t.Run("nil_sender_in_replyTo", func(t *testing.T) {
+		upd := tele.Update{
+			Message: &tele.Message{
+				ID:     1,
+				Text:   "hi",
+				Sender: &tele.User{ID: 100},
+				ReplyTo: &tele.Message{
+					ID:     2,
+					Sender: nil,
+				},
+			},
+		}
+		impl := &contextImpl{
+			bt:   bot,
+			ct:   bot.bot.tbot.NewContext(upd),
+			user: newPublicUserContext(&tele.User{ID: 100}),
+		}
+		assert.False(t, impl.IsReply())
+	})
+
+	t.Run("replyTo_with_bot_sender", func(t *testing.T) {
+		upd := tele.Update{
+			Message: &tele.Message{
+				ID:     1,
+				Text:   "hi",
+				Sender: &tele.User{ID: 100},
+				ReplyTo: &tele.Message{
+					ID:     2,
+					Sender: &tele.User{ID: 999},
+				},
+			},
+		}
+		impl := &contextImpl{
+			bt:   bot,
+			ct:   bot.bot.tbot.NewContext(upd),
+			user: newPublicUserContext(&tele.User{ID: 100}),
+		}
+		assert.True(t, impl.IsReply())
+	})
+}
+
+func TestChatTypeAndIsPrivateNilChat(t *testing.T) {
+	bot := setupTestBot(t)
+
+	// Callback-only update — no chat info
+	upd := tele.Update{
+		Callback: &tele.Callback{
+			Sender:  &tele.User{ID: 100},
+			Message: &tele.Message{ID: 1},
+		},
+	}
+	impl := &contextImpl{
+		bt:   bot,
+		ct:   bot.bot.tbot.NewContext(upd),
+		user: newPublicUserContext(&tele.User{ID: 100}),
+	}
+
+	assert.Equal(t, tele.ChatType(""), impl.ChatType())
+	assert.False(t, impl.IsPrivate())
+}

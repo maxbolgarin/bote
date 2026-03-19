@@ -2,6 +2,8 @@ package bote
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type testMessages struct{}
@@ -180,3 +182,35 @@ func index(s, sub string) int {
 }
 
 func runeCount(s string) int { return len([]rune(s)) }
+
+func TestEscapeHTML(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"<b>bold</b>", "&lt;b&gt;bold&lt;/b&gt;"},
+		{"a & b", "a &amp; b"},
+		{"no special chars", "no special chars"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, EscapeHTML(tt.input))
+		})
+	}
+}
+
+func TestSanitizeTextFileScheme(t *testing.T) {
+	t.Run("removes_file_scheme", func(t *testing.T) {
+		result := sanitizeText("file:///etc/passwd")
+		assert.NotContains(t, result, "file:")
+	})
+	t.Run("case_insensitive", func(t *testing.T) {
+		result := sanitizeText("FILE:///etc/passwd")
+		assert.NotContains(t, result, "FILE:")
+	})
+	t.Run("with_whitespace", func(t *testing.T) {
+		result := sanitizeText("file  :/etc/passwd")
+		assert.NotContains(t, result, "file")
+	})
+}

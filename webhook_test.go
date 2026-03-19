@@ -2,7 +2,10 @@ package bote
 
 import (
 	"crypto/subtle"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -499,4 +502,51 @@ func TestWebhookSecurityConfig(t *testing.T) {
 		assert.True(t, config.LoadCertInTelegram)
 		assert.True(t, config.StartHTTPS)
 	})
+}
+
+func TestSelfSignedCertRandomSerial(t *testing.T) {
+	dir := t.TempDir()
+	logger := &testLogger{}
+
+	serials := make(map[string]struct{})
+	for i := 0; i < 3; i++ {
+		certFile := filepath.Join(dir, fmt.Sprintf("cert_%d.pem", i))
+		keyFile := filepath.Join(dir, fmt.Sprintf("key_%d.pem", i))
+
+		_, _, err := generateSelfSignedCert(certFile, keyFile, "test.local", logger)
+		require.NoError(t, err)
+
+		certPEM, err := os.ReadFile(certFile)
+		require.NoError(t, err)
+
+		block, _ := pem.Decode(certPEM)
+		require.NotNil(t, block)
+
+		cert, err := x509.ParseCertificate(block.Bytes)
+		require.NoError(t, err)
+
+		serial := cert.SerialNumber.String()
+		assert.NotEqual(t, "1", serial, "serial should not be hardcoded to 1")
+		_, dup := serials[serial]
+		assert.False(t, dup, "serial numbers should be unique")
+		serials[serial] = struct{}{}
+	}
+}
+
+func TestWebhookMaxBytesReaderApplied(t *testing.T) {
+	bigBody := strings.Repeat("x", 129*1024)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(bigBody))
+	w := httptest.NewRecorder()
+
+	req.Body = http.MaxBytesReader(w, req.Body, 128*1024)
+
+	buf := make([]byte, 130*1024)
+	var totalRead int
+	var readErr error
+	for readErr == nil {
+		var n int
+		n, readErr = req.Body.Read(buf[totalRead:])
+		totalRead += n
+	}
+	assert.Less(t, totalRead, 130*1024, "should not be able to read full oversized body")
 }

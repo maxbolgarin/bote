@@ -3,6 +3,7 @@ package bote
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -567,4 +568,80 @@ func TestMetricsConcurrency(t *testing.T) {
 		count := testutil.ToFloat64(m.updatesTotal)
 		assert.Equal(t, float64(iterations), count)
 	})
+}
+
+func TestSessionLengthObservedOnlyOnSessionEnd(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	m := newMetrics(MetricsConfig{Registry: registry})
+
+	userID := int64(7777)
+
+	m.addActiveUser(userID)
+	stat1, ok := m.userLastSeen.Lookup(userID)
+	require.True(t, ok)
+	assert.False(t, stat1.sessionStart.IsZero())
+
+	// Second action within session — session start should not change
+	m.addActiveUser(userID)
+	stat2, _ := m.userLastSeen.Lookup(userID)
+	assert.Equal(t, stat1.sessionStart, stat2.sessionStart, "session start should not change within a session")
+
+	// Simulate gap exceeding defaultSessionLength
+	m.userLastSeen.Set(userID, activeUserStat{
+		lastSeen:     time.Now().Add(-(defaultSessionLength + time.Minute)),
+		sessionStart: time.Now().Add(-(defaultSessionLength + 5*time.Minute)),
+		totalActions: 5,
+	})
+
+	// Next action should start a new session
+	m.addActiveUser(userID)
+	stat3, _ := m.userLastSeen.Lookup(userID)
+	assert.NotEqual(t, stat1.sessionStart, stat3.sessionStart, "session start should change after gap")
+}
+
+func TestMetricsConcurrentAtomicOperations(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	m := newMetrics(MetricsConfig{Registry: registry})
+
+	const goroutines = 10
+	const iterations = 100
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 3)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				m.recordHandlerStart()
+				m.recordHandlerFinish()
+			}
+		}()
+	}
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				m.incError(MetricsErrorHandler, MetricsErrorSeverityLow)
+			}
+		}()
+	}
+
+	for i := 0; i < goroutines; i++ {
+		go func(base int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				m.addActiveUser(int64(base + j))
+			}
+		}(i * iterations)
+	}
+
+	wg.Wait()
+
+	handlersCount := testutil.ToFloat64(m.handlersInFlight)
+	assert.Equal(t, 0.0, handlersCount, "all handlers should have finished")
+
+	errCount := testutil.ToFloat64(m.errorsTotal.WithLabelValues(MetricsErrorHandler, MetricsErrorSeverityLow))
+	assert.Equal(t, float64(goroutines*iterations), errCount)
 }
