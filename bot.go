@@ -623,6 +623,12 @@ func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
 			b.bot.metr.incError(MetricsErrorHandler, MetricsErrorSeverityHigh)
 			return false
 		}
+		// Acknowledge callback to stop Telegram's loading spinner
+		if upd.Callback != nil {
+			if respErr := b.bot.tbot.NewContext(*upd).Respond(&tele.CallbackResponse{}); respErr != nil {
+				b.bot.log.Debug("failed to respond to callback in start middleware", "error", respErr.Error())
+			}
+		}
 	}
 	return true
 }
