@@ -427,7 +427,7 @@ func (c *contextImpl) ChatID() int64 {
 func (c *contextImpl) ChatType() tele.ChatType {
 	chat := c.ct.Chat()
 	if chat == nil {
-		return tele.ChatPrivate
+		return ""
 	}
 	return chat.Type
 }
