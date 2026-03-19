@@ -303,7 +303,8 @@ type contextImpl struct {
 	ct   tele.Context
 	user *userContextImpl
 
-	textMsgID int
+	textMsgID       int
+	callbackHandled bool // set when initUserHandler already dispatched a callback
 }
 
 func (c *contextImpl) User() User {

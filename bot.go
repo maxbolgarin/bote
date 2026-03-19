@@ -330,8 +330,12 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			}
 		}
 
-		if err = f(ctx); err != nil {
-			return ctx.handleError(err)
+		// Skip f(ctx) if initUserHandler already dispatched the callback handler
+		// to prevent double execution of the same handler.
+		if !ctx.callbackHandled {
+			if err = f(ctx); err != nil {
+				return ctx.handleError(err)
+			}
 		}
 
 		if c.Callback() != nil {
@@ -403,6 +407,10 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 			Data:    targetHandler.Data,
 		},
 	}
+
+	// Mark that the callback was already dispatched to prevent double execution
+	// by callbackFallbackHandler in Handle().
+	ctx.callbackHandled = true
 
 	return targetHandler.Handler(&contextImpl{
 		bt:   b,
