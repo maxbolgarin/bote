@@ -998,10 +998,21 @@ func (b *baseBot) delete(userID int64, msgIDs ...int) error {
 	return errSet.Err()
 }
 
+const maxDeleteHistoryIterations = 200
+
 func (b *baseBot) deleteHistory(userID int64, lastMessageID int) map[int]struct{} {
 	deleted := map[int]struct{}{}
-	var counter int
+	var counter, iterations int
 	for msgID := lastMessageID; msgID > 1; msgID-- {
+		iterations++
+		if iterations > maxDeleteHistoryIterations {
+			b.log.Warn("delete history iteration limit reached",
+				"user_id", prepareUserID(userID, b.priv),
+				"last_msg_id", lastMessageID,
+				"iterations", iterations,
+			)
+			break
+		}
 		err := b.delete(userID, msgID)
 		if err != nil {
 			counter++
