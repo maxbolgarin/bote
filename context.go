@@ -438,7 +438,7 @@ func (c *contextImpl) IsReply() bool {
 	}
 
 	replyTo := msg.ReplyTo
-	if replyTo == nil {
+	if replyTo == nil || replyTo.Sender == nil {
 		return false
 	}
 
