@@ -204,9 +204,9 @@ func NewHMAC(id int64, hmacKey *EncryptionKey) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// IsEmpty returns true if all fields are nil.
+// IsEmpty returns true if all identification fields are nil.
 func (u FullUserID) IsEmpty() bool {
-	return u.IDPlain == nil && u.IDEnc == nil && u.EncKeyVersion == nil
+	return u.IDPlain == nil && u.IDEnc == nil && u.IDHMAC == nil
 }
 
 // ID returns plain user ID if it is set. Otherwise it tries to decrypt encrypted ID.
@@ -330,6 +330,12 @@ type UsersStorage interface {
 	// Delete deletes user from storage.
 	Delete(ctx context.Context, id FullUserID) error
 }
+
+const (
+	// maxButtonMapSize is the maximum number of button handlers per user before cleanup.
+	// Old handlers are re-registered via initUserHandler if the user clicks them.
+	maxButtonMapSize = 500
+)
 
 const (
 	// UserIDDBFieldName is a field name for plain user ID in DB.
@@ -1146,6 +1152,8 @@ func (u *userContextImpl) update(user *tele.User) {
 	}
 
 	u.user.Info = newInfo
+	u.user.LanguageCode = newLanguageCode
+	u.user.IsBot = user.IsBot
 
 	u.mu.Unlock()
 
@@ -1240,9 +1248,18 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 		Stats: &UserStatDiff{LastSeenTime: &lastSeenTime},
 	}
 
+	// Clear stale isInitedMsg entries and mark new messages as inited.
+	// Old entries for messages no longer in the user's message set are wasteful.
+	u.isInitedMsg.Clear()
 	u.isInitedMsg.Set(mainMsgID, true)
 	if headMsgID != 0 {
 		u.isInitedMsg.Set(headMsgID, true)
+	}
+
+	// Cap buttonMap to prevent unbounded growth.
+	// Old button handlers will be re-registered via initUserHandler if clicked.
+	if u.buttonMap.Len() > maxButtonMapSize {
+		u.buttonMap.Clear()
 	}
 
 	u.db.UpdateAsync(userID, diff)
@@ -1326,14 +1343,26 @@ func (u *userContextImpl) enable() {
 }
 
 func (u *userContextImpl) isMsgInited(msgID int) bool {
-	if msgID == 0 || !u.user.Messages.HasMsgID(msgID) {
+	if msgID == 0 {
+		return true
+	}
+	u.mu.Lock()
+	hasMsgID := u.user.Messages.HasMsgID(msgID)
+	u.mu.Unlock()
+	if !hasMsgID {
 		return true
 	}
 	return u.isInitedMsg.Get(msgID)
 }
 
 func (u *userContextImpl) setMsgInited(msgID int) {
-	if msgID == 0 || !u.user.Messages.HasMsgID(msgID) {
+	if msgID == 0 {
+		return
+	}
+	u.mu.Lock()
+	hasMsgID := u.user.Messages.HasMsgID(msgID)
+	u.mu.Unlock()
+	if !hasMsgID {
 		return
 	}
 	u.isInitedMsg.Set(msgID, true)
