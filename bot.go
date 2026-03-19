@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/erro"
@@ -544,7 +545,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 	return true
 }
 
-var cbackRx = regexp.MustCompile(`([-\w]+)(\|(.+))?`)
+var cbackRx = regexp.MustCompile(`^([-\w]+)(\|(.+))?$`)
 
 func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) bool {
 	if user == nil {
@@ -1172,10 +1173,10 @@ func getEditable(senderID int64, messageID int) tele.Editable {
 }
 
 func maxLen(s string, mx int) string {
-	if len(s) <= mx {
+	if utf8.RuneCountInString(s) <= mx {
 		return s
 	}
-	return s[:mx]
+	return string([]rune(s)[:mx])
 }
 
 func getSender(upd *tele.Update) *tele.User {
