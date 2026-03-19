@@ -198,6 +198,10 @@ func (wp *webhookPoller) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Limit request body to 128 KB to prevent memory exhaustion from oversized payloads.
+	// Telegram updates are typically a few KB at most.
+	r.Body = http.MaxBytesReader(w, r.Body, 128*1024)
+
 	update, err := servex.ReadJSON[tele.Update](r)
 	if err != nil {
 		ctx.BadRequest(err, "failed to read update")
