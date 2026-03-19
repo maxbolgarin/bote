@@ -132,10 +132,16 @@ func (k *EncryptionKey) String() string {
 	return hex.EncodeToString(k.key[:])
 }
 
-// Clear clears the encryption key from memory to prevent reading it from memory dump.
+// Clear zeroes the encryption key bytes and drops references to prevent reading it from memory dump.
 // Use it after using the key to avoid leaking it.
+// Note: Go's garbage collector may move objects, so this is best-effort.
 func (k *EncryptionKey) Clear() {
-	k.key = nil
+	if k.key != nil {
+		for i := range k.key {
+			k.key[i] = 0
+		}
+		k.key = nil
+	}
 	k.version = nil
 }
 
@@ -1625,6 +1631,7 @@ func (m *userManagerImpl) deleteUser(userID int64, fullID FullUserID) {
 	defer cancel()
 	if err := m.db.Delete(ctx, fullID); err != nil {
 		m.log.Error("cannot delete user from db", "user_id", fullID.String(), "error", err)
+		return // do not evict from cache if DB delete failed to avoid silent un-deletion
 	}
 	m.users.delete(userID)
 }
