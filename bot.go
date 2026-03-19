@@ -403,9 +403,12 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 
 	upd := tele.Update{
 		Callback: &tele.Callback{
-			Sender:  &tele.User{ID: ctx.user.ID()}, // preserve sender
-			Message: &tele.Message{ID: ctx.MessageID()},
-			Data:    targetHandler.Data,
+			Sender: &tele.User{ID: ctx.user.ID()}, // preserve sender
+			Message: &tele.Message{
+				ID:   ctx.MessageID(),
+				Chat: &tele.Chat{Type: tele.ChatPrivate},
+			},
+			Data: targetHandler.Data,
 		},
 	}
 
@@ -445,9 +448,12 @@ func (b *Bot) callbackFallbackHandler(ctx Context) error {
 
 	upd := tele.Update{
 		Callback: &tele.Callback{
-			Sender:  &tele.User{ID: ctxImpl.user.ID()},
-			Message: &tele.Message{ID: ctx.MessageID()},
-			Data:    targetHandler.Data,
+			Sender: &tele.User{ID: ctxImpl.user.ID()},
+			Message: &tele.Message{
+				ID:   ctx.MessageID(),
+				Chat: &tele.Chat{Type: tele.ChatPrivate},
+			},
+			Data: targetHandler.Data,
 		},
 	}
 
@@ -705,14 +711,17 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 	// Minimum update to handle all possible methods in [Context]
 	upd := tele.Update{
 		Message: &tele.Message{
-			Text: bundle.Text,
-			Sender: &tele.User{
-				ID: user.ID(),
-			},
+			Text:   bundle.Text,
+			Sender: &tele.User{ID: user.ID()},
+			Chat:   &tele.Chat{Type: tele.ChatPrivate},
 		},
 		Callback: &tele.Callback{
-			Message: &tele.Message{ID: msgID},
-			Data:    bundle.Data,
+			Message: &tele.Message{
+				ID:     msgID,
+				Sender: &tele.User{ID: user.ID()},
+				Chat:   &tele.Chat{Type: tele.ChatPrivate},
+			},
+			Data: bundle.Data,
 		},
 	}
 	msgs := user.Messages()
