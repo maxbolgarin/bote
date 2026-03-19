@@ -1260,7 +1260,9 @@ func (u *userContextImpl) disable() {
 	u.user.Stats.DisabledTime = currentTime
 	u.user.IsDisabled = true
 	u.user.State.Main = Disabled
-	u.user.State.MessageStates[u.user.Messages.MainID] = Disabled
+	if u.user.Messages.MainID != 0 {
+		u.user.State.MessageStates[u.user.Messages.MainID] = Disabled
+	}
 
 	// Capture values for DB update
 	userID := u.user.ID
@@ -1296,7 +1298,9 @@ func (u *userContextImpl) enable() {
 	u.user.Stats.DisabledTime = time.Time{}
 	u.user.IsDisabled = false
 	u.user.State.Main = FirstRequest
-	u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest
+	if u.user.Messages.MainID != 0 {
+		u.user.State.MessageStates[u.user.Messages.MainID] = FirstRequest
+	}
 
 	// Capture values for DB update
 	userID := u.user.ID
