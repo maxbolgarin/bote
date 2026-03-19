@@ -482,6 +482,11 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 
 	mainMsgID, err := c.bt.bot.send(c.user.ID(), mainMsg, append(opts, mainKb)...)
 	if err != nil {
+		// Roll back: delete the head message we just sent to avoid orphaning it
+		if delErr := c.bt.bot.delete(c.user.ID(), headMsgID); delErr != nil {
+			c.bt.bot.log.Warn("cannot delete orphaned head message after main send failure",
+				c.bt.userFields(c.user, "head_msg_id", headMsgID, "error", delErr.Error())...)
+		}
 		return c.prepareError(err, mainMsgID)
 	}
 
