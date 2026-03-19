@@ -236,6 +236,10 @@ func (m *metrics) addActiveUser(userID int64) {
 	m.userLastSeen.Change(userID, func(userID int64, stat activeUserStat) activeUserStat {
 		sessionStart := stat.sessionStart
 		if stat.lastSeen.IsZero() || sessionStart.IsZero() || time.Since(stat.lastSeen) > defaultSessionLength {
+			// Observe completed session length when a new session starts
+			if !stat.sessionStart.IsZero() && !stat.lastSeen.IsZero() {
+				m.sessionLength.Observe(stat.lastSeen.Sub(stat.sessionStart).Seconds())
+			}
 			sessionStart = time.Now()
 		}
 		return activeUserStat{
@@ -276,9 +280,6 @@ func (m *metrics) updateActiveUsers() {
 
 	// Iterate through all users and categorize by activity
 	m.userLastSeen.Range(func(userID int64, stat activeUserStat) bool {
-		if !stat.sessionStart.IsZero() {
-			m.sessionLength.Observe(time.Since(stat.sessionStart).Seconds())
-		}
 		// Count users active in last 1h
 		if stat.lastSeen.After(oneHourAgo) {
 			users1h++
@@ -290,6 +291,10 @@ func (m *metrics) updateActiveUsers() {
 			users24h++
 			actions24h += stat.totalActions
 		} else {
+			// Observe completed session length when cleaning up inactive users
+			if !stat.sessionStart.IsZero() {
+				m.sessionLength.Observe(stat.lastSeen.Sub(stat.sessionStart).Seconds())
+			}
 			// Mark for deletion if older than 24h
 			toDelete = append(toDelete, userID)
 		}
@@ -301,14 +306,18 @@ func (m *metrics) updateActiveUsers() {
 		m.userLastSeen.Delete(userID)
 	}
 
-	// Update gauges with current counts
+	// Always update gauges, including setting to zero when no active users
+	m.currentActiveUsers.WithLabelValues(MetricsWindow1h).Set(float64(users1h))
+	m.currentActiveUsers.WithLabelValues(MetricsWindow24h).Set(float64(users24h))
 	if users1h > 0 {
-		m.currentActiveUsers.WithLabelValues(MetricsWindow1h).Set(float64(users1h))
-		m.averageUsersActions.WithLabelValues(MetricsWindow1h).Set(float64(actions1h / users1h))
+		m.averageUsersActions.WithLabelValues(MetricsWindow1h).Set(float64(actions1h) / float64(users1h))
+	} else {
+		m.averageUsersActions.WithLabelValues(MetricsWindow1h).Set(0)
 	}
 	if users24h > 0 {
-		m.currentActiveUsers.WithLabelValues(MetricsWindow24h).Set(float64(users24h))
-		m.averageUsersActions.WithLabelValues(MetricsWindow24h).Set(float64(actions24h / users24h))
+		m.averageUsersActions.WithLabelValues(MetricsWindow24h).Set(float64(actions24h) / float64(users24h))
+	} else {
+		m.averageUsersActions.WithLabelValues(MetricsWindow24h).Set(0)
 	}
 
 	m.lastUpdateNano.Store(now.UnixNano())
