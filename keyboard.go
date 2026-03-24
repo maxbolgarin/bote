@@ -78,7 +78,7 @@ func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...strin
 			// Register in buttonMap for dispatch via callbackFallbackHandler.
 			// We intentionally do NOT register per-button telebot handlers to avoid
 			// unbounded growth of telebot's internal handler map.
-			ctx.user.buttonMap.Set(id, InitBundle{
+			ctx.user.buttonMap.Set(ctx.buttonMapKey(id), InitBundle{
 				Handler: callback,
 				Data:    data,
 			})

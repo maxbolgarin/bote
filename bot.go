@@ -394,7 +394,7 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 		return nil
 	}
 
-	targetHandler, ok := ctx.user.buttonMap.Lookup(btnID)
+	targetHandler, ok := ctx.user.buttonMap.Lookup(ctx.buttonMapKey(btnID))
 	if !ok {
 		b.bot.log.Warn("button handler not found", "user_id", prepareUserID(ctx.user.ID(), b.um.priv), "button_id", btnID)
 		b.bot.metr.incError(MetricsErrorInvalidUserState, MetricsErrorSeverityHigh)
@@ -437,7 +437,7 @@ func (b *Bot) callbackFallbackHandler(ctx Context) error {
 		return nil
 	}
 
-	targetHandler, ok := ctxImpl.user.buttonMap.Lookup(btnID)
+	targetHandler, ok := ctxImpl.user.buttonMap.Lookup(ctxImpl.buttonMapKey(btnID))
 	if !ok {
 		b.bot.log.Warn("button handler not found in fallback",
 			"user_id", prepareUserID(ctxImpl.user.ID(), b.um.priv),
