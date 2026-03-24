@@ -337,12 +337,14 @@ func (c *contextImpl) ButtonID() string {
 
 // buttonMapKey returns the key used to store/lookup button handlers in buttonMap.
 // It combines the message ID with the button ID to prevent cross-message dispatch conflicts.
-// Head message buttons are normalized to MainID so registration and dispatch always agree.
+// Head, error, and notification message IDs are normalized to MainID so registration
+// and dispatch always agree regardless of which message the callback originated from.
 func (c *contextImpl) buttonMapKey(btnID string) string {
 	msgID := c.MessageID()
-	msgs := c.user.Messages()
-	if msgID == msgs.HeadID && msgs.MainID != 0 {
-		msgID = msgs.MainID
+	if msgs := c.user.Messages(); msgs.MainID != 0 {
+		if msgID == msgs.HeadID || msgID == msgs.ErrorID || msgID == msgs.NotificationID {
+			msgID = msgs.MainID
+		}
 	}
 	return strconv.Itoa(msgID) + ":" + btnID
 }
