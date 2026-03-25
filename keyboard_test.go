@@ -619,3 +619,112 @@ func TestGetBtnIDAndUniqueSHA256ForLongNames(t *testing.T) {
 		assert.Equal(t, id1, id2, "same name should produce same ID")
 	})
 }
+
+// TestKeyboardWithContext tests NewKeyboardWithContext and its methods.
+func TestKeyboardWithContext(t *testing.T) {
+	dummyHandler := func(ctx Context) error { return nil }
+
+	t.Run("NewKeyboardWithContext returns non-nil keyboard", func(t *testing.T) {
+		bot := setupTestBot(t)
+		ctx := NewContext(bot, 111, 1)
+
+		kb := NewKeyboardWithContext(ctx)
+		require.NotNil(t, kb)
+		require.NotNil(t, kb.Keyboard)
+	})
+
+	t.Run("AddBtn adds buttons to same row", func(t *testing.T) {
+		bot := setupTestBot(t)
+		ctx := NewContext(bot, 111, 1)
+
+		kb := NewKeyboardWithContext(ctx)
+		kb.AddBtn("Button 1", dummyHandler)
+		kb.AddBtn("Button 2", dummyHandler)
+		kb.AddBtn("Button 3", dummyHandler)
+
+		markup := kb.CreateInlineMarkup()
+		require.NotNil(t, markup)
+		// All three buttons should be in a single row.
+		assert.Len(t, markup.InlineKeyboard, 1)
+		assert.Len(t, markup.InlineKeyboard[0], 3)
+	})
+
+	t.Run("AddBtnRow creates a new row per call", func(t *testing.T) {
+		bot := setupTestBot(t)
+		ctx := NewContext(bot, 111, 1)
+
+		kb := NewKeyboardWithContext(ctx)
+		kb.AddBtnRow("Row 1 Btn", dummyHandler)
+		kb.AddBtnRow("Row 2 Btn", dummyHandler)
+
+		markup := kb.CreateInlineMarkup()
+		require.NotNil(t, markup)
+		// Each AddBtnRow call should produce a separate row.
+		assert.Len(t, markup.InlineKeyboard, 2)
+		assert.Len(t, markup.InlineKeyboard[0], 1)
+		assert.Len(t, markup.InlineKeyboard[1], 1)
+	})
+
+	t.Run("AB shortcut behaves same as AddBtn", func(t *testing.T) {
+		bot := setupTestBot(t)
+		ctx := NewContext(bot, 111, 1)
+
+		kb := NewKeyboardWithContext(ctx)
+		kb.AB("Btn A", dummyHandler)
+		kb.AB("Btn B", dummyHandler)
+
+		markup := kb.CreateInlineMarkup()
+		require.NotNil(t, markup)
+		// Both buttons should share a single row, same as AddBtn.
+		assert.Len(t, markup.InlineKeyboard, 1)
+		assert.Len(t, markup.InlineKeyboard[0], 2)
+	})
+
+	t.Run("ABR shortcut behaves same as AddBtnRow", func(t *testing.T) {
+		bot := setupTestBot(t)
+		ctx := NewContext(bot, 111, 1)
+
+		kb := NewKeyboardWithContext(ctx)
+		kb.ABR("Row A", dummyHandler)
+		kb.ABR("Row B", dummyHandler)
+
+		markup := kb.CreateInlineMarkup()
+		require.NotNil(t, markup)
+		// Each ABR call should produce a separate row.
+		assert.Len(t, markup.InlineKeyboard, 2)
+	})
+
+	t.Run("AddBtnRow with callback data stores data in button", func(t *testing.T) {
+		bot := setupTestBot(t)
+		ctx := NewContext(bot, 111, 1)
+
+		kb := NewKeyboardWithContext(ctx)
+		kb.AddBtnRow("Item", dummyHandler, "item-id-1")
+
+		markup := kb.CreateInlineMarkup()
+		require.NotNil(t, markup)
+		require.Len(t, markup.InlineKeyboard, 1)
+		require.Len(t, markup.InlineKeyboard[0], 1)
+		// The button Data field should contain the provided data item.
+		assert.Contains(t, markup.InlineKeyboard[0][0].Data, "item-id-1")
+	})
+
+	t.Run("AddFooter adds buttons in final row", func(t *testing.T) {
+		bot := setupTestBot(t)
+		ctx := NewContext(bot, 111, 1)
+		ctxImpl := ctx.(*contextImpl)
+
+		kb := NewKeyboardWithContext(ctx)
+		kb.AddBtn("Main 1", dummyHandler)
+		kb.AddBtn("Main 2", dummyHandler)
+
+		footerBtn := ctxImpl.Btn("Footer Close", dummyHandler)
+		kb.AddFooter(footerBtn)
+
+		markup := kb.CreateInlineMarkup()
+		require.NotNil(t, markup)
+		// Should have the main row plus the footer row.
+		assert.Len(t, markup.InlineKeyboard, 2)
+		assert.Equal(t, "Footer Close", markup.InlineKeyboard[1][0].Text)
+	})
+}
