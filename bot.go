@@ -785,10 +785,14 @@ func (b *Bot) init(bundle InitBundle, user *userContextImpl, msgID int, expected
 
 	// Expected state not changed after running handler
 	if expectedState != Unknown {
-		// TODO: is it OK to ignore unexpected state?
-		// if newState != expectedState {
-		// 	return erro.New("unexpected", "state", newState)
-		// }
+		if newState != expectedState {
+			b.bot.log.Debug("state changed during init",
+				"user_id", user.user.ID.String(),
+				"msg_id", msgID,
+				"expected_state", expectedState,
+				"new_state", newState,
+			)
+		}
 		return nil
 	}
 

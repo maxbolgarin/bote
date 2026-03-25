@@ -11,7 +11,7 @@ import (
 )
 
 // Use ngrok or tuna.am to get a public URL for your webhook for testing purposes
-const webhookURL = "https://TODO/webhook"
+const webhookURL = "https://your-domain.example.com/webhook"
 
 func main() {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")

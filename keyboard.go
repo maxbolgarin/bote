@@ -34,7 +34,6 @@ var (
 	EmptyBtn      tele.Btn
 	EmptyKeyboard = Inline(maxButtonsInRow)
 
-	// TODO: make length depends on number of buttons
 	runesInRow = map[RuneSizeType]int{
 		OneBytePerRune:   32,
 		TwoBytesPerRune:  20,
@@ -140,13 +139,20 @@ func NewKeyboard(optionalRowLen ...int) *Keyboard {
 
 // NewKeyboardWithLength creates new keyboard builder with max runes in a row.
 // It creates a new row in Add if number of runes is greater than max runes in row for selected rune type.
+// When optionalRowLen > 1, maxRunesInRow is scaled by the number of buttons per row so the rune budget
+// matches the expected number of buttons rather than triggering premature row breaks.
 func NewKeyboardWithLength(runeType RuneSizeType, optionalRowLen ...int) *Keyboard {
+	rowLen := lang.First(optionalRowLen)
+	maxRunes := runesInRow[runeType]
+	if rowLen > 1 {
+		maxRunes *= rowLen
+	}
 	return &Keyboard{
 		buttons:        make([][]tele.Btn, 0),
 		currentRow:     make([]tele.Btn, 0, maxButtonsInRow),
-		maxRunesInRow:  runesInRow[runeType],
+		maxRunesInRow:  maxRunes,
 		isCountRunes:   runesInRow[runeType] > 0,
-		optionalRowLen: lang.First(optionalRowLen),
+		optionalRowLen: rowLen,
 	}
 }
 
