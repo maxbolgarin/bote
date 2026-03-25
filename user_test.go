@@ -1913,3 +1913,177 @@ func TestDeleteUserCacheEviction(t *testing.T) {
 	_, found = um.users.get(333)
 	assert.False(t, found, "user should be evicted after successful DB delete")
 }
+
+// TestUserValueStore tests SetValue, GetValue, DeleteValue, and ClearCache
+func TestUserValueStore(t *testing.T) {
+	bot := setupTestBot(t)
+	ctx := NewContext(bot, 7001, 1)
+	user := ctx.User().(*userContextImpl)
+
+	t.Run("GetValue on empty map returns false", func(t *testing.T) {
+		val, ok := user.GetValue("missing")
+		assert.False(t, ok)
+		assert.Nil(t, val)
+	})
+
+	t.Run("SetValue and GetValue round-trip", func(t *testing.T) {
+		user.SetValue("key1", "hello")
+		val, ok := user.GetValue("key1")
+		require.True(t, ok)
+		assert.Equal(t, "hello", val)
+	})
+
+	t.Run("SetValue with non-string value", func(t *testing.T) {
+		user.SetValue("num", 42)
+		val, ok := user.GetValue("num")
+		require.True(t, ok)
+		assert.Equal(t, 42, val)
+	})
+
+	t.Run("DeleteValue removes the key", func(t *testing.T) {
+		user.SetValue("toDelete", "bye")
+		_, ok := user.GetValue("toDelete")
+		require.True(t, ok)
+
+		user.DeleteValue("toDelete")
+		val, ok := user.GetValue("toDelete")
+		assert.False(t, ok)
+		assert.Nil(t, val)
+	})
+
+	t.Run("DeleteValue on missing key is a no-op", func(t *testing.T) {
+		user.DeleteValue("nonexistent") // must not panic
+	})
+
+	t.Run("ClearCache removes all values", func(t *testing.T) {
+		user.SetValue("a", 1)
+		user.SetValue("b", 2)
+		user.ClearCache()
+
+		_, ok1 := user.GetValue("a")
+		_, ok2 := user.GetValue("b")
+		assert.False(t, ok1)
+		assert.False(t, ok2)
+	})
+}
+
+// TestEncryptionKeyHelpers tests KeyBytes and String on EncryptionKey
+func TestEncryptionKeyHelpers(t *testing.T) {
+	ver := int64(1)
+	ek := NewEncryptionKey(&ver)
+	require.NotNil(t, ek)
+
+	t.Run("KeyBytes is 32 bytes", func(t *testing.T) {
+		kb := ek.KeyBytes()
+		assert.Len(t, kb, 32)
+	})
+
+	t.Run("String returns non-empty hex", func(t *testing.T) {
+		s := ek.String()
+		assert.NotEmpty(t, s)
+		// hex of 32 bytes is 64 characters
+		assert.Len(t, s, 64)
+	})
+
+	t.Run("String round-trips through NewEncryptionKeyFromString", func(t *testing.T) {
+		s := ek.String()
+		ek2, err := NewEncryptionKeyFromString(s, &ver)
+		require.NoError(t, err)
+		assert.Equal(t, ek.KeyBytes(), ek2.KeyBytes())
+	})
+
+	t.Run("KeyBytes matches Key pointer contents", func(t *testing.T) {
+		assert.Equal(t, ek.Key()[:], ek.KeyBytes())
+	})
+}
+
+// TestRegisterTextStates verifies that states registered with RegisterTextStates
+// are correctly identified by UserState.IsText()
+func TestRegisterTextStates(t *testing.T) {
+	// Use a unique state name to avoid conflicts with package-level registrations
+	uniqueState := UserState("test_text_state_unique_xyz_9999")
+
+	// Before registration IsText should be false
+	assert.False(t, uniqueState.IsText(), "state should not be a text state before registration")
+
+	// Register it
+	RegisterTextStates(uniqueState)
+
+	// After registration IsText should return true
+	assert.True(t, uniqueState.IsText(), "state should be a text state after registration")
+
+	t.Run("multiple states registered at once", func(t *testing.T) {
+		s1 := UserState("multi_text_a_unique_abc")
+		s2 := UserState("multi_text_b_unique_abc")
+
+		assert.False(t, s1.IsText())
+		assert.False(t, s2.IsText())
+
+		RegisterTextStates(s1, s2)
+
+		assert.True(t, s1.IsText())
+		assert.True(t, s2.IsText())
+	})
+
+	t.Run("unregistered state remains non-text", func(t *testing.T) {
+		s := UserState("never_registered_unique_xyz")
+		assert.False(t, s.IsText())
+	})
+
+	t.Run("NewUserState wrapped state matches registration", func(t *testing.T) {
+		raw := UserState("raw_text_state_unique_abc123")
+		RegisterTextStates(raw)
+		wrapped := NewUserState(raw.String())
+		assert.True(t, wrapped.IsText())
+	})
+}
+
+// TestUserInternalMethods tests setMainMessage and forgetHistoryMessage
+func TestUserInternalMethods(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	tUser := &tele.User{ID: 8001}
+	model := newUserModel(tUser, NewPlainUserID(8001), "")
+	userImpl := um.newUserContext(model, "")
+
+	t.Run("setMainMessage updates MainID", func(t *testing.T) {
+		userImpl.setMainMessage(555)
+		msgs := userImpl.Messages()
+		assert.Equal(t, 555, msgs.MainID)
+	})
+
+	t.Run("handleSend populates HistoryIDs", func(t *testing.T) {
+		// Send two messages so we have history to work with
+		userImpl.handleSend(UserState("hist_state_unique_a"), 100, 0)
+		userImpl.handleSend(UserState("hist_state_unique_b"), 200, 0)
+
+		msgs := userImpl.Messages()
+		assert.Contains(t, msgs.HistoryIDs, 100, "first message should be in history after second send")
+		assert.Equal(t, 200, msgs.MainID)
+	})
+
+	t.Run("forgetHistoryMessage removes from HistoryIDs", func(t *testing.T) {
+		// Ensure 100 is in history from previous sub-test
+		msgs := userImpl.Messages()
+		require.Contains(t, msgs.HistoryIDs, 100)
+
+		found := userImpl.forgetHistoryMessage(100)
+		assert.True(t, found)
+
+		msgs = userImpl.Messages()
+		assert.NotContains(t, msgs.HistoryIDs, 100)
+	})
+
+	t.Run("forgetHistoryMessage returns false for unknown msgID", func(t *testing.T) {
+		found := userImpl.forgetHistoryMessage(99999)
+		assert.False(t, found)
+	})
+
+	t.Run("setMainMessage to zero clears MainID", func(t *testing.T) {
+		userImpl.setMainMessage(0)
+		msgs := userImpl.Messages()
+		assert.Equal(t, 0, msgs.MainID)
+	})
+}
