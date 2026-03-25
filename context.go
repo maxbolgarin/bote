@@ -485,6 +485,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 		return c.SendMain(newState, mainMsg, mainKb, opts...)
 	}
 
+	triggerMsgID := c.MessageID()
 	mainMsg = c.bt.msgs.Messages(c.user.Language()).PrepareMessage(mainMsg, c.user, newState, 0, false)
 
 	// Need copy to prevent from conflict in the next append because of using the same underlying array in opts
@@ -512,6 +513,7 @@ func (c *contextImpl) Send(newState State, mainMsg, headMsg string, mainKb, head
 	}
 
 	c.user.handleSend(newState, mainMsgID, headMsgID)
+	c.user.copyButtonsToNewMsgID(triggerMsgID, mainMsgID)
 
 	return nil
 }
@@ -521,6 +523,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 		return nil
 	}
 
+	triggerMsgID := c.MessageID()
 	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMessage(msg, c.user, newState, 0, false)
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, kb)...)
 	if err != nil {
@@ -534,6 +537,7 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 	}
 
 	c.user.handleSend(newState, msgID, 0)
+	c.user.copyButtonsToNewMsgID(triggerMsgID, msgID)
 
 	return nil
 }
@@ -645,6 +649,7 @@ func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, head
 	}
 
 	c.user.setState(newState)
+	c.user.copyButtonsToNewMsgID(c.MessageID(), msgIDs.MainID)
 
 	return nil
 }
@@ -662,6 +667,7 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 	}
 
 	c.user.setState(newState)
+	c.user.copyButtonsToNewMsgID(c.MessageID(), msgIDs.MainID)
 
 	return nil
 }
@@ -676,6 +682,8 @@ func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 	if err := c.edit(msgIDs.MainID, "", kb, opts...); err != nil {
 		return c.prepareEditError(err, msgIDs.MainID)
 	}
+
+	c.user.copyButtonsToNewMsgID(c.MessageID(), msgIDs.MainID)
 
 	return nil
 }

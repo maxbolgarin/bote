@@ -11,6 +11,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -1269,6 +1270,24 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 	}
 
 	u.db.UpdateAsync(userID, diff)
+}
+
+// copyButtonsToNewMsgID copies all buttonMap entries registered under oldMsgID
+// to equivalent entries under newMsgID. This is needed after SendMain/Send so that
+// buttons built during the handler call (keyed by the triggering message ID) become
+// accessible when the user clicks on the newly sent main message.
+func (u *userContextImpl) copyButtonsToNewMsgID(oldMsgID, newMsgID int) {
+	if oldMsgID == 0 || oldMsgID == newMsgID {
+		return
+	}
+	prefix := strconv.Itoa(oldMsgID) + ":"
+	newPrefix := strconv.Itoa(newMsgID) + ":"
+	snapshot := u.buttonMap.Copy()
+	for key, val := range snapshot {
+		if strings.HasPrefix(key, prefix) {
+			u.buttonMap.Set(newPrefix+key[len(prefix):], val)
+		}
+	}
 }
 
 func (u *userContextImpl) disable() {
