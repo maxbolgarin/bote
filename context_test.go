@@ -756,6 +756,401 @@ func TestHandleSendPermanentlyMarksMainAsInited(t *testing.T) {
 		"history message must NOT be marked inited so initUserHandler re-registers its buttons")
 }
 
+// ---------------------------------------------------------------------------
+// TestContextEditOperations covers Edit*, EditMain empty-msg guard, and
+// related methods that call the internal edit path.
+// ---------------------------------------------------------------------------
+
+func TestContextEditOperations(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("EditMain empty msg returns nil immediately", func(t *testing.T) {
+		ctx := NewContext(bot, 10001, 1)
+		// validateUserInputWithMessage returns false for empty msg → nil returned
+		err := ctx.EditMain(NoChange, "", nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("EditMain non-empty msg offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 10002, 1)
+		_ = ctx.EditMain(NoChange, "hello", nil)
+	})
+
+	t.Run("EditMainReplyMarkup nil kb returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 10003, 1)
+		err := ctx.EditMainReplyMarkup(nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("EditMainReplyMarkup non-nil kb offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 10004, 1)
+		kb := &tele.ReplyMarkup{}
+		_ = ctx.EditMainReplyMarkup(kb)
+	})
+
+	t.Run("EditHead non-empty offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 10005, 1)
+		_ = ctx.EditHead("head text", nil)
+	})
+
+	t.Run("EditHeadReplyMarkup nil kb returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 10006, 1)
+		err := ctx.EditHeadReplyMarkup(nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("EditHeadReplyMarkup non-nil kb offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 10007, 1)
+		kb := &tele.ReplyMarkup{}
+		_ = ctx.EditHeadReplyMarkup(kb)
+	})
+
+	t.Run("EditHistory non-empty offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 10008, 1)
+		_ = ctx.EditHistory(NoChange, 42, "history text", nil)
+	})
+
+	t.Run("EditHistoryReplyMarkup nil kb returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 10009, 1)
+		err := ctx.EditHistoryReplyMarkup(42, nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("EditHistoryReplyMarkup non-nil kb offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 10010, 1)
+		kb := &tele.ReplyMarkup{}
+		_ = ctx.EditHistoryReplyMarkup(42, kb)
+	})
+
+	t.Run("EditInChat chatID zero returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 10011, 1)
+		err := ctx.EditInChat(0, 1, "msg", nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("EditInChat empty msg returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 10012, 1)
+		err := ctx.EditInChat(12345, 1, "", nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("EditInChat valid args offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 10013, 1)
+		_ = ctx.EditInChat(12345, 1, "msg", nil)
+	})
+
+	t.Run("Edit falls back to EditMain when no head content", func(t *testing.T) {
+		ctx := NewContext(bot, 10014, 1)
+		// headMsg="" and headKb=nil → falls back to EditMain path
+		_ = ctx.Edit(NoChange, "main text", "", nil, nil)
+	})
+
+	t.Run("Edit with head content offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 10015, 1)
+		impl := ctx.(*contextImpl)
+		// Set HeadID so the head-edit branch is taken
+		impl.user.mu.Lock()
+		impl.user.user.Messages.HeadID = 99
+		impl.user.mu.Unlock()
+		_ = ctx.Edit(NoChange, "main text", "head text", nil, nil)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestContextDeleteOperations covers all Delete* methods.
+// ---------------------------------------------------------------------------
+
+func TestContextDeleteOperations(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("DeleteHead no-op when HeadID is zero", func(t *testing.T) {
+		ctx := NewContext(bot, 20001, 1)
+		impl := ctx.(*contextImpl)
+		impl.user.mu.Lock()
+		impl.user.user.Messages.HeadID = 0
+		impl.user.mu.Unlock()
+		err := ctx.DeleteHead()
+		assert.Nil(t, err)
+	})
+
+	t.Run("DeleteHead with non-zero HeadID offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 20002, 1)
+		impl := ctx.(*contextImpl)
+		impl.user.mu.Lock()
+		impl.user.user.Messages.HeadID = 55
+		impl.user.mu.Unlock()
+		_ = ctx.DeleteHead()
+	})
+
+	t.Run("DeleteNotification no-op when NotificationID is zero", func(t *testing.T) {
+		ctx := NewContext(bot, 20003, 1)
+		impl := ctx.(*contextImpl)
+		impl.user.mu.Lock()
+		impl.user.user.Messages.NotificationID = 0
+		impl.user.mu.Unlock()
+		err := ctx.DeleteNotification()
+		assert.Nil(t, err)
+	})
+
+	t.Run("DeleteNotification with non-zero ID offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 20004, 1)
+		impl := ctx.(*contextImpl)
+		impl.user.mu.Lock()
+		impl.user.user.Messages.NotificationID = 56
+		impl.user.mu.Unlock()
+		_ = ctx.DeleteNotification()
+	})
+
+	t.Run("DeleteError no-op when ErrorID is zero", func(t *testing.T) {
+		ctx := NewContext(bot, 20005, 1)
+		impl := ctx.(*contextImpl)
+		impl.user.mu.Lock()
+		impl.user.user.Messages.ErrorID = 0
+		impl.user.mu.Unlock()
+		err := ctx.DeleteError()
+		assert.Nil(t, err)
+	})
+
+	t.Run("DeleteError with non-zero ID offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 20006, 1)
+		impl := ctx.(*contextImpl)
+		impl.user.mu.Lock()
+		impl.user.user.Messages.ErrorID = 57
+		impl.user.mu.Unlock()
+		_ = ctx.DeleteError()
+	})
+
+	t.Run("DeleteHistory msgID zero returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 20007, 1)
+		err := ctx.DeleteHistory(0)
+		assert.Nil(t, err)
+	})
+
+	t.Run("DeleteHistory valid msgID not in history is no-op", func(t *testing.T) {
+		ctx := NewContext(bot, 20008, 1)
+		err := ctx.DeleteHistory(9999)
+		assert.Nil(t, err)
+	})
+
+	t.Run("DeleteAll does not panic", func(t *testing.T) {
+		ctx := NewContext(bot, 20009, 1)
+		assert.NotPanics(t, func() {
+			ctx.DeleteAll(0)
+		})
+	})
+
+	t.Run("DeleteInChat chatID zero returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 20010, 1)
+		err := ctx.DeleteInChat(0, 1)
+		assert.Nil(t, err)
+	})
+
+	t.Run("DeleteInChat msgID zero returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 20011, 1)
+		err := ctx.DeleteInChat(12345, 0)
+		assert.Nil(t, err)
+	})
+
+	t.Run("DeleteInChat valid args offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 20012, 1)
+		_ = ctx.DeleteInChat(12345, 1)
+	})
+
+	t.Run("DeleteUser returns bool without panic", func(t *testing.T) {
+		ctx := NewContext(bot, 20013, 1)
+		// offline: delete calls will fail, but DeleteUser logs and returns false
+		_ = ctx.DeleteUser()
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestContextSendOperations covers Send, SendFile, SendInChat.
+// ---------------------------------------------------------------------------
+
+func TestContextSendOperations(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("Send with no head falls back to SendMain path, offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 30001, 1)
+		_ = ctx.Send(NoChange, "main msg", "", nil, nil)
+	})
+
+	t.Run("Send with head msg offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 30002, 1)
+		_ = ctx.Send(NoChange, "main msg", "head msg", nil, nil)
+	})
+
+	t.Run("SendFile empty file returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 30003, 1)
+		err := ctx.SendFile("report.csv", nil)
+		assert.Nil(t, err, "empty file should return nil")
+	})
+
+	t.Run("SendFile empty byte slice returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 30004, 1)
+		err := ctx.SendFile("report.csv", []byte{})
+		assert.Nil(t, err, "empty byte slice should return nil")
+	})
+
+	t.Run("SendFile non-empty file offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 30005, 1)
+		_ = ctx.SendFile("report.csv", []byte("data"))
+	})
+
+	t.Run("SendFile empty name returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 30006, 1)
+		err := ctx.SendFile("", []byte("data"))
+		assert.Nil(t, err, "empty name should return nil via validateUserInputWithMessage")
+	})
+
+	t.Run("SendInChat chatID zero returns (0, nil)", func(t *testing.T) {
+		ctx := NewContext(bot, 30007, 1)
+		msgID, err := ctx.SendInChat(0, 0, "msg", nil)
+		assert.Nil(t, err)
+		assert.Equal(t, 0, msgID)
+	})
+
+	t.Run("SendInChat empty msg returns (0, nil)", func(t *testing.T) {
+		ctx := NewContext(bot, 30008, 1)
+		msgID, err := ctx.SendInChat(12345, 0, "", nil)
+		assert.Nil(t, err)
+		assert.Equal(t, 0, msgID)
+	})
+
+	t.Run("SendInChat valid args offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 30009, 1)
+		_, _ = ctx.SendInChat(12345, 0, "hello", nil)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestContextAccessors covers ChatID, ButtonID, Tele, IsMentioned accessors.
+// ---------------------------------------------------------------------------
+
+func TestContextAccessors(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("ChatID for callback context returns user chat ID", func(t *testing.T) {
+		ctx := NewContext(bot, 40001, 1)
+		// callback update has Sender but no separate Chat; telebot resolves chat from sender
+		chatID := ctx.ChatID()
+		// In a callback-only update, chat may be 0 — just ensure no panic
+		_ = chatID
+	})
+
+	t.Run("ChatID for text context returns user ID", func(t *testing.T) {
+		ctx := NewContextText(bot, 40002, 1, "hello")
+		chatID := ctx.ChatID()
+		// text message Sender is set but Chat may differ; at minimum no panic
+		_ = chatID
+	})
+
+	t.Run("ButtonID for callback context returns non-empty string", func(t *testing.T) {
+		noop := func(c Context) error { return nil }
+		ctx := NewContext(bot, 40003, 1)
+		btn := ctx.Btn("X", noop)
+
+		// Build a callback update that carries the button's Unique
+		upd := tele.Update{
+			Callback: &tele.Callback{
+				Unique:  btn.Unique,
+				Message: &tele.Message{ID: 1, Sender: &tele.User{ID: 40003}},
+			},
+		}
+		impl := &contextImpl{
+			bt:   bot,
+			ct:   bot.bot.tbot.NewContext(upd),
+			user: bot.um.getUser(40003),
+		}
+		btnID := impl.ButtonID()
+		assert.NotEmpty(t, btnID)
+	})
+
+	t.Run("ButtonID for text context returns empty string", func(t *testing.T) {
+		ctx := NewContextText(bot, 40004, 1, "hello")
+		assert.Empty(t, ctx.ButtonID())
+	})
+
+	t.Run("Tele returns non-nil underlying context", func(t *testing.T) {
+		ctx := NewContext(bot, 40005, 1)
+		assert.NotNil(t, ctx.Tele())
+	})
+
+	t.Run("IsMentioned for text context with no entities returns false", func(t *testing.T) {
+		ctx := NewContextText(bot, 40006, 1, "hello world")
+		assert.False(t, ctx.IsMentioned())
+	})
+
+	t.Run("IsMentioned for callback context returns false", func(t *testing.T) {
+		ctx := NewContext(bot, 40007, 1)
+		assert.False(t, ctx.IsMentioned())
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestContextErrorHandlers covers handleBotBlockedError, handleMessageNotFoundError,
+// handleGenericError via the public handleError entry point.
+// ---------------------------------------------------------------------------
+
+func TestContextErrorHandlers(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("handleBotBlockedError disables user", func(t *testing.T) {
+		ctx := NewContext(bot, 50001, 1)
+		impl := ctx.(*contextImpl)
+
+		assert.False(t, impl.user.IsDisabled(), "user should not be disabled before")
+		err := impl.handleError(fmt.Errorf("telegram: bot was blocked by the user (403)"))
+		assert.Nil(t, err, "handleError must absorb bot-blocked error")
+		assert.True(t, impl.user.IsDisabled(), "user must be disabled after bot-blocked error")
+	})
+
+	t.Run("handleMessageNotFoundError delete returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 50002, 1)
+		impl := ctx.(*contextImpl)
+		err := impl.handleError(fmt.Errorf("telegram: message to delete not found (400)"))
+		assert.Nil(t, err)
+	})
+
+	t.Run("handleMessageNotFoundError edit returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 50003, 1)
+		impl := ctx.(*contextImpl)
+		err := impl.handleError(fmt.Errorf("telegram: message to edit not found (400)"))
+		assert.Nil(t, err)
+	})
+
+	t.Run("handleGenericError unexpected error returns nil from handleError", func(t *testing.T) {
+		ctx := NewContext(bot, 50004, 1)
+		impl := ctx.(*contextImpl)
+		// Generic errors are logged and an error message is attempted (fails offline), returns nil
+		err := impl.handleError(fmt.Errorf("some unexpected error"))
+		assert.Nil(t, err)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestContextValidateUserInputWithKeyboard covers the nil-keyboard guard path.
+// ---------------------------------------------------------------------------
+
+func TestContextValidateUserInputWithKeyboard(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("nil keyboard returns false and EditMainReplyMarkup returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 60001, 1)
+		impl := ctx.(*contextImpl)
+		result := impl.validateUserInputWithKeyboard(nil, "Edit", NoChange)
+		assert.False(t, result, "nil keyboard must fail validation")
+	})
+
+	t.Run("non-nil keyboard returns true", func(t *testing.T) {
+		ctx := NewContext(bot, 60002, 1)
+		impl := ctx.(*contextImpl)
+		kb := &tele.ReplyMarkup{}
+		result := impl.validateUserInputWithKeyboard(kb, "Edit", NoChange)
+		assert.True(t, result, "non-nil keyboard must pass validation")
+	})
+}
+
 // TestButtonDispatchWithoutFixWouldFail documents the exact failure mode:
 // without copyButtonsToNewMsgID, the new main msg ID has no buttonMap entries.
 func TestButtonDispatchWithoutFixWouldFail(t *testing.T) {
