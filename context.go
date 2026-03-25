@@ -726,6 +726,8 @@ func (c *contextImpl) EditHead(msg string, kb *tele.ReplyMarkup, opts ...any) er
 		return c.prepareEditError(err, msgIDs.HeadID)
 	}
 
+	c.user.copyButtonsToNewMsgID(c.MessageID(), msgIDs.MainID)
+
 	return nil
 }
 
@@ -739,6 +741,8 @@ func (c *contextImpl) EditHeadReplyMarkup(kb *tele.ReplyMarkup, opts ...any) err
 	if err := c.edit(msgIDs.HeadID, "", kb, opts...); err != nil {
 		return c.prepareEditError(err, msgIDs.HeadID)
 	}
+
+	c.user.copyButtonsToNewMsgID(c.MessageID(), msgIDs.MainID)
 
 	return nil
 }

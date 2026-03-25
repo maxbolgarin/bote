@@ -3,12 +3,14 @@ package bote
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/maxbolgarin/abstract"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -499,4 +501,286 @@ func TestChatTypeAndIsPrivateNilChat(t *testing.T) {
 
 	assert.Equal(t, tele.ChatType(""), impl.ChatType())
 	assert.False(t, impl.IsPrivate())
+}
+
+// TestCopyButtonsToNewMsgID verifies the core helper that remaps button registrations.
+func TestCopyButtonsToNewMsgID(t *testing.T) {
+	bot := setupTestBot(t)
+	noop := func(c Context) error { return nil }
+
+	t.Run("no-op when oldMsgID is zero", func(t *testing.T) {
+		ctx := NewContext(bot, 3001, 5)
+		impl := ctx.(*contextImpl)
+		impl.user.buttonMap.Set("0:btn1", InitBundle{Handler: noop})
+
+		before := impl.user.buttonMap.Len()
+		impl.user.copyButtonsToNewMsgID(0, 100)
+		assert.Equal(t, before, impl.user.buttonMap.Len(), "no entries should be added")
+	})
+
+	t.Run("no-op when oldMsgID equals newMsgID", func(t *testing.T) {
+		ctx := NewContext(bot, 3002, 5)
+		impl := ctx.(*contextImpl)
+		btn := ctx.Btn("Btn", noop)
+		btnID := getIDFromUnique(btn.Unique)
+		_ = btnID
+
+		before := impl.user.buttonMap.Len()
+		impl.user.copyButtonsToNewMsgID(5, 5)
+		assert.Equal(t, before, impl.user.buttonMap.Len(), "same src and dst should be a no-op")
+	})
+
+	t.Run("copies entries with matching prefix", func(t *testing.T) {
+		ctx := NewContext(bot, 3003, 7)
+		impl := ctx.(*contextImpl)
+		btn := ctx.Btn("Btn", noop)
+		btnID := getIDFromUnique(btn.Unique)
+
+		impl.user.copyButtonsToNewMsgID(7, 200)
+
+		key := strconv.Itoa(200) + ":" + btnID
+		_, ok := impl.user.buttonMap.Lookup(key)
+		assert.True(t, ok, "button must be findable under new msg ID")
+	})
+
+	t.Run("keeps old entries after copy", func(t *testing.T) {
+		ctx := NewContext(bot, 3004, 8)
+		impl := ctx.(*contextImpl)
+		btn := ctx.Btn("Btn", noop)
+		btnID := getIDFromUnique(btn.Unique)
+
+		impl.user.copyButtonsToNewMsgID(8, 201)
+
+		oldKey := strconv.Itoa(8) + ":" + btnID
+		_, ok := impl.user.buttonMap.Lookup(oldKey)
+		assert.True(t, ok, "old entry must still be present after copy")
+	})
+
+	t.Run("does not copy non-matching entries", func(t *testing.T) {
+		ctx := NewContext(bot, 3005, 9)
+		impl := ctx.(*contextImpl)
+		// Register a button for a different message ID manually
+		impl.user.buttonMap.Set("999:otherbtn", InitBundle{Handler: noop})
+
+		impl.user.copyButtonsToNewMsgID(9, 202)
+
+		// The "999:otherbtn" entry should NOT appear under 202
+		_, ok := impl.user.buttonMap.Lookup("202:otherbtn")
+		assert.False(t, ok, "non-matching entry must not be copied")
+	})
+
+	t.Run("handles empty buttonMap without panic", func(t *testing.T) {
+		ctx := NewContext(bot, 3006, 10)
+		impl := ctx.(*contextImpl)
+		assert.Zero(t, impl.user.buttonMap.Len())
+		assert.NotPanics(t, func() {
+			impl.user.copyButtonsToNewMsgID(10, 203)
+		})
+	})
+
+	t.Run("copies multiple buttons", func(t *testing.T) {
+		ctx := NewContext(bot, 3007, 11)
+		impl := ctx.(*contextImpl)
+		btn1 := ctx.Btn("A", noop)
+		btn2 := ctx.Btn("B", noop)
+		id1 := getIDFromUnique(btn1.Unique)
+		id2 := getIDFromUnique(btn2.Unique)
+
+		impl.user.copyButtonsToNewMsgID(11, 204)
+
+		_, ok1 := impl.user.buttonMap.Lookup(strconv.Itoa(204) + ":" + id1)
+		_, ok2 := impl.user.buttonMap.Lookup(strconv.Itoa(204) + ":" + id2)
+		assert.True(t, ok1, "first button must be copied")
+		assert.True(t, ok2, "second button must be copied")
+	})
+}
+
+// TestButtonMapKeyNormalization verifies that HeadID/ErrorID/NotificationID are
+// normalized to MainID, while history/external IDs are not.
+func TestButtonMapKeyNormalization(t *testing.T) {
+	bot := setupTestBot(t)
+
+	// Create a base user with known message IDs
+	baseCtx := NewContext(bot, 4001, 1)
+	baseImpl := baseCtx.(*contextImpl)
+	baseImpl.user.mu.Lock()
+	baseImpl.user.user.Messages.MainID = 10
+	baseImpl.user.user.Messages.HeadID = 11
+	baseImpl.user.user.Messages.NotificationID = 12
+	baseImpl.user.user.Messages.ErrorID = 13
+	baseImpl.user.mu.Unlock()
+
+	cases := []struct {
+		name      string
+		triggerID int
+		wantMsgID int
+	}{
+		{"main ID is not normalized", 10, 10},
+		{"head ID normalized to main", 11, 10},
+		{"notification ID normalized to main", 12, 10},
+		{"error ID normalized to main", 13, 10},
+		{"history/external ID not normalized", 99, 99},
+		{"zero ID not normalized", 0, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := NewContext(bot, 4001, tc.triggerID)
+			impl := ctx.(*contextImpl)
+			impl.user = baseImpl.user // share the user with configured message IDs
+
+			key := impl.buttonMapKey("somebtn")
+			expected := strconv.Itoa(tc.wantMsgID) + ":somebtn"
+			assert.Equal(t, expected, key)
+		})
+	}
+}
+
+// TestButtonDispatchAfterSendMainFromNonMainContext simulates the primary bug:
+// a background task or /start handler sends a new main message. Buttons were
+// registered with the triggering message ID, not the new main message ID.
+// After the fix, buttons must be findable under the new main message ID.
+func TestButtonDispatchAfterSendMainFromNonMainContext(t *testing.T) {
+	const (
+		startMsgID   = 5   // /start command message — the trigger
+		newMainMsgID = 100 // newly sent main message
+	)
+
+	bot := setupTestBot(t)
+	ctx := NewContext(bot, 5001, startMsgID) // trigger = start msg
+	impl := ctx.(*contextImpl)
+
+	noop := func(c Context) error { return nil }
+	btn := ctx.Btn("Menu", noop)
+	btnID := getIDFromUnique(btn.Unique)
+
+	// Simulate what SendMain does: send succeeds, handleSend updates state,
+	// then copyButtonsToNewMsgID remaps the buttons.
+	impl.user.handleSend(UserState("main_menu"), newMainMsgID, 0)
+	impl.user.copyButtonsToNewMsgID(startMsgID, newMainMsgID)
+
+	// handleSend must mark the new main as inited — only callbackFallbackHandler runs.
+	assert.True(t, impl.user.isMsgInited(newMainMsgID),
+		"new main must be marked inited by handleSend")
+
+	// Button must now be findable under the new main message ID.
+	key := strconv.Itoa(newMainMsgID) + ":" + btnID
+	_, ok := impl.user.buttonMap.Lookup(key)
+	assert.True(t, ok, "button must be findable under new main msg ID after SendMain fix")
+}
+
+// TestButtonDispatchAfterEditMainFromHistoryContext simulates the second bug scenario:
+// user clicks a history message, the handler calls EditMain on today's main message.
+// Without the fix, buttons registered with historyID cannot be dispatched from mainID.
+func TestButtonDispatchAfterEditMainFromHistoryContext(t *testing.T) {
+	const (
+		historyID = 50  // history message — the trigger
+		mainID    = 100 // today's main message
+	)
+
+	bot := setupTestBot(t)
+	ctx := NewContext(bot, 6001, historyID) // trigger = history msg
+	impl := ctx.(*contextImpl)
+
+	// Set today's main message ID
+	impl.user.mu.Lock()
+	impl.user.user.Messages.MainID = mainID
+	impl.user.mu.Unlock()
+
+	noop := func(c Context) error { return nil }
+	btn := ctx.Btn("Back", noop)
+	btnID := getIDFromUnique(btn.Unique)
+
+	// Buttons are now under {historyID}:{btnID}; simulate EditMain's fix.
+	impl.user.copyButtonsToNewMsgID(historyID, mainID)
+
+	// Button must be findable under mainID for dispatch to succeed.
+	key := strconv.Itoa(mainID) + ":" + btnID
+	_, ok := impl.user.buttonMap.Lookup(key)
+	assert.True(t, ok, "button must be findable under main msg ID after EditMain from history")
+}
+
+// TestEditHeadButtonDispatchFromNonMainContext verifies that head keyboard buttons
+// are accessible under MainID when the handler is triggered from a non-main context.
+// Head button dispatch normalizes HeadID → MainID, so registration must reach MainID.
+func TestEditHeadButtonDispatchFromNonMainContext(t *testing.T) {
+	const (
+		historyID = 50
+		mainID    = 100
+		headID    = 101
+	)
+
+	bot := setupTestBot(t)
+	ctx := NewContext(bot, 7001, historyID) // trigger = history msg
+	impl := ctx.(*contextImpl)
+
+	impl.user.mu.Lock()
+	impl.user.user.Messages.MainID = mainID
+	impl.user.user.Messages.HeadID = headID
+	impl.user.mu.Unlock()
+
+	noop := func(c Context) error { return nil }
+	btn := ctx.Btn("HeadBtn", noop)
+	btnID := getIDFromUnique(btn.Unique)
+
+	// Simulate EditHead's fix.
+	impl.user.copyButtonsToNewMsgID(historyID, mainID)
+
+	// Head button dispatch: buttonMapKey normalizes headID → mainID → {mainID}:{btnID}.
+	key := strconv.Itoa(mainID) + ":" + btnID
+	_, ok := impl.user.buttonMap.Lookup(key)
+	assert.True(t, ok, "head button must be findable under main msg ID")
+}
+
+// TestHandleSendPermanentlyMarksMainAsInited confirms the mechanism that caused
+// the permanent button lockout: handleSend marks the new main as already inited,
+// bypassing initUserHandler and forcing sole reliance on callbackFallbackHandler.
+func TestHandleSendPermanentlyMarksMainAsInited(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+	user, err := um.prepareUser(&tele.User{ID: 8001, Username: "inited_test"})
+	require.NoError(t, err)
+
+	// First send establishes main=100 in history, second makes 200 the new main.
+	user.handleSend(UserState("prev"), 100, 0)
+	user.handleSend(UserState("active"), 200, 0)
+
+	// New main (200) is explicitly marked inited — callbackFallbackHandler is sole path.
+	assert.True(t, user.isMsgInited(200),
+		"new main must be marked inited by handleSend")
+
+	// The previous main (100) is now a history message and belongs to the user,
+	// but isInitedMsg was cleared → isMsgInited returns false → initUserHandler fires.
+	assert.False(t, user.isMsgInited(100),
+		"history message must NOT be marked inited so initUserHandler re-registers its buttons")
+}
+
+// TestButtonDispatchWithoutFixWouldFail documents the exact failure mode:
+// without copyButtonsToNewMsgID, the new main msg ID has no buttonMap entries.
+func TestButtonDispatchWithoutFixWouldFail(t *testing.T) {
+	const (
+		startMsgID   = 5
+		newMainMsgID = 100
+	)
+
+	bot := setupTestBot(t)
+	ctx := NewContext(bot, 9001, startMsgID)
+	impl := ctx.(*contextImpl)
+
+	noop := func(c Context) error { return nil }
+	btn := ctx.Btn("Menu", noop)
+	btnID := getIDFromUnique(btn.Unique)
+
+	// Simulate handleSend WITHOUT the fix (no copyButtonsToNewMsgID).
+	impl.user.handleSend(UserState("main_menu"), newMainMsgID, 0)
+
+	// Before fix: button is only under startMsgID, not under newMainMsgID.
+	wrongKey := strconv.Itoa(newMainMsgID) + ":" + btnID
+	_, foundUnderNew := impl.user.buttonMap.Lookup(wrongKey)
+	assert.False(t, foundUnderNew, "without fix, button must NOT be findable under new main msg ID")
+
+	correctKey := strconv.Itoa(startMsgID) + ":" + btnID
+	_, foundUnderOld := impl.user.buttonMap.Lookup(correctKey)
+	assert.True(t, foundUnderOld, "button is still under the original trigger msg ID")
 }
