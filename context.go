@@ -94,6 +94,9 @@ type Context interface {
 	// name is the name of the file to send.
 	// file is the file to send.
 	// opts are additional options for sending the file.
+	// If an inline keyboard (*tele.ReplyMarkup) is passed in opts, the file message is
+	// tracked as the notification message: its button presses dispatch correctly and the
+	// standard Close button (DeleteNotification) removes the file message.
 	// WARNING: It works only in private chats.
 	SendFile(name string, file []byte, opts ...any) error
 
@@ -594,9 +597,37 @@ func (c *contextImpl) SendFile(name string, file []byte, opts ...any) error {
 		return nil
 	}
 
+	// Detect an attached inline keyboard (e.g. a Close button). Button handlers are
+	// registered against the message that was current when the keyboard was built
+	// (the trigger message), so without extra wiring presses on the file message
+	// wouldn't dispatch. Capture the trigger ID before sending to re-key them.
+	var hasKeyboard bool
+	for _, o := range opts {
+		if kb, ok := o.(*tele.ReplyMarkup); ok && kb != nil && len(kb.InlineKeyboard) > 0 {
+			hasKeyboard = true
+			break
+		}
+	}
+	triggerMsgID := c.MessageID()
+
+	if hasKeyboard && c.user.Messages().NotificationID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
+			c.bt.bot.log.Warn("cannot delete previous notification message", c.bt.userFields(c.user)...)
+		}
+	}
+
 	msgID, err := c.bt.bot.sendFile(c.user.ID(), file, name, opts...)
 	if err != nil {
 		return c.prepareError(err, msgID)
+	}
+
+	if hasKeyboard {
+		// Track the file message as the notification message so the standard Close
+		// handler (DeleteNotification) removes it. buttonMapKey normalizes the
+		// notification message ID to MainID, which matches the trigger-keyed
+		// registrations; copyButtonsToNewMsgID covers the case where MainID is unset.
+		c.user.setNotificationMessage(msgID)
+		c.user.copyButtonsToNewMsgID(triggerMsgID, msgID)
 	}
 
 	return nil

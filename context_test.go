@@ -669,6 +669,44 @@ func TestButtonDispatchAfterSendMainFromNonMainContext(t *testing.T) {
 	assert.True(t, ok, "button must be findable under new main msg ID after SendMain fix")
 }
 
+// TestSendFileWithKeyboardDispatch verifies that a Close button attached to a file
+// sent via SendFile dispatches correctly. On a successful send, SendFile tracks the
+// file message as the notification message and copies the trigger-keyed button
+// registrations onto the file message ID, so a press on the file message resolves to
+// the registered handler (and the standard Close handler can DeleteNotification it).
+func TestSendFileWithKeyboardDispatch(t *testing.T) {
+	const (
+		triggerMsgID = 10  // settings menu (== MainID): where the keyboard was built
+		fileMsgID    = 200 // the document message returned by sendFile
+	)
+
+	bot := setupTestBot(t)
+	ctx := NewContext(bot, 6001, triggerMsgID)
+	impl := ctx.(*contextImpl)
+
+	impl.user.mu.Lock()
+	impl.user.user.Messages.MainID = triggerMsgID
+	impl.user.mu.Unlock()
+
+	// Build the Close button — registered against the trigger message ID.
+	btn := ctx.Btn("Close", func(c Context) error { return nil })
+	btnID := getIDFromUnique(btn.Unique)
+
+	// Simulate what SendFile does on a successful send with a keyboard attached.
+	impl.user.setNotificationMessage(fileMsgID)
+	impl.user.copyButtonsToNewMsgID(triggerMsgID, fileMsgID)
+
+	// A press on the file message normalizes NotificationID -> MainID and resolves.
+	dispatchImpl := NewContext(bot, 6001, fileMsgID).(*contextImpl)
+	dispatchImpl.user = impl.user
+	_, ok := impl.user.buttonMap.Lookup(dispatchImpl.buttonMapKey(btnID))
+	assert.True(t, ok, "Close button must resolve from a press on the file message")
+
+	// The file message must be the notification message so DeleteNotification removes it.
+	assert.Equal(t, fileMsgID, impl.user.Messages().NotificationID,
+		"file message must be tracked as the notification message")
+}
+
 // TestButtonDispatchAfterEditMainFromHistoryContext simulates the second bug scenario:
 // user clicks a history message, the handler calls EditMain on today's main message.
 // Without the fix, buttons registered with historyID cannot be dispatched from mainID.
