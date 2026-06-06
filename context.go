@@ -354,9 +354,23 @@ func (c *contextImpl) buttonMapKey(btnID string) string {
 
 func (c *contextImpl) Data() string {
 	if cb := c.ct.Callback(); cb != nil {
-		return cb.Data
+		return parseCallbackPayload(cb.Data)
 	}
 	return ""
+}
+
+// parseCallbackPayload returns the user payload from a callback data string. Telegram delivers
+// inline-button callbacks on the wire as "\f<unique>|<payload>". On the per-user flow bote
+// reconstructs the callback with a clean payload, but on the stateless/service path (and any raw
+// OnCallback dispatch) the wire form reaches here, so strip the "\f<unique>|" prefix. Data that is
+// already clean (no "\f" prefix) is returned unchanged.
+func parseCallbackPayload(data string) string {
+	if len(data) > 0 && data[0] == '\f' {
+		// "\f<unique>|<payload>" → payload (or "" when there is no payload after the unique).
+		_, payload, _ := strings.Cut(data, "|")
+		return payload
+	}
+	return data
 }
 
 func (c *contextImpl) DataParsed() []string {

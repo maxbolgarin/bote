@@ -12,6 +12,10 @@ import (
 // dispatchCallback builds a callback update as it would arrive from a non-private chat
 // (channel / group / untracked admin) and runs it through callbackFallbackHandler with a
 // public user stub — exactly the path a service bot exercises.
+//
+// It replicates the REAL Telegram wire format: the data field is "\f<unique>|<payload>" and the
+// Unique field is empty (Telegram does not pre-split it for the generic OnCallback handler). This
+// is what a button built with NewButton actually produces when tapped.
 func dispatchCallback(bot *Bot, btn tele.Btn, chatType tele.ChatType) error {
 	upd := tele.Update{
 		Callback: &tele.Callback{
@@ -20,8 +24,7 @@ func dispatchCallback(bot *Bot, btn tele.Btn, chatType tele.ChatType) error {
 				ID:   4242,
 				Chat: &tele.Chat{ID: -100123, Type: chatType},
 			},
-			Unique: btn.Unique,
-			Data:   btn.Data,
+			Data: "\f" + btn.Unique + "|" + btn.Data,
 		},
 	}
 	impl := &contextImpl{
