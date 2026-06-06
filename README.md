@@ -9,6 +9,7 @@ Bote is a powerful wrapper for [Telebot v4](https://gopkg.in/telebot.v4) that si
 - **Smart Message Management** — main, head, notification, error, and history message lifecycle
 - **User State Tracking** — per-message states with text input handling
 - **Interactive Keyboards** — inline keyboard builder with automatic row layout
+- **Service Bots** — stateless callback routing for channel publishers and admin-approval bots (no per-user conversation)
 - **Middleware Support** — user-level and chat-type middlewares
 - **Internationalization** — built-in multi-language message provider
 - **Privacy & Encryption** — optional strict mode with AES-256 encrypted user IDs
@@ -508,6 +509,125 @@ b.Handle(tele.OnText, func(ctx bote.Context) error {
     return nil
 })
 ```
+
+## Service Bots (Channels & Stateless Callbacks)
+
+Bote's main flow is built around per-user conversations (the message lifecycle + state map). But
+some bots have **no conversation at all**: they post to a channel and react to inline-button taps
+from a channel, group, or admin chat — for example a content publisher with an Approve / Reject
+review step. For these, registering a button handler per user-message doesn't fit: the tapper may
+not be a tracked user, and the message lives in a channel, not a private chat.
+
+The **service-bot API** solves this with a *stateless callback router*. You register one handler
+per button *action* once, then build as many buttons for that action as you like — each carrying
+its own payload. A tap is routed to the handler by the button's stable id (derived from its name),
+regardless of who tapped it or where.
+
+### The new actions
+
+| Action | What it does |
+|--------|--------------|
+| `bot.RegisterButton(name, handler)` | Register a stateless handler for a button action. Call once (e.g. at startup). |
+| `bot.NewButton(name, data...)` | Build a button for a registered action, carrying a per-message payload. No `Context` needed. |
+| `kb.AddURL(text, url)` | Add an inline URL button (opens a link, no callback). Handy for "View source" / deep-link CTAs. |
+| `kb.AddURLRow(text, url)` | Same, as a new row. |
+
+The payload passed to `NewButton` arrives in the handler via `ctx.Data()` (single value) or
+`ctx.DataParsed()` (multiple values). The stateless router is consulted *after* the per-user
+button map, so service buttons and normal per-user buttons can coexist as long as their names
+differ.
+
+### Sending to a channel
+
+Use the chat-targeted helpers to post and edit by chat id (channels are large negative ids like
+`-100…`); they return the message id so you can edit the message later:
+
+```go
+msgID, err := bot.SendInChat(adminChatID, 0, "draft text", keyboard) // returns the message id
+err  = bot.EditInChat(adminChatID, msgID, "updated text", keyboard)   // edit it later
+err  = bot.DeleteInChat(adminChatID, msgID)
+```
+
+### Example: a channel publisher with an approval step
+
+A bot that posts a draft to an admin chat with **Approve** / **Reject** buttons, and on approve
+republishes it to a public channel with a "View source" link:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+    "os/signal"
+    "strconv"
+    "sync"
+    "syscall"
+
+    "github.com/maxbolgarin/bote"
+)
+
+// In a real bot these come from a database; here an in-memory store keyed by draft id.
+var (
+    mu     sync.Mutex
+    drafts = map[string]string{"1": "<b>Hello</b> from a service bot!"}
+)
+
+func main() {
+    ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    defer cancel()
+
+    adminChatID, _ := strconv.ParseInt(os.Getenv("ADMIN_CHAT_ID"), 10, 64)
+    channelID, _ := strconv.ParseInt(os.Getenv("CHANNEL_ID"), 10, 64)
+
+    b, err := bote.New(ctx, os.Getenv("TELEGRAM_BOT_TOKEN"))
+    if err != nil {
+        log.Fatalln(err)
+    }
+
+    // Register the two actions once. The draft id arrives as the button payload.
+    b.RegisterButton("approve", func(ctx bote.Context) error {
+        id := ctx.Data()
+        mu.Lock()
+        text := drafts[id]
+        mu.Unlock()
+
+        // Publish to the public channel with a URL button.
+        kb := bote.NewKeyboard()
+        kb.AddURL("View source", "https://example.com/"+id)
+        if _, err := ctx.SendInChat(channelID, 0, text, kb.CreateInlineMarkup()); err != nil {
+            return err
+        }
+        // Strip the buttons on the admin message to mark it done.
+        return ctx.EditInChat(ctx.ChatID(), ctx.MessageID(), "✅ approved", bote.EmptyKeyboard)
+    })
+
+    b.RegisterButton("reject", func(ctx bote.Context) error {
+        return ctx.EditInChat(ctx.ChatID(), ctx.MessageID(), "✖ rejected", bote.EmptyKeyboard)
+    })
+
+    // Push a draft to the admin chat for review.
+    mu.Lock()
+    draft := drafts["1"]
+    mu.Unlock()
+    kb := bote.NewKeyboard()
+    kb.AddRow(b.NewButton("approve", "1"), b.NewButton("reject", "1"))
+    if _, err := b.SendInChat(adminChatID, 0, draft, kb.CreateInlineMarkup()); err != nil {
+        log.Fatalln(err)
+    }
+
+    // A service bot has no per-user start flow; a no-op start handler is fine.
+    stopCh := b.Start(ctx, func(bote.Context) error { return nil }, nil)
+    select {
+    case <-stopCh:
+    case <-ctx.Done():
+    }
+}
+```
+
+The bot must be an **admin with post rights** in both the admin chat and the public channel. See
+[`examples/service`](examples/service) for the runnable version.
 
 ## API Reference
 
