@@ -42,6 +42,7 @@ type Bot struct {
 
 	middlewares        *abstract.SafeSlice[MiddlewareFunc]
 	stateMap           *abstract.SafeMap[string, InitBundle]
+	callbackRouter     *abstract.SafeMap[string, HandlerFunc]
 	startHandler       HandlerFunc
 	deleteMessages     bool
 	logUpdates         bool
@@ -93,6 +94,7 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 		defaultLanguage:    opts.Config.Bot.DefaultLanguage,
 		middlewares:        abstract.NewSafeSlice[MiddlewareFunc](),
 		stateMap:           abstract.NewSafeMap[string, InitBundle](),
+		callbackRouter:     abstract.NewSafeMap[string, HandlerFunc](),
 		deleteMessages:     lang.Deref(opts.Config.Bot.DeleteMessages),
 		logUpdates:         lang.Deref(opts.Config.Log.LogUpdates),
 		webhookInit:        make(chan struct{}),
@@ -431,12 +433,19 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 	})
 }
 
-// callbackFallbackHandler dispatches callback button presses via buttonMap.
-// This handles the case when the message is already inited (so initUserHandler was skipped)
-// but the button's telebot handler was lost due to random unique ID regeneration.
+// callbackFallbackHandler dispatches callback button presses that were not handled by a
+// registered telebot handler. It tries two routers in order:
+//
+//  1. The per-user buttonMap (private chats with a tracked user). This handles the case when
+//     the message is already inited (so initUserHandler was skipped) but the button's telebot
+//     handler was lost due to random unique ID regeneration.
+//  2. The stateless callbackRouter (see [Bot.RegisterButton]). This handles service/channel
+//     bots where taps come from a channel, group, or an untracked admin chat — there is no
+//     per-user state, so the handler is looked up by button ID alone and dispatched with the
+//     live callback context (so [Context.Data], [Context.MessageID], etc. reflect the tap).
 func (b *Bot) callbackFallbackHandler(ctx Context) error {
 	ctxImpl, ok := ctx.(*contextImpl)
-	if !ok || ctxImpl.user == nil {
+	if !ok {
 		return nil
 	}
 
@@ -445,31 +454,39 @@ func (b *Bot) callbackFallbackHandler(ctx Context) error {
 		return nil
 	}
 
-	targetHandler, ok := ctxImpl.user.buttonMap.Lookup(ctxImpl.buttonMapKey(btnID))
-	if !ok {
+	// 1. Per-user buttonMap (only for tracked, non-public users with an initialized map).
+	if u := ctxImpl.user; u != nil && !u.isPublic && u.buttonMap != nil {
+		if targetHandler, ok := u.buttonMap.Lookup(ctxImpl.buttonMapKey(btnID)); ok {
+			upd := tele.Update{
+				Callback: &tele.Callback{
+					Sender: &tele.User{ID: u.ID()},
+					Message: &tele.Message{
+						ID:   ctx.MessageID(),
+						Chat: &tele.Chat{Type: tele.ChatPrivate},
+					},
+					Data: targetHandler.Data,
+				},
+			}
+			return targetHandler.Handler(&contextImpl{
+				bt:   b,
+				ct:   b.bot.tbot.NewContext(upd),
+				user: u,
+			})
+		}
+	}
+
+	// 2. Stateless service router — dispatch with the original live context.
+	if handler, ok := b.callbackRouter.Lookup(btnID); ok {
+		return handler(ctx)
+	}
+
+	if u := ctxImpl.user; u != nil && !u.isPublic {
 		b.bot.log.Warn("button handler not found in fallback",
-			"user_id", prepareUserID(ctxImpl.user.ID(), b.um.priv),
+			"user_id", prepareUserID(u.ID(), b.um.priv),
 			"button_id", btnID,
 		)
-		return nil
 	}
-
-	upd := tele.Update{
-		Callback: &tele.Callback{
-			Sender: &tele.User{ID: ctxImpl.user.ID()},
-			Message: &tele.Message{
-				ID:   ctx.MessageID(),
-				Chat: &tele.Chat{Type: tele.ChatPrivate},
-			},
-			Data: targetHandler.Data,
-		},
-	}
-
-	return targetHandler.Handler(&contextImpl{
-		bt:   b,
-		ct:   b.bot.tbot.NewContext(upd),
-		user: ctxImpl.user,
-	})
+	return nil
 }
 
 func (b *Bot) masterMiddleware(upd *tele.Update) bool {
