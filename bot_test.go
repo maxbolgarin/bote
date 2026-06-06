@@ -133,3 +133,21 @@ func TestBotGetUserID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(12345), id)
 }
+
+// TestIsStartCommand verifies plain and deep-link /start are both recognized, while non-start
+// commands and /start-prefixed words without a space separator are not.
+func TestIsStartCommand(t *testing.T) {
+	cases := map[string]bool{
+		"/start":         true,
+		"/start biolife": true,
+		"/start  two":    true,
+		"/start ":        true,
+		"/startxyz":      false,
+		"/help":          false,
+		"start":          false,
+		"":               false,
+	}
+	for text, want := range cases {
+		assert.Equal(t, want, isStartCommand(text), "isStartCommand(%q)", text)
+	}
+}

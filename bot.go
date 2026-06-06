@@ -115,6 +115,13 @@ func NewWithOptions(ctx context.Context, token string, opts Options) (*Bot, erro
 	return bote, nil
 }
 
+// isStartCommand reports whether the message text is a /start command, including deep-link starts
+// of the form "/start <payload>" (e.g. t.me/Bot?start=foo). A plain prefix check would also match
+// "/startxyz", so a payload must be separated by a space.
+func isStartCommand(text string) bool {
+	return text == startCommand || strings.HasPrefix(text, startCommand+" ")
+}
+
 // Start starts the bot in a separate goroutine.
 // StartHandler is a handler for /start command.
 // StateMap is a map for initing users after bot restart.
@@ -128,8 +135,9 @@ func (b *Bot) Start(ctx context.Context, startHandler HandlerFunc, stateMap map[
 	}
 	b.Handle(startCommand, func(ctx Context) (err error) {
 		defer func() {
-			// Delete here to prevent from automatic double /start sending in telegram client
-			if ctx.Text() == startCommand {
+			// Delete here to prevent from automatic double /start sending in telegram client.
+			// Covers deep-link starts ("/start <payload>") too, which clients also double-send.
+			if isStartCommand(ctx.Text()) {
 				if err = b.bot.delete(ctx.User().ID(), ctx.MessageID()); err != nil {
 					b.bot.log.Debug("failed to delete user message",
 						"user_id", prepareUserID(ctx.User().ID(), b.um.priv),
@@ -325,7 +333,7 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 				ctx.textMsgID = lastMsg
 
 				// /start was already handled
-				if ctx.ct.Text() == startCommand {
+				if isStartCommand(ctx.ct.Text()) {
 					return nil
 				}
 			}
@@ -519,7 +527,7 @@ func (b *Bot) cleanMiddleware(upd *tele.Update, userRaw User) bool {
 		user.setErrorMessage(0)
 	}
 	if upd.Message != nil && b.deleteMessages {
-		if upd.Message.Text == startCommand {
+		if isStartCommand(upd.Message.Text) {
 			return true
 		}
 		err := b.bot.delete(user.ID(), upd.Message.ID)
@@ -619,7 +627,7 @@ func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) {
 }
 
 func (b *Bot) startMiddleware(upd *tele.Update, userRaw User) bool {
-	if upd.Message != nil && upd.Message.Text == startCommand {
+	if upd.Message != nil && isStartCommand(upd.Message.Text) {
 		return true
 	}
 
