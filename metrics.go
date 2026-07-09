@@ -86,6 +86,10 @@ type metrics struct {
 	userLastSeen       *abstract.SafeMap[int64, activeUserStat] // Thread-safe map of user last seen times
 	lastUpdateNano     atomic.Int64                             // Last time active users were updated (Unix nanos)
 
+	// webhookMetricsPath is the configured metrics endpoint to exclude from webhook
+	// request metrics; set once by newWebhookPoller before the server starts.
+	webhookMetricsPath string
+
 	disabled bool // Whether metrics collection is disabled
 }
 
@@ -249,10 +253,15 @@ func (m *metrics) addActiveUser(userID int64) {
 		}
 	})
 
-	// Update active users every minute to prevent high load
+	// Update active users every minute to prevent high load. CAS ensures only one
+	// of several concurrent callers runs the update: without it, concurrent runs
+	// could each observe (and then delete) the same expired session, producing
+	// duplicate histogram observations.
 	lastNano := m.lastUpdateNano.Load()
 	if lastNano == 0 || time.Since(time.Unix(0, lastNano)) > time.Minute {
-		m.updateActiveUsers()
+		if m.lastUpdateNano.CompareAndSwap(lastNano, time.Now().UnixNano()) {
+			m.updateActiveUsers()
+		}
 	}
 }
 
@@ -323,6 +332,23 @@ func (m *metrics) updateActiveUsers() {
 	m.lastUpdateNano.Store(now.UnixNano())
 }
 
+// setWebhookMetricsPath records the configured metrics endpoint path.
+// Must be called before the webhook server starts serving requests.
+func (m *metrics) setWebhookMetricsPath(path string) {
+	if m == nil {
+		return
+	}
+	m.webhookMetricsPath = path
+}
+
+// isServicePath reports whether the path is the metrics or health endpoint, which are
+// excluded from webhook request metrics. It honors the configured metrics path, not
+// just the default one, so Prometheus scrapes never inflate webhook counters.
+func (m *metrics) isServicePath(path string) bool {
+	metricsPath := lang.Check(m.webhookMetricsPath, defaultWebhookMetricsPath)
+	return path == metricsPath || path == defaultWebhookHealthPath
+}
+
 // setWebhookStatus sets the webhook status gauge for the given URL and address.
 // Called when webhook status changes to track webhook health.
 func (m *metrics) setWebhookStatus(url string, address string) {
@@ -338,7 +364,7 @@ func (m *metrics) HandleRequest(r *http.Request) {
 	if m == nil || m.disabled {
 		return
 	}
-	if r.URL.Path == defaultWebhookMetricsPath || r.URL.Path == defaultWebhookHealthPath {
+	if m.isServicePath(r.URL.Path) {
 		return
 	}
 	m.webhookRequestsTotal.WithLabelValues(r.URL.Path).Inc()
@@ -352,7 +378,7 @@ func (m *metrics) HandleResponse(r *http.Request, w http.ResponseWriter, statusC
 	if m == nil || m.disabled {
 		return
 	}
-	if r.URL.Path == defaultWebhookMetricsPath || r.URL.Path == defaultWebhookHealthPath {
+	if m.isServicePath(r.URL.Path) {
 		return
 	}
 	// Record error if status code indicates failure
