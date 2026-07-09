@@ -1013,7 +1013,7 @@ func (u *userContextImpl) applyDeleteAll(deleted map[int]struct{}) {
 			NotificationID: &notificationID,
 			ErrorID:        &errorID,
 			HistoryIDs:     historyIDs,
-			LastActions:     lastActions,
+			LastActions:    lastActions,
 		},
 		State: &UserStateDiff{
 			MessageStates:        messageStates,

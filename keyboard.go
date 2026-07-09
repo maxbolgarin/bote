@@ -325,14 +325,14 @@ func NewKeyboardWithContext(ctx Context, optionalRowLen ...int) *KeyboardWithCon
 // It creates a new row in Add if number of runes is greater than max runes in row for selected rune type.
 func (k *KeyboardWithContext) AddBtn(name string, callback HandlerFunc, dataList ...string) *Keyboard {
 	btn := k.ctx.Btn(name, callback, dataList...)
-	return k.Keyboard.Add(btn)
+	return k.Add(btn)
 }
 
 // AddRow creates and adds button to the current row.
 // It creates a new row if there is buttons in the current row after Add.
 func (k *KeyboardWithContext) AddBtnRow(name string, callback HandlerFunc, dataList ...string) *Keyboard {
 	btn := k.ctx.Btn(name, callback, dataList...)
-	return k.Keyboard.AddRow(btn)
+	return k.AddRow(btn)
 }
 
 // AB is a shortcut for AddBtn.

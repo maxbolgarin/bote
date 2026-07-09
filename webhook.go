@@ -405,10 +405,15 @@ func generateSelfSignedCert(certFile, keyFile, domain string, logger Logger) (st
 	if err != nil {
 		return "", "", erro.Wrap(err, "create cert file")
 	}
-	defer certOut.Close()
 
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		_ = certOut.Close()
 		return "", "", erro.Wrap(err, "encode certificate")
+	}
+	// Check the close error on this write path: a failed close can silently
+	// truncate the PEM and Telegram would reject the certificate later.
+	if err := certOut.Close(); err != nil {
+		return "", "", erro.Wrap(err, "close cert file")
 	}
 
 	// Save private key (owner read/write only to protect key material)
@@ -416,15 +421,19 @@ func generateSelfSignedCert(certFile, keyFile, domain string, logger Logger) (st
 	if err != nil {
 		return "", "", erro.Wrap(err, "create key file")
 	}
-	defer keyOut.Close()
 
 	privateKeyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
+		_ = keyOut.Close()
 		return "", "", erro.Wrap(err, "marshal private key")
 	}
 
 	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyBytes}); err != nil {
+		_ = keyOut.Close()
 		return "", "", erro.Wrap(err, "encode private key")
+	}
+	if err := keyOut.Close(); err != nil {
+		return "", "", erro.Wrap(err, "close key file")
 	}
 
 	logger.Info("self-signed certificate generated",

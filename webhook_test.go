@@ -75,8 +75,8 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 
 		cert, key, err := generateSelfSignedCert("", "", "test.local", logger)
 		require.NoError(t, err)
-		defer os.Remove(cert)
-		defer os.Remove(key)
+		defer func() { _ = os.Remove(cert) }()
+		defer func() { _ = os.Remove(key) }()
 
 		assert.Equal(t, "./cert.pem", cert)
 		assert.Equal(t, "./key.pem", key)
@@ -185,8 +185,8 @@ func TestPrepareCertificate(t *testing.T) {
 		config := WebhookConfig{
 			urlParsed: parsedURL,
 			Security: WebhookSecurityConfig{
-				CertFile:                certFile,
-				KeyFile:                 keyFile,
+				CertFile:               certFile,
+				KeyFile:                keyFile,
 				GenerateSelfSignedCert: &genSelfSigned,
 			},
 		}
@@ -466,12 +466,12 @@ func TestWebhookInfo(t *testing.T) {
 func TestWebhookConfigDefaults(t *testing.T) {
 	t.Run("webhook config has sensible defaults", func(t *testing.T) {
 		config := WebhookConfig{
-			MaxConnections:      40,
-			DropPendingUpdates:  false,
-			ReadTimeout:         30 * time.Second,
-			IdleTimeout:         60 * time.Second,
-			EnableMetrics:       true,
-			MetricsPath:         "/metrics",
+			MaxConnections:     40,
+			DropPendingUpdates: false,
+			ReadTimeout:        30 * time.Second,
+			IdleTimeout:        60 * time.Second,
+			EnableMetrics:      true,
+			MetricsPath:        "/metrics",
 		}
 
 		assert.Equal(t, 40, config.MaxConnections)
@@ -487,12 +487,12 @@ func TestWebhookConfigDefaults(t *testing.T) {
 func TestWebhookSecurityConfig(t *testing.T) {
 	t.Run("security config options", func(t *testing.T) {
 		config := WebhookSecurityConfig{
-			SecretToken:            "my-secret-token",
-			AllowedIPs:             []string{"1.2.3.4", "5.6.7.8"},
-			CertFile:               "/path/to/cert.pem",
-			KeyFile:                "/path/to/key.pem",
-			LoadCertInTelegram:     true,
-			StartHTTPS:             true,
+			SecretToken:        "my-secret-token",
+			AllowedIPs:         []string{"1.2.3.4", "5.6.7.8"},
+			CertFile:           "/path/to/cert.pem",
+			KeyFile:            "/path/to/key.pem",
+			LoadCertInTelegram: true,
+			StartHTTPS:         true,
 		}
 
 		assert.Equal(t, "my-secret-token", config.SecretToken)

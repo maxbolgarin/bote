@@ -201,7 +201,8 @@ func TestUserManager(t *testing.T) {
 			ID:       222,
 			Username: "user2",
 		}
-		um.prepareUser(teleUser2)
+		_, err := um.prepareUser(teleUser2)
+		require.NoError(t, err)
 
 		users := um.getAllUsers()
 		if len(users) < 2 {
@@ -586,18 +587,6 @@ func (l *testLogger) Error(msg string, args ...any) {
 	l.logs = append(l.logs, "ERROR: "+msg)
 }
 
-// Helper function for custom state implementation
-func (s customState) String() string   { return string(s) }
-func (s customState) IsText() bool     { return false }
-func (s customState) NotChanged() bool { return s == "" }
-
-func (s textState) String() string   { return string(s) }
-func (s textState) IsText() bool     { return true }
-func (s textState) NotChanged() bool { return s == "" }
-
-type customState string
-type textState string
-
 // TestApplyDeleteAll tests the atomic delete-all operation
 func TestApplyDeleteAll(t *testing.T) {
 	opts := newTestOptions()
@@ -819,7 +808,7 @@ func TestOrderedStorage(t *testing.T) {
 	t.Run("find passes through", func(t *testing.T) {
 		// Insert first
 		model := UserModel{ID: NewPlainUserID(556)}
-		mockDB.Insert(context.Background(), model)
+		require.NoError(t, mockDB.Insert(context.Background(), model))
 		found, ok, err := mockDB.Find(context.Background(), NewPlainUserID(556))
 		assert.NoError(t, err)
 		assert.True(t, ok)

@@ -127,10 +127,10 @@ func TestSanitizeText(t *testing.T) {
 // TestSanitizeTextExtended tests the sanitization fixes for URI schemes and multi-byte handling
 func TestSanitizeTextExtended(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		blocked  string // substring that must NOT appear in output
-		allowed  string // substring that MUST appear in output (optional)
+		name    string
+		input   string
+		blocked string // substring that must NOT appear in output
+		allowed string // substring that MUST appear in output (optional)
 	}{
 		{"javascript lowercase", "javascript:alert(1)", "javascript:", ""},
 		{"javascript mixed case", "JaVaScRiPt:alert(1)", "JaVaScRiPt:", ""},

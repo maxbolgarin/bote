@@ -273,7 +273,7 @@ type MessageBuilder struct {
 func NewBuilder(cap ...int) *MessageBuilder {
 	out := &MessageBuilder{}
 	if len(cap) > 0 {
-		out.Builder.Grow(cap[0])
+		out.Grow(cap[0])
 	}
 	return out
 }
@@ -443,13 +443,14 @@ func (b *MessageBuilder) WritelnIfFf(condition bool, writeTrue string, args ...a
 // It is an alias for [strings.Builder.Write].
 func (b *MessageBuilder) WriteBytes(data ...[]byte) {
 	for _, d := range data {
+		// The embedded selector is required: MessageBuilder.Write takes strings.
 		b.Builder.Write(d)
 	}
 }
 
 // IsEmpty returns true if the builder's length is 0.
 func (b *MessageBuilder) IsEmpty() bool {
-	return b.Builder.Len() == 0
+	return b.Len() == 0
 }
 
 // GetFilledMessage returns a formatted string with aligned left and right parts.

@@ -47,8 +47,6 @@ const (
 	defaultLogLevel   = "info"
 
 	defaultUpdatesChannelCapacity = 1000
-
-	longDurationThreshold = 500 * time.Millisecond
 )
 
 // https://core.telegram.org/bots/webhooks

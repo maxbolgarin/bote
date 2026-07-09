@@ -10,45 +10,6 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-// controllablePoller is a custom poller for testing
-type controllablePoller struct {
-	updates chan tele.Update
-	stopped bool
-	mu      sync.Mutex
-}
-
-func (p *controllablePoller) Poll(bot *tele.Bot, updates chan tele.Update, stop chan struct{}) {
-	for {
-		select {
-		case upd := <-p.updates:
-			select {
-			case updates <- upd:
-			case <-stop:
-				p.mu.Lock()
-				p.stopped = true
-				p.mu.Unlock()
-				return
-			}
-		case <-stop:
-			p.mu.Lock()
-			p.stopped = true
-			p.mu.Unlock()
-			return
-		}
-	}
-}
-
-func (p *controllablePoller) sendUpdate(upd tele.Update) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.stopped {
-		select {
-		case p.updates <- upd:
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-}
-
 // mockUserStorage implements UsersStorage for testing
 type mockUserStorage struct {
 	users map[int64]UserModel

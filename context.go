@@ -1082,10 +1082,7 @@ func (c *contextImpl) handleBotBlockedError(errorMsg string) bool {
 
 // error when you want to edit message with the same text and buttons
 func (c *contextImpl) handleNotModifiedError(errorMsg string) bool {
-	if !strings.Contains(errorMsg, "is not modified") {
-		return false
-	}
-	return true
+	return strings.Contains(errorMsg, "is not modified")
 }
 
 // error when you want to edit message that is not found
