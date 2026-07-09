@@ -24,10 +24,13 @@ jobs:
 
       - name: Install semantic-release
         run: |
-          npm install -g semantic-release
+          npm install -g semantic-release@25
           npm install -g @semantic-release/github
           npm install -g @semantic-release/npm
-          npm install -g conventional-changelog-conventionalcommits
+          # Pinned to v9: v10 (2026-06-26) is incompatible with
+          # @semantic-release/release-notes-generator and silently produces
+          # empty release notes (see v1.5.0, notes were restored manually).
+          npm install -g conventional-changelog-conventionalcommits@9
 
       - name: Release
         env:
