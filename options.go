@@ -366,7 +366,7 @@ type WebhookConfig struct {
 	URL string `yaml:"url" json:"url" env:"BOTE_WEBHOOK_URL"`
 
 	// Listen is the address to bind the webhook server to.
-	// Default: ":8443"
+	// Default: "0.0.0.0:8080"
 	// Environment variable: BOTE_WEBHOOK_LISTEN.
 	Listen string `yaml:"listen" json:"listen" env:"BOTE_WEBHOOK_LISTEN"`
 
@@ -643,20 +643,24 @@ func WithWebhookGenerateCertificate(directory ...string) func(opts *Options) {
 	}
 }
 
-// WithWebhookGenerateCertificate returns an option that generates self-signed certificate and uploads it to Telegram.
+// WithWebhookMetrics returns an option that enables serving metrics from the provided registry.
 func WithWebhookMetrics(metrics MetricsConfig, metricsPath ...string) func(opts *Options) {
 	return func(opts *Options) {
 		opts.Config.Webhook.EnableMetrics = true
-		opts.Config.Webhook.MetricsPath = lang.First(metricsPath)
+		if len(metricsPath) > 0 {
+			opts.Config.Webhook.MetricsPath = metricsPath[0]
+		}
 		opts.Metrics = metrics
 	}
 }
 
-// WithWebhookGenerateCertificate returns an option that generates self-signed certificate and uploads it to Telegram.
+// WithWebhookDefaultMetrics returns an option that enables serving metrics from a new default registry.
 func WithWebhookDefaultMetrics(metricsPath ...string) func(opts *Options) {
 	return func(opts *Options) {
 		opts.Config.Webhook.EnableMetrics = true
-		opts.Config.Webhook.MetricsPath = lang.First(metricsPath)
+		if len(metricsPath) > 0 {
+			opts.Config.Webhook.MetricsPath = metricsPath[0]
+		}
 		opts.Metrics = MetricsConfig{
 			Registry: prometheus.NewRegistry(),
 		}
@@ -730,7 +734,9 @@ func WithLogger(logger Logger, level ...string) func(opts *Options) {
 	return func(opts *Options) {
 		opts.Logger = logger
 		opts.Config.Log.Enable = lang.Ptr(true)
-		opts.Config.Log.Level = lang.First(level)
+		if len(level) > 0 {
+			opts.Config.Log.Level = level[0]
+		}
 	}
 }
 
@@ -785,6 +791,11 @@ func (cfg *Config) prepareAndValidate() error {
 		}
 		if cfg.Webhook.urlParsed.Scheme != "https" {
 			return erro.New("webhook URL must use HTTPS")
+		}
+		if cfg.Webhook.urlParsed.Path == "" {
+			// A URL without a path (https://example.com) must serve updates on "/";
+			// an empty route pattern never matches and all updates would get 404.
+			cfg.Webhook.urlParsed.Path = "/"
 		}
 		generateSelfSignedCert := cfg.Webhook.Security.GenerateSelfSignedCert != nil && *cfg.Webhook.Security.GenerateSelfSignedCert
 
@@ -866,6 +877,11 @@ func prepareOpts(opts Options) (Options, error) {
 	}
 	if opts.UpdateLogger == nil {
 		opts.UpdateLogger = &updateLogger{opts.Logger}
+	}
+	if opts.Config.Webhook.EnableMetrics && opts.Metrics.Registry == nil {
+		// EnableMetrics is documented to fall back to a default registry; without this
+		// the metrics endpoint would serve from a nil registry and panic on every scrape.
+		opts.Metrics.Registry = prometheus.NewRegistry()
 	}
 	opts.metrics = newMetrics(opts.Metrics)
 	opts.Logger = &leveledLogger{
@@ -1017,24 +1033,22 @@ type simpleKeysProvider struct {
 }
 
 func newSimpleKeysProvider(encryptionKeyString, hmacKeyString *string, encryptionKeyVersion, hmacKeyVersion *int64) (KeysProvider, error) {
-	if encryptionKeyString == nil && hmacKeyString == nil {
-		return &simpleKeysProvider{
-			encryptionKey: nil,
-			hmacKey:       nil,
-		}, nil
+	p := &simpleKeysProvider{}
+	if encryptionKeyString != nil {
+		encryptionKey, err := NewEncryptionKeyFromString(*encryptionKeyString, encryptionKeyVersion)
+		if err != nil {
+			return nil, erro.Wrap(err, "parse encryption key")
+		}
+		p.encryptionKey = encryptionKey
 	}
-	encryptionKey, err := NewEncryptionKeyFromString(*encryptionKeyString, encryptionKeyVersion)
-	if err != nil {
-		return nil, erro.Wrap(err, "parse encryption key")
+	if hmacKeyString != nil {
+		hmacKey, err := NewEncryptionKeyFromString(*hmacKeyString, hmacKeyVersion)
+		if err != nil {
+			return nil, erro.Wrap(err, "parse HMAC key")
+		}
+		p.hmacKey = hmacKey
 	}
-	hmacKey, err := NewEncryptionKeyFromString(*hmacKeyString, hmacKeyVersion)
-	if err != nil {
-		return nil, erro.Wrap(err, "parse HMAC key")
-	}
-	return &simpleKeysProvider{
-		encryptionKey: encryptionKey,
-		hmacKey:       hmacKey,
-	}, nil
+	return p, nil
 }
 
 func (p *simpleKeysProvider) GetEncryptionKey() *EncryptionKey {
