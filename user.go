@@ -1228,6 +1228,15 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 
 	currentTime := time.Now().UTC()
 	u.user.Stats.LastSeenTime = currentTime
+
+	// The old head message is deleted from the chat on Send and never enters
+	// HistoryIDs, so drop its bookkeeping here — otherwise LastActions grows by
+	// one persisted entry per Send for the user's lifetime.
+	if oldHead := u.user.Messages.HeadID; oldHead != 0 && oldHead != headMsgID {
+		delete(u.user.Messages.LastActions, oldHead)
+		delete(u.user.State.MessageStates, oldHead)
+	}
+
 	u.user.Messages.LastActions[mainMsgID] = currentTime
 	if headMsgID != 0 {
 		u.user.Messages.LastActions[headMsgID] = currentTime
