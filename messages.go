@@ -454,26 +454,32 @@ func (b *MessageBuilder) IsEmpty() bool {
 
 // GetFilledMessage returns a formatted string with aligned left and right parts.
 func GetFilledMessage(left, right, sep, fill string, maxLeft, maxRight, maxLen int) string {
-	dataLen := len(left) + len(right) + len(sep)
+	// Count runes, not bytes: alignment is visual, and multi-byte text (e.g. Cyrillic)
+	// would otherwise fail the limit checks or get half the intended padding.
+	leftLen := utf8.RuneCountInString(left)
+	rightLen := utf8.RuneCountInString(right)
+	sepLen := utf8.RuneCountInString(sep)
+
+	dataLen := leftLen + rightLen + sepLen
 	if dataLen > maxLen {
 		panic(fmt.Sprintf("invalid state: provided data length %d > %d max length", dataLen, maxLen))
 	}
 
-	if len(right) > maxRight {
-		panic(fmt.Sprintf("invalid state: right data length %d > %d max right", len(right), maxRight))
+	if rightLen > maxRight {
+		panic(fmt.Sprintf("invalid state: right data length %d > %d max right", rightLen, maxRight))
 	}
 
-	if len(left) > maxLeft {
-		panic(fmt.Sprintf("invalid state: left data length %d > %d max left", len(left), maxLeft))
+	if leftLen > maxLeft {
+		panic(fmt.Sprintf("invalid state: left data length %d > %d max left", leftLen, maxLeft))
 	}
 
-	sepPos := maxLen - maxRight - len(sep)
-	if len(left) > sepPos {
-		panic(fmt.Sprintf("invalid state: left data length %d > %d space for left", len(left), sepPos))
+	sepPos := maxLen - maxRight - sepLen
+	if leftLen > sepPos {
+		panic(fmt.Sprintf("invalid state: left data length %d > %d space for left", leftLen, sepPos))
 	}
 
 	numberOfLines := sepPos - maxLeft
-	numberOfSpaces := sepPos - numberOfLines - len(left) + 1
+	numberOfSpaces := sepPos - numberOfLines - leftLen + 1
 	out := left + strings.Repeat("  ", lang.If(numberOfSpaces >= 0, numberOfSpaces, 0)) +
 		strings.Repeat(fill, lang.If(numberOfLines >= 0, numberOfLines, 0)) + sep + right
 
@@ -550,7 +556,16 @@ func sanitizeText(text string, maxLength ...int) string {
 	// Remove malicious URI scheme patterns directly on the original text.
 	// The regex uses (?i) for case-insensitive matching, so no need for a separate
 	// lowercase copy (which could cause index misalignment with multi-byte characters).
-	text = maliciousPattern.ReplaceAllString(text, "")
+	// Repeat until stable: a single pass can reassemble the pattern it removed
+	// (e.g. "jjavascript:avascript:" → "javascript:"). Each pass shrinks the string,
+	// so the loop terminates.
+	for {
+		replaced := maliciousPattern.ReplaceAllString(text, "")
+		if replaced == text {
+			break
+		}
+		text = replaced
+	}
 
 	// Do not trim or HTML-escape: keep original user formatting and symbols.
 

@@ -387,3 +387,25 @@ func TestBuilderEdgeCases(t *testing.T) {
 		assert.Equal(t, "T\n", b.String())
 	})
 }
+
+func TestSanitizeTextNestedScheme(t *testing.T) {
+	// Removing the inner match must not reassemble the malicious scheme.
+	out := sanitizeText("jjavascript:avascript:alert(1)")
+	assert.NotContains(t, out, "javascript:")
+
+	out = sanitizeText("ddata:ata:payload")
+	assert.NotContains(t, out, "data:")
+}
+
+func TestGetFilledMessageMultibyte(t *testing.T) {
+	// "Привет" is 6 runes but 12 bytes; alignment must count runes.
+	out := GetFilledMessage("Привет", "1", ":", ".", 8, 4, 16)
+	if out == "" {
+		t.Fatalf("expected non-empty filled message")
+	}
+	ascii := GetFilledMessage("Privet", "1", ":", ".", 8, 4, 16)
+	if runeCount(out) != runeCount(ascii) {
+		t.Fatalf("multibyte alignment mismatch: %q (%d runes) vs %q (%d runes)",
+			out, runeCount(out), ascii, runeCount(ascii))
+	}
+}
