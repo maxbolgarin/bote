@@ -33,9 +33,9 @@ func TestCreateBtnData(t *testing.T) {
 			expected: "a|b|c",
 		},
 		{
-			name:     "with empty strings",
+			name:     "with empty strings keeps positions",
 			dataList: []string{"a", "", "b", "c"},
-			expected: "a|b|c",
+			expected: "a||b|c",
 		},
 		{
 			name:     "complex data",
@@ -727,4 +727,30 @@ func TestKeyboardWithContext(t *testing.T) {
 		assert.Len(t, markup.InlineKeyboard, 2)
 		assert.Equal(t, "Footer Close", markup.InlineKeyboard[1][0].Text)
 	})
+}
+
+// TestCreateReplyMarkupFooterWithUnique ensures footer buttons created with a
+// Unique value (e.g. via ctx.Btn) don't panic in CreateReplyMarkup.
+func TestCreateReplyMarkupFooterWithUnique(t *testing.T) {
+	kb := NewKeyboard()
+	kb.Add(tele.Btn{Text: "Row", Unique: "rowunique"})
+	kb.AddFooter(tele.Btn{Text: "Footer", Unique: "footerunique"})
+
+	markup := kb.CreateReplyMarkup(false)
+	require.NotNil(t, markup)
+	require.Len(t, markup.ReplyKeyboard, 2)
+	assert.Equal(t, "Footer", markup.ReplyKeyboard[1][0].Text)
+}
+
+// TestInlineBuilderZeroColumns ensures InlineBuilder doesn't panic on columns == 0.
+func TestInlineBuilderZeroColumns(t *testing.T) {
+	btns := []tele.Btn{{Text: "A"}, {Text: "B"}, {Text: "C"}}
+	markup := InlineBuilder(0, OneBytePerRune, btns...)
+	require.NotNil(t, markup)
+
+	total := 0
+	for _, row := range markup.InlineKeyboard {
+		total += len(row)
+	}
+	assert.Equal(t, 3, total)
 }

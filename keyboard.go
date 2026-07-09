@@ -101,14 +101,17 @@ func CreateBtnData(dataList ...string) string {
 		return strings.ReplaceAll(dataList[0], "|", "-")
 	}
 
-	var b strings.Builder
-	b.Grow(len(dataList[0]) + len(dataList[1:]) + 1)
+	size := len(dataList) - 1
+	for _, s := range dataList {
+		size += len(s)
+	}
 
+	var b strings.Builder
+	b.Grow(size)
+
+	// Keep empty items so positions stay stable for positional parsing in DataParsed.
 	b.WriteString(strings.ReplaceAll(dataList[0], "|", "-"))
 	for _, s := range dataList[1:] {
-		if s == "" {
-			continue
-		}
 		b.WriteString("|" + strings.ReplaceAll(s, "|", "-"))
 	}
 	return b.String()
@@ -269,6 +272,7 @@ func (k *Keyboard) CreateReplyMarkup(oneTime bool) *tele.ReplyMarkup {
 	if len(k.footer) > 0 {
 		rOut := make([]tele.ReplyButton, 0, len(k.footer))
 		for _, btn := range k.footer {
+			btn.Unique = "" // I should do this thing because of nil coming from Reply() func
 			rOut = append(rOut, *btn.Reply())
 		}
 		out = append(out, rOut)
@@ -340,7 +344,7 @@ func Inline(rowLength int, btns ...tele.Btn) *tele.ReplyMarkup {
 func InlineBuilder(columns int, runesTypes RuneSizeType, btns ...tele.Btn) *tele.ReplyMarkup {
 	keyboard := NewKeyboardWithLength(runesTypes)
 	for i, btn := range btns {
-		if i%columns == 0 && i != 0 {
+		if columns > 0 && i != 0 && i%columns == 0 {
 			keyboard.StartNewRow()
 		}
 		keyboard.Add(btn)
