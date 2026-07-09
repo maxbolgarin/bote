@@ -34,11 +34,21 @@ type webhookPoller struct {
 	log     Logger
 	metrics *metrics
 
+	// botMu guards bot and updates: Poll (telebot goroutine) writes them while
+	// shutdown/GetWebhookInfo may read them from other goroutines.
+	botMu   sync.RWMutex
 	bot     *tele.Bot
 	updates chan tele.Update
 	stopCh  chan struct{}
 
 	shutdownOnce sync.Once
+}
+
+// getBot returns the telebot instance set by Poll, or nil if Poll has not run yet.
+func (wp *webhookPoller) getBot() *tele.Bot {
+	wp.botMu.RLock()
+	defer wp.botMu.RUnlock()
+	return wp.bot
 }
 
 // newWebhookPoller creates a new webhook poller with the given configuration.
@@ -92,6 +102,9 @@ func newWebhookPoller(config WebhookConfig, metr *metrics, logger Logger) (*webh
 		stopCh:  make(chan struct{}),
 	}
 
+	// Let request metrics exclude the actual (possibly custom) metrics endpoint.
+	metr.setWebhookMetricsPath(config.MetricsPath)
+
 	wp.srv.POST(config.urlParsed.Path, wp.handleWebhook)
 	if config.EnableMetrics {
 		wp.srv.GET(config.MetricsPath, promhttp.HandlerFor(metr.Registry, promhttp.HandlerOpts{
@@ -104,8 +117,10 @@ func newWebhookPoller(config WebhookConfig, metr *metrics, logger Logger) (*webh
 
 // Poll implements tele.Poller interface.
 func (wp *webhookPoller) Poll(bot *tele.Bot, updates chan tele.Update, stop chan struct{}) {
+	wp.botMu.Lock()
 	wp.bot = bot
 	wp.updates = updates
+	wp.botMu.Unlock()
 
 	var start func(string) error
 	if wp.cfg.Security.StartHTTPS {
@@ -265,11 +280,12 @@ func (wp *webhookPoller) shutdown(ctx context.Context) error {
 
 // deleteWebhook removes the webhook from Telegram.
 func (wp *webhookPoller) deleteWebhook() error {
-	if wp.bot == nil {
+	bot := wp.getBot()
+	if bot == nil {
 		return nil
 	}
 
-	_, err := wp.bot.Raw("deleteWebhook", map[string]interface{}{
+	_, err := bot.Raw("deleteWebhook", map[string]interface{}{
 		"drop_pending_updates": wp.cfg.DropPendingUpdates,
 	})
 	if err != nil {
@@ -307,7 +323,9 @@ func prepareCertificate(config *WebhookConfig, logger Logger) error {
 	certFile, keyFile, err := generateSelfSignedCert(
 		config.Security.CertFile,
 		config.Security.KeyFile,
-		config.urlParsed.Host,
+		// Hostname() strips the port: "example.com:8443" is not a valid DNS SAN
+		// and Telegram would reject the certificate.
+		config.urlParsed.Hostname(),
 		logger,
 	)
 	if err != nil {
@@ -479,11 +497,12 @@ type webhookInfo struct {
 
 // GetWebhookInfo retrieves current webhook information from Telegram.
 func (wp *webhookPoller) GetWebhookInfo() (*webhookInfo, error) {
-	if wp.bot == nil {
+	bot := wp.getBot()
+	if bot == nil {
 		return nil, erro.New("bot not initialized")
 	}
 
-	resp, err := wp.bot.Raw("getWebhookInfo", nil)
+	resp, err := bot.Raw("getWebhookInfo", nil)
 	if err != nil {
 		return nil, erro.Wrap(err, "get webhook info")
 	}
