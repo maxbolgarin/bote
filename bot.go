@@ -305,6 +305,7 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 	b.bot.handle(endpoint, func(c tele.Context) (err error) {
 		// Measure handler execution time
 		start := time.Now()
+		b.bot.metr.recordHandlerStart()
 
 		ctx := b.newContext(c)
 		defer func() {
@@ -316,7 +317,12 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			b.bot.metr.recordHandlerFinish()
 			duration := time.Since(start)
 			b.bot.metr.observeHandlerDuration(duration)
-			ctx.user.clearUserID()
+			if ctx.user != nil {
+				// user is nil for sender-less updates (e.g. channel posts); a panic
+				// here would escape the recover below (defers run LIFO) and crash
+				// the process.
+				ctx.user.clearUserID()
+			}
 		}()
 
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
@@ -418,7 +424,7 @@ func (b *Bot) initUserHandler(ctx *contextImpl, msgID int) error {
 				ID:   ctx.MessageID(),
 				Chat: &tele.Chat{Type: tele.ChatPrivate},
 			},
-			Data: targetHandler.Data,
+			Data: liveCallbackData(ctx, targetHandler),
 		},
 	}
 
@@ -464,7 +470,7 @@ func (b *Bot) callbackFallbackHandler(ctx Context) error {
 						ID:   ctx.MessageID(),
 						Chat: &tele.Chat{Type: tele.ChatPrivate},
 					},
-					Data: targetHandler.Data,
+					Data: liveCallbackData(ctxImpl, targetHandler),
 				},
 			}
 			return targetHandler.Handler(&contextImpl{
@@ -599,17 +605,19 @@ func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) {
 		return
 	}
 
+	// Use the locked getters: Info and State are mutated concurrently by other
+	// updates from the same user.
 	fields := make([]any, 0, 14)
 	fields = append(fields,
-		"user_id", user.user.ID.String(),
+		"user_id", user.IDFull().String(),
 	)
 	if !b.um.priv.IsStrict() {
-		fields = append(fields, "username", user.user.Info.Username)
+		fields = append(fields, "username", user.Username())
 	}
 
 	switch {
 	case upd.Message != nil:
-		fields = append(fields, "state", user.user.State.Main, "msg_id", upd.Message.ID)
+		fields = append(fields, "state", user.StateMain(), "msg_id", upd.Message.ID)
 		if !b.hideUserDataInLogs {
 			fields = append(fields, "text", maxLen(upd.Message.Text, MaxTextLenInLogs))
 		}
@@ -626,7 +634,7 @@ func (b *Bot) logUpdate(upd *tele.Update, user *userContextImpl) {
 			}
 			fields = append(fields, "state", st, "msg_id", upd.Callback.Message.ID)
 		} else {
-			fields = append(fields, "state", user.user.State.Main)
+			fields = append(fields, "state", user.StateMain())
 		}
 
 		if !b.hideUserDataInLogs {
@@ -846,27 +854,17 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 	}
 	closeBtn := b.msgs.Messages(user.Language()).CloseBtn()
 	if closeBtn != "" {
-		_, unique := getBtnIDAndUnique(closeBtn)
+		btnID, unique := getBtnIDAndUnique(closeBtn)
 		btn := tele.Btn{
 			Unique: unique,
 			Text:   closeBtn,
 		}
 		opts = append(opts, SingleRow(btn))
-		b.bot.handle(&btn, func(tele.Context) error {
-			msgs := user.Messages()
-			if msgs.ErrorID == 0 {
-				return nil
-			}
-			err := b.bot.delete(user.ID(), msgs.ErrorID)
-			if err != nil {
-				b.bot.log.Error("failed to delete error message using close button",
-					"user_id", prepareUserID(userID, b.um.priv),
-					"msg_id", msgs.ErrorID,
-					"error", err.Error())
-			}
-			user.setErrorMessage(0)
-			return nil
-		})
+		// Register in the stateless callback router (thread-safe and idempotent per
+		// button text) instead of telebot's handler map: writing that map at runtime
+		// races with dispatch reads (fatal concurrent map access) and every
+		// registration would leak a new entry because of the random unique suffix.
+		b.callbackRouter.Set(btnID, b.closeErrorMessage)
 	}
 	msgID, err := b.bot.send(user.ID(), msg, append(opts, tele.Silent)...)
 	if err != nil {
@@ -874,6 +872,41 @@ func (b *Bot) sendError(userID int64, msg string, opts ...any) {
 		return
 	}
 	user.setErrorMessage(msgID)
+}
+
+// liveCallbackData returns the payload of the button the user actually tapped, falling
+// back to the payload stored at registration time. The buttonMap key is derived from the
+// button *name*, so several same-named buttons in one message share a single entry —
+// dispatching the stored data would fire the handler with the last-registered button's
+// payload instead of the tapped one's.
+func liveCallbackData(ctx *contextImpl, registered InitBundle) string {
+	if cb := ctx.ct.Callback(); cb != nil && cb.Data != "" {
+		return parseCallbackPayload(cb.Data)
+	}
+	return registered.Data
+}
+
+// closeErrorMessage handles taps on the Close button of an error message sent by
+// sendError. It is dispatched through the stateless callback router, so it works for
+// any user who taps it and needs no per-message registration.
+func (b *Bot) closeErrorMessage(ctx Context) error {
+	ctxImpl, ok := ctx.(*contextImpl)
+	if !ok || ctxImpl.user == nil {
+		return nil
+	}
+	user := ctxImpl.user
+	msgs := user.Messages()
+	if msgs.ErrorID == 0 {
+		return nil
+	}
+	if err := b.bot.delete(user.ID(), msgs.ErrorID); err != nil {
+		b.bot.log.Error("failed to delete error message using close button",
+			"user_id", prepareUserID(user.ID(), b.um.priv),
+			"msg_id", msgs.ErrorID,
+			"error", err.Error())
+	}
+	user.setErrorMessage(0)
+	return nil
 }
 
 var (
