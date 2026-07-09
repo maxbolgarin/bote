@@ -535,8 +535,10 @@ type userContextImpl struct {
 	// Add mutex for protecting user state and message updates
 	mu sync.Mutex
 
-	// We can get this id from Telegram Update in handler
-	// We should clear it in the end of handler to prevent from leak into memory dump
+	// Plain Telegram user ID captured from the update. It lives as long as this
+	// cached user context: clearing it per-handler raced with concurrent handlers
+	// of the same user (the first to finish wiped it mid-flight for the others),
+	// and buys no privacy anyway — the user cache is keyed by the plain ID.
 	userID *int64
 }
 
@@ -1459,12 +1461,6 @@ func (u *userContextImpl) setUserID(userID int64) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.userID = &userID
-}
-
-func (u *userContextImpl) clearUserID() {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.userID = nil
 }
 
 func newUserModel(tUser *tele.User, userID FullUserID, priv PrivacyMode) UserModel {

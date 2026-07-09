@@ -317,12 +317,6 @@ func (b *Bot) Handle(endpoint any, f HandlerFunc) {
 			b.bot.metr.recordHandlerFinish()
 			duration := time.Since(start)
 			b.bot.metr.observeHandlerDuration(duration)
-			if ctx.user != nil {
-				// user is nil for sender-less updates (e.g. channel posts); a panic
-				// here would escape the recover below (defers run LIFO) and crash
-				// the process.
-				ctx.user.clearUserID()
-			}
 		}()
 
 		defer lang.RecoverWithErrAndStack(b.bot.log, &err)
