@@ -3,6 +3,7 @@ package bote
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -74,10 +75,28 @@ func (ctx *contextImpl) Btn(name string, callback HandlerFunc, dataList ...strin
 	}
 	if callback != nil {
 		if !ctx.user.isPublic {
+			key := ctx.buttonMapKey(id)
+
+			// The buttonMap key derives from the button name, so two same-named
+			// buttons with different handlers in one message silently share one
+			// entry (last registration wins). Warn about it, but only within a
+			// single context (= one keyboard build): re-inits on later updates
+			// legitimately re-register the same names with fresh closures.
+			handlerPtr := reflect.ValueOf(callback).Pointer()
+			if prev, ok := ctx.registeredBtns[key]; ok && prev != handlerPtr {
+				ctx.bt.bot.log.Warn("button with this name is already registered in this message with a different handler; the previous handler will be overwritten",
+					"button", name,
+				)
+			}
+			if ctx.registeredBtns == nil {
+				ctx.registeredBtns = make(map[string]uintptr)
+			}
+			ctx.registeredBtns[key] = handlerPtr
+
 			// Register in buttonMap for dispatch via callbackFallbackHandler.
 			// We intentionally do NOT register per-button telebot handlers to avoid
 			// unbounded growth of telebot's internal handler map.
-			ctx.user.buttonMap.Set(ctx.buttonMapKey(id), InitBundle{
+			ctx.user.buttonMap.Set(key, InitBundle{
 				Handler: callback,
 				Data:    data,
 			})

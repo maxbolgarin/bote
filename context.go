@@ -314,6 +314,12 @@ type contextImpl struct {
 
 	textMsgID       int
 	callbackHandled bool // set when initUserHandler already dispatched a callback
+
+	// registeredBtns tracks buttons registered through this context (one keyboard
+	// build), keyed by buttonMap key with the handler's function pointer as value.
+	// Used only to warn when one message registers the same button name with two
+	// different handlers — the second silently wins in buttonMap.
+	registeredBtns map[string]uintptr
 }
 
 func (c *contextImpl) User() User {
