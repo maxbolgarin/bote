@@ -227,7 +227,7 @@ func (u FullUserID) ID(encKeys ...*EncryptionKey) (int64, error) {
 	if u.IDEnc == nil {
 		return 0, errors.New("encrypted ID is not set")
 	}
-	if len(encKeys) == 0 || encKeys[0] == nil {
+	if len(encKeys) == 0 {
 		return 0, errors.New("keys are not provided")
 	}
 	var errs []error
@@ -410,6 +410,18 @@ type UserInfo struct {
 	// IsPremium is true if Telegram user has Telegram Premium.
 	// It is empty if privacy mode is strict.
 	IsPremium *bool `bson:"is_premium,omitempty" json:"is_premium,omitempty" db:"is_premium,omitempty"`
+}
+
+// equals compares two UserInfo values by content. A plain == would compare the
+// IsPremium pointers, which are freshly allocated on every update and thus never equal.
+func (i UserInfo) equals(other UserInfo) bool {
+	if i.Username != other.Username || i.FirstName != other.FirstName || i.LastName != other.LastName {
+		return false
+	}
+	if (i.IsPremium == nil) != (other.IsPremium == nil) {
+		return false
+	}
+	return i.IsPremium == nil || *i.IsPremium == *other.IsPremium
 }
 
 // UserMessages contains IDs of user messages.
@@ -728,9 +740,14 @@ func (u *userContextImpl) SetValue(key string, value any) {
 	u.user.Values[key] = value
 	values := make(map[string]any, len(u.user.Values))
 	maps.Copy(values, u.user.Values)
+	userID := u.user.ID
 	u.mu.Unlock()
 
-	u.db.UpdateAsync(u.user.ID, &UserModelDiff{
+	// Public users (group/channel senders) have no storage; keep values in memory only.
+	if u.db == nil {
+		return
+	}
+	u.db.UpdateAsync(userID, &UserModelDiff{
 		Values: values,
 	})
 }
@@ -743,6 +760,9 @@ func (u *userContextImpl) DeleteValue(key string) {
 	userID := u.user.ID
 	u.mu.Unlock()
 
+	if u.db == nil {
+		return
+	}
 	u.db.UpdateAsync(userID, &UserModelDiff{
 		Values: values,
 	})
@@ -754,6 +774,9 @@ func (u *userContextImpl) ClearCache() {
 	userID := u.user.ID
 	u.mu.Unlock()
 
+	if u.db == nil {
+		return
+	}
 	u.db.UpdateAsync(userID, &UserModelDiff{
 		Values: make(map[string]any),
 	})
@@ -936,19 +959,25 @@ func (u *userContextImpl) applyDeleteAll(deleted map[int]struct{}) {
 		u.user.Messages.ErrorID = 0
 	}
 
-	// Remove deleted history IDs, message states, last actions, and awaiting text entries
+	// Remove message states, last actions, and awaiting text entries for every deleted
+	// message — including main/head/notification/error, not only history messages;
+	// stale entries would otherwise point handlers at nonexistent messages and be
+	// persisted forever.
+	for id := range deleted {
+		delete(u.user.State.MessageStates, id)
+		delete(u.user.Messages.LastActions, id)
+		for j := len(u.user.State.MessagesAwaitingText) - 1; j >= 0; j-- {
+			if u.user.State.MessagesAwaitingText[j] == id {
+				u.user.State.MessagesAwaitingText = slices.Delete(u.user.State.MessagesAwaitingText, j, j+1)
+				break
+			}
+		}
+	}
+
+	// Remove deleted history IDs
 	remaining := u.user.Messages.HistoryIDs[:0]
 	for _, id := range u.user.Messages.HistoryIDs {
-		if _, ok := deleted[id]; ok {
-			delete(u.user.State.MessageStates, id)
-			delete(u.user.Messages.LastActions, id)
-			for j := len(u.user.State.MessagesAwaitingText) - 1; j >= 0; j-- {
-				if u.user.State.MessagesAwaitingText[j] == id {
-					u.user.State.MessagesAwaitingText = slices.Delete(u.user.State.MessagesAwaitingText, j, j+1)
-					break
-				}
-			}
-		} else {
+		if _, ok := deleted[id]; !ok {
 			remaining = append(remaining, id)
 		}
 	}
@@ -1134,6 +1163,11 @@ func (u *userContextImpl) update(user *tele.User) {
 	var updateBase bool
 	if u.user.IsBot != user.IsBot || u.user.LanguageCode != newLanguageCode {
 		updateBase = true
+		// Keep the in-memory model in sync: without this, Language() serves the old
+		// language until cache eviction and the changed-check above stays true on
+		// every update, re-enqueueing the same DB write forever.
+		u.user.LanguageCode = newLanguageCode
+		u.user.IsBot = user.IsBot
 	}
 
 	if u.priv == PrivacyModeStrict {
@@ -1145,14 +1179,14 @@ func (u *userContextImpl) update(user *tele.User) {
 	infoToCheck := newUserInfoNoSanitize(user, u.priv)
 
 	// Fast check because sanitize is expensive
-	if infoToCheck == u.user.Info {
+	if infoToCheck.equals(u.user.Info) {
 		u.mu.Unlock()
 		u.updateBase(updateBase, newLanguageCode, user.IsBot, userID)
 		return
 	}
 
 	newInfo := newUserInfoWithSanitize(user, u.priv)
-	if newInfo == u.user.Info {
+	if newInfo.equals(u.user.Info) {
 		u.mu.Unlock()
 		u.updateBase(updateBase, newLanguageCode, user.IsBot, userID)
 		return
@@ -1226,7 +1260,9 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 	// If new state is text state, we need to add it to the stack
 	if newState.IsText() {
 		u.pushTextMessageLocked(mainMsgID)
-		stateDiff.MessagesAwaitingText = u.user.State.MessagesAwaitingText
+		// Copy: the diff is serialized asynchronously and the live slice is
+		// mutated in place by later state changes.
+		stateDiff.MessagesAwaitingText = slices.Clone(u.user.State.MessagesAwaitingText)
 	}
 
 	u.user.Messages.MainID = mainMsgID
@@ -1246,9 +1282,12 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 	// Update DB
 	diff := &UserModelDiff{
 		Messages: &UserMessagesDiff{
-			MainID:      &mainID,
-			HeadID:      &headID,
-			HistoryIDs:  historyIDs,
+			MainID: &mainID,
+			HeadID: &headID,
+			// Copy: historyIDs is also the live u.user.Messages.HistoryIDs backing
+			// array, which later actions mutate in place while the async DB worker
+			// reads the diff.
+			HistoryIDs:  slices.Clone(historyIDs),
 			LastActions: lastActions,
 		},
 		State: stateDiff,
@@ -1563,9 +1602,14 @@ func (m *userManagerImpl) getUser(userID int64) *userContextImpl {
 			"error", err.Error(),
 			"error_type", fmt.Sprintf("%T", err))
 
-		return m.createFallbackUser(tUser, encryptionKey, hmacKey)
+		fallback := m.createFallbackUser(tUser, encryptionKey, hmacKey)
+		fallback.setUserID(userID)
+		return fallback
 	}
 
+	// In strict privacy mode IDPlain is nil, so without this the freshly created
+	// user would report ID() == 0 and every send to it would be dropped.
+	user.setUserID(userID)
 	return user
 }
 
@@ -1639,7 +1683,17 @@ func (m *userManagerImpl) createUser(tUser *tele.User, encryptionKey, hmacKey *E
 func (m *userManagerImpl) disableUser(userID int64) {
 	u, ok := m.users.get(userID)
 	if !ok {
-		return
+		// Not cached (e.g. evicted or fallback user): load from storage so the
+		// disable is persisted; otherwise the bot keeps sending to a blocked user.
+		var err error
+		u, err = m.createUser(&tele.User{ID: userID},
+			m.keysProvider.GetEncryptionKey(),
+			m.keysProvider.GetHMACKey(),
+		)
+		if err != nil {
+			m.log.Error("cannot load user to disable", "user_id", prepareUserID(userID, m.priv), "error", err.Error())
+			return
+		}
 	}
 	u.disable()
 	m.users.delete(userID)
@@ -1682,7 +1736,20 @@ func (s *orderedStorage) UpdateAsync(id FullUserID, userModel *UserModelDiff) {
 }
 
 func (s *orderedStorage) Delete(ctx context.Context, id FullUserID) error {
-	return s.db.Delete(ctx, id)
+	// Route the delete through the same per-user queue as UpdateAsync: a direct
+	// delete could be applied before still-queued updates, which would then
+	// resurrect the user in upsert-style storages.
+	errCh := make(chan error, 1)
+	s.queue.Push(id.String(), "delete", func(context.Context) error {
+		errCh <- s.db.Delete(ctx, id)
+		return nil
+	})
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type inMemoryUserStorage struct {
