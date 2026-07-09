@@ -3,6 +3,7 @@ package bote
 import (
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
@@ -190,6 +191,11 @@ func (b *Bot) newContext(c tele.Context) *contextImpl {
 
 	sender := getSender(&upd)
 	if sender == nil {
+		// Sender-less updates (e.g. channel posts made as the channel): synthesize a
+		// public user from the chat so Context methods don't dereference a nil user.
+		if chat := c.Chat(); chat != nil {
+			result.user = newPublicUserContext(&tele.User{ID: chat.ID})
+		}
 		return result
 	}
 
@@ -374,11 +380,13 @@ func parseCallbackPayload(data string) string {
 }
 
 func (c *contextImpl) DataParsed() []string {
-	data := strings.Split(c.Data(), "|")
-	if len(data) == 0 || data[0] == "" {
+	data := c.Data()
+	if data == "" {
 		return nil
 	}
-	return data
+	// Do not drop the result when only the first item is empty ("|x"):
+	// later positional items would be silently lost.
+	return strings.Split(data, "|")
 }
 
 func (c *contextImpl) Text() string {
@@ -421,19 +429,19 @@ func (c *contextImpl) IsMentioned() bool {
 	}
 
 	// Check for mention entities.
-	// Telegram entity offsets are in UTF-16 code units, so convert text to []rune
-	// (works for BMP characters; supplementary plane characters like some emoji are
-	// 2 UTF-16 code units but 1 rune, however mention usernames are ASCII-only,
-	// so rune-based slicing is safe here as long as we validate bounds).
-	runes := []rune(msg.Text)
+	// Telegram entity offsets/lengths are in UTF-16 code units, so index into the
+	// UTF-16 encoding of the text. Rune-based indexing would break as soon as a
+	// supplementary-plane character (e.g. most emoji, 2 UTF-16 units but 1 rune)
+	// appears before the mention.
+	textUTF16 := utf16.Encode([]rune(msg.Text))
 	for _, entity := range msg.Entities {
 		if entity.Type == "mention" {
 			start := entity.Offset
 			end := start + entity.Length
-			if start < 0 || end > len(runes) || start > end {
+			if start < 0 || end > len(textUTF16) || start > end {
 				continue
 			}
-			mentionedUsername := string(runes[start:end])
+			mentionedUsername := string(utf16.Decode(textUTF16[start:end]))
 			// Remove @ symbol if present
 			if len(mentionedUsername) > 0 && mentionedUsername[0] == '@' {
 				mentionedUsername = mentionedUsername[1:]
@@ -564,6 +572,10 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 		return nil
 	}
 
+	// Buttons in kb were registered against the trigger message; capture its ID so
+	// they can be re-keyed to the sent notification (same wiring as SendFile).
+	triggerMsgID := c.MessageID()
+
 	if c.user.Messages().NotificationID != 0 {
 		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
 			c.bt.bot.log.Warn("cannot delete previous notification message", c.bt.userFields(c.user)...)
@@ -575,6 +587,9 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 		return c.prepareError(err, msgID)
 	}
 	c.user.setNotificationMessage(msgID)
+	if kb != nil && len(kb.InlineKeyboard) > 0 {
+		c.user.copyButtonsToNewMsgID(triggerMsgID, msgID)
+	}
 
 	return nil
 }
@@ -583,6 +598,10 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 	if !c.validateUserInputWithMessage(msg, "SendError", NoChange) {
 		return nil
 	}
+
+	// The Close button is registered against the trigger message; capture its ID so
+	// the handler can be re-keyed to the sent error message (same wiring as SendFile).
+	triggerMsgID := c.MessageID()
 
 	closeBtn := c.bt.msgs.Messages(c.user.Language()).CloseBtn()
 	if closeBtn != "" {
@@ -596,6 +615,7 @@ func (c *contextImpl) SendError(msg string, opts ...any) error {
 		return nil // return nil to avoid bot blocking because sending error message is not critical
 	}
 	c.user.setErrorMessage(msgID)
+	c.user.copyButtonsToNewMsgID(triggerMsgID, msgID)
 
 	return nil
 }
