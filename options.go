@@ -131,8 +131,32 @@ type (
 		// It is used to provide encryption and HMAC keys for the bot in strict privacy mode.
 		KeysProvider KeysProvider
 
+		// OnStateChange is called after every real state transition, i.e. every time a
+		// user actually moves from one screen to another. It is optional.
+		//
+		// This is the hook to use for screen/page analytics. Wrapping handlers does not
+		// give you that: InitBundle handlers run only when a message is re-initialised
+		// after a restart, and the back/help/menu dispatchers fire for the state being
+		// LEFT — so neither observes ordinary inline-button navigation.
+		//
+		// Contract:
+		//   - never called when the new state is NoChange;
+		//   - called AFTER the transition is committed and AFTER the user lock is
+		//     released, so the callback may safely call back into the user;
+		//   - `from` is empty the first time a message is seen;
+		//   - panics are recovered and logged — a faulty callback cannot take the bot down;
+		//   - it runs inline on the update's goroutine, so it must be cheap and
+		//     non-blocking. Do slow work asynchronously.
+		OnStateChange StateChangeFunc
+
 		metrics *metrics
 	}
+
+	// StateChangeFunc is called on a real state transition. See [Options.OnStateChange].
+	//
+	// msgID identifies which of the user's messages changed state; compare it against
+	// [User.Messages] if you care whether it was the main message.
+	StateChangeFunc func(user User, from, to State, msgID int)
 
 	MetricsConfig struct {
 		Registry    *prometheus.Registry

@@ -540,16 +540,22 @@ type userContextImpl struct {
 	// of the same user (the first to finish wiped it mid-flight for the others),
 	// and buys no privacy anyway — the user cache is keyed by the plain ID.
 	userID *int64
+
+	// onStateChange is the optional screen-transition hook; nil for public contexts.
+	onStateChange StateChangeFunc
+	log           Logger
 }
 
 func (m *userManagerImpl) newUserContext(user UserModel, priv PrivacyMode) *userContextImpl {
 	user.prepareAfterDB()
 	return &userContextImpl{
-		db:          m.db,
-		user:        user,
-		priv:        priv,
-		buttonMap:   abstract.NewSafeMap[string, InitBundle](),
-		isInitedMsg: abstract.NewSafeMap[int, bool](),
+		db:            m.db,
+		user:          user,
+		priv:          priv,
+		buttonMap:     abstract.NewSafeMap[string, InitBundle](),
+		isInitedMsg:   abstract.NewSafeMap[int, bool](),
+		onStateChange: m.onStateChange,
+		log:           m.log,
 	}
 }
 
@@ -801,6 +807,9 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 	}
 
 	currentState, ok := u.user.State.MessageStates[msgID]
+	// Captured under the lock; reported to OnStateChange after the unlock below.
+	// Empty when this message has not been seen before.
+	previousState := State(currentState)
 
 	if ok && newState != State(currentState) && State(currentState).IsText() {
 		// If we got new state we should remove current pending text state
@@ -846,6 +855,25 @@ func (u *userContextImpl) setState(newState State, msgIDRaw ...int) {
 		Messages: &UserMessagesDiff{LastActions: lastActions},
 		Stats:    &UserStatDiff{LastSeenTime: &lastSeenTime, NumberOfStateChanges: &numberOfActionsTotal},
 	})
+
+	u.notifyStateChange(previousState, newState, msgID)
+}
+
+// notifyStateChange invokes the optional OnStateChange hook.
+//
+// Called only after the lock is released, so a callback that reads the user (which takes
+// the same mutex) cannot deadlock. Panics are contained: a bug in someone's analytics
+// callback must not be able to kill the bot mid-update.
+func (u *userContextImpl) notifyStateChange(from, to State, msgID int) {
+	if u.onStateChange == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil && u.log != nil {
+			u.log.Error("panic in OnStateChange callback", "panic", r, "from", from, "to", to)
+		}
+	}()
+	u.onStateChange(u, from, to, msgID)
 }
 
 func (u *userContextImpl) prepareTextStates() {
@@ -1531,6 +1559,9 @@ type userManagerImpl struct {
 
 	priv         PrivacyMode
 	keysProvider KeysProvider
+
+	// onStateChange is the optional screen-transition hook (Options.OnStateChange).
+	onStateChange StateChangeFunc
 }
 
 func newUserManager(ctx context.Context, opts Options) (*userManagerImpl, error) {
@@ -1547,13 +1578,14 @@ func newUserManager(ctx context.Context, opts Options) (*userManagerImpl, error)
 	})
 
 	m := &userManagerImpl{
-		metr:         opts.metrics,
-		users:        users,
-		db:           newOrderedStorage(opts.UserDB, writeQueue),
-		writeQueue:   writeQueue,
-		log:          opts.Logger,
-		priv:         opts.Config.Bot.Privacy.Mode,
-		keysProvider: opts.KeysProvider,
+		metr:          opts.metrics,
+		users:         users,
+		db:            newOrderedStorage(opts.UserDB, writeQueue),
+		writeQueue:    writeQueue,
+		log:           opts.Logger,
+		priv:          opts.Config.Bot.Privacy.Mode,
+		keysProvider:  opts.KeysProvider,
+		onStateChange: opts.OnStateChange,
 	}
 
 	return m, nil
