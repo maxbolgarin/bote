@@ -1341,13 +1341,43 @@ func (u *userContextImpl) handleSend(newState State, mainMsgID, headMsgID int) {
 		u.isInitedMsg.Set(headMsgID, true)
 	}
 
-	// Cap buttonMap to prevent unbounded growth.
-	// Old button handlers will be re-registered via initUserHandler if clicked.
+	// Cap buttonMap to prevent unbounded growth, but never at the cost of the messages the user
+	// can still tap. Clearing it outright killed navigation: buttonMap is the only dispatch path
+	// for private chats (see Keyboard button registration, which deliberately registers no
+	// per-button telebot handler), and the documented recovery — re-registering via
+	// initUserHandler — is skipped for exactly the messages marked inited a few lines above. A
+	// user whose map tripped the cap during a day rollover was left with a dead Back and Help on
+	// every screen until something re-rendered them.
+	//
+	// Evicting only the entries belonging to messages that are gone keeps the live ones dispatchable
+	// and still bounds the map, since each Send retires the messages it replaced.
 	if u.buttonMap.Len() > maxButtonMapSize {
-		u.buttonMap.Clear()
+		u.evictStaleButtons(mainMsgID, headMsgID, historyIDs)
 	}
 
 	u.db.UpdateAsync(userID, diff)
+}
+
+// evictStaleButtons drops buttonMap entries whose message the user can no longer tap, keeping the
+// main, head and history messages dispatchable. Entries are keyed "<msgID>:<buttonID>".
+func (u *userContextImpl) evictStaleButtons(mainMsgID, headMsgID int, historyIDs []int) {
+	live := make(map[string]struct{}, len(historyIDs)+2)
+	for _, id := range append([]int{mainMsgID, headMsgID}, historyIDs...) {
+		if id != 0 {
+			live[strconv.Itoa(id)+":"] = struct{}{}
+		}
+	}
+
+	for key := range u.buttonMap.Copy() {
+		idx := strings.IndexByte(key, ':')
+		if idx < 0 {
+			u.buttonMap.Delete(key)
+			continue
+		}
+		if _, ok := live[key[:idx+1]]; !ok {
+			u.buttonMap.Delete(key)
+		}
+	}
 }
 
 // copyButtonsToNewMsgID copies all buttonMap entries registered under oldMsgID
@@ -1456,6 +1486,16 @@ func (u *userContextImpl) isMsgInited(msgID int) bool {
 		return true
 	}
 	return u.isInitedMsg.Get(msgID)
+}
+
+// unsetMsgInited marks a message as needing re-initialisation. Used when a button on an
+// already-inited message turns out to have no registered handler: without this the init pass stays
+// skipped and the button can never come back.
+func (u *userContextImpl) unsetMsgInited(msgID int) {
+	if msgID == 0 {
+		return
+	}
+	u.isInitedMsg.Delete(msgID)
 }
 
 func (u *userContextImpl) setMsgInited(msgID int) {

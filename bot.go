@@ -480,7 +480,22 @@ func (b *Bot) callbackFallbackHandler(ctx Context) error {
 		return handler(ctx)
 	}
 
-	if u := ctxImpl.user; u != nil && !u.isPublic {
+	// 3. Self-heal: a tracked user reached here because no handler is registered for a button that
+	// is still on screen — the registration was lost (process restart, or eviction). The message is
+	// marked inited, so the init pass in Handle was skipped and would never run again, leaving that
+	// button dead for good. Re-init it now so the keyboard is rebuilt and its handlers restored;
+	// initUserHandler dispatches the button itself once it is registered again.
+	if u := ctxImpl.user; u != nil && !u.isPublic && b.stateMap.Len() > 0 {
+		msgID := ctx.MessageID()
+		if u.isMsgInited(msgID) {
+			u.unsetMsgInited(msgID)
+			b.bot.log.Warn("button handler lost, re-initialising message",
+				"user_id", prepareUserID(u.ID(), b.um.priv),
+				"button_id", btnID,
+			)
+			return b.initUserHandler(ctxImpl, msgID)
+		}
+
 		b.bot.log.Warn("button handler not found in fallback",
 			"user_id", prepareUserID(u.ID(), b.um.priv),
 			"button_id", btnID,

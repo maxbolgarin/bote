@@ -3,6 +3,7 @@ package bote
 import (
 	"context"
 	"encoding/hex"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -1861,7 +1862,7 @@ func TestFullUserIDIsEmptyHMAC(t *testing.T) {
 	}
 }
 
-func TestButtonMapClearedOnMaxSize(t *testing.T) {
+func TestButtonMapEvictsOnlyStaleOnMaxSize(t *testing.T) {
 	opts := newTestOptions()
 	um, err := newUserManager(context.Background(), opts)
 	require.NoError(t, err)
@@ -1869,17 +1870,54 @@ func TestButtonMapClearedOnMaxSize(t *testing.T) {
 	model := newUserModel(&tele.User{ID: 444}, NewPlainUserID(444), "")
 	user := um.newUserContext(model, "")
 
+	const (
+		liveMain = 100
+		liveHead = 101
+		stale    = 55
+	)
+
+	// Buttons the user can still tap, and a pile belonging to a message that is gone.
+	user.buttonMap.Set(strconv.Itoa(liveMain)+":back", InitBundle{Handler: func(Context) error { return nil }})
+	user.buttonMap.Set(strconv.Itoa(liveHead)+":help", InitBundle{Handler: func(Context) error { return nil }})
 	for i := 0; i < maxButtonMapSize+1; i++ {
-		user.buttonMap.Set(hex.EncodeToString([]byte{byte(i), byte(i >> 8)}), InitBundle{
+		user.buttonMap.Set(strconv.Itoa(stale)+":"+strconv.Itoa(i), InitBundle{
 			Handler: func(Context) error { return nil },
 		})
 	}
-	assert.Greater(t, user.buttonMap.Len(), maxButtonMapSize)
+	require.Greater(t, user.buttonMap.Len(), maxButtonMapSize)
 
-	user.handleSend(NoChange, 100, 0)
+	user.handleSend(NoChange, liveMain, liveHead)
 
-	assert.Equal(t, 0, user.buttonMap.Len(), "buttonMap should be cleared after exceeding max size")
-	assert.True(t, user.isInitedMsg.Get(100), "new main msg should be marked as inited")
+	// The regression this guards: clearing the whole map killed navigation, because buttonMap is
+	// the only dispatch path for private chats and the messages it serves were just marked inited,
+	// so the re-init recovery never ran for them.
+	_, backAlive := user.buttonMap.Lookup(strconv.Itoa(liveMain) + ":back")
+	assert.True(t, backAlive, "a button on the live main message must stay dispatchable")
+	_, helpAlive := user.buttonMap.Lookup(strconv.Itoa(liveHead) + ":help")
+	assert.True(t, helpAlive, "a button on the live head message must stay dispatchable")
+
+	_, staleAlive := user.buttonMap.Lookup(strconv.Itoa(stale) + ":0")
+	assert.False(t, staleAlive, "buttons of a retired message must be evicted")
+	assert.LessOrEqual(t, user.buttonMap.Len(), maxButtonMapSize, "the map must still be bounded")
+
+	assert.True(t, user.isInitedMsg.Get(liveMain), "new main msg should be marked as inited")
+}
+
+// A lost registration must be recoverable: the message is un-inited so the init pass runs again
+// and rebuilds the keyboard, instead of the button staying dead forever.
+func TestUnsetMsgInitedAllowsReInit(t *testing.T) {
+	opts := newTestOptions()
+	um, err := newUserManager(context.Background(), opts)
+	require.NoError(t, err)
+
+	model := newUserModel(&tele.User{ID: 445}, NewPlainUserID(445), "")
+	user := um.newUserContext(model, "")
+
+	user.handleSend(NoChange, 200, 0)
+	require.True(t, user.isMsgInited(200))
+
+	user.unsetMsgInited(200)
+	assert.False(t, user.isMsgInited(200), "message must be eligible for re-initialisation")
 }
 
 func TestDeleteUserCacheEviction(t *testing.T) {
