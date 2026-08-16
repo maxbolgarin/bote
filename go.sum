@@ -308,8 +308,8 @@ github.com/maxbolgarin/abstract v1.18.1 h1:2zby2oLg7eb2c444LfqtBi6YMOYmdhxp6hEp4
 github.com/maxbolgarin/abstract v1.18.1/go.mod h1:EIqEF1Qw2dLqY1igSJh/0gTuXV4jKcXvphFekJ+/nFE=
 github.com/maxbolgarin/erro v1.0.1 h1:OCk+9/S2eyizYXBMDC+QPgU8DjAqpzX2bLqLRbKCiJo=
 github.com/maxbolgarin/erro v1.0.1/go.mod h1:N15wmQpIOcmtyf/5BUwN2zY+3yWC4Smouhzo++mT7TM=
-github.com/maxbolgarin/gorder v1.1.1 h1:FbkyzXzUBfNiuLDQe29FtW4aXiVNyZH+VkOPdryMOuw=
-github.com/maxbolgarin/gorder v1.1.1/go.mod h1:MHFdJegeAzo9x9WnwZ8tm2smLPBnY/Th3dhvt54OaUU=
+github.com/maxbolgarin/gorder v1.1.2 h1:BqpRpnp4X6OEGI64ajrso+uO/SzjzMpIGpSxVHktaTI=
+github.com/maxbolgarin/gorder v1.1.2/go.mod h1:MHFdJegeAzo9x9WnwZ8tm2smLPBnY/Th3dhvt54OaUU=
 github.com/maxbolgarin/lang v1.9.1 h1:E6RpDJTbRo/DL+aCC9Pa5h9cwP2/C6qaVPCKrymY55g=
 github.com/maxbolgarin/lang v1.9.1/go.mod h1:ccY/VZ7GTY3RfrXqqZhPh9kzXCUS7yjaX1ZByGg+/oQ=
 github.com/maxbolgarin/servex/v2 v2.3.1 h1:tlMqAa3ubW4LUsde9VFQbcHWY2RpR1xphbhTS61eO9Y=

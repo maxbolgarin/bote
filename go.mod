@@ -6,7 +6,7 @@ require (
 	github.com/caarlos0/env/v11 v11.4.0
 	github.com/maxbolgarin/abstract v1.18.1
 	github.com/maxbolgarin/erro v1.0.1
-	github.com/maxbolgarin/gorder v1.1.1
+	github.com/maxbolgarin/gorder v1.1.2
 	github.com/maxbolgarin/lang v1.9.1
 	github.com/maxbolgarin/servex/v2 v2.3.1
 	github.com/maypok86/otter v1.2.4
