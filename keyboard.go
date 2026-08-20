@@ -10,7 +10,7 @@ import (
 
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/lang"
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 const (

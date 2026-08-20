@@ -14,7 +14,7 @@ import (
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // InitBundle is a struct for initing users of the bot. You should provide it to [Bot.Start] method.

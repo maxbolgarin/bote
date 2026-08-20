@@ -9,10 +9,10 @@ require (
 	github.com/maxbolgarin/gorder v1.1.2
 	github.com/maxbolgarin/lang v1.9.1
 	github.com/maxbolgarin/servex/v2 v2.3.1
+	github.com/maxbolgarin/telebot/v4 v4.1.0
 	github.com/maypok86/otter v1.2.4
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
-	gopkg.in/telebot.v4 v4.0.0-beta.5
 )
 
 require (
@@ -24,6 +24,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
@@ -41,4 +42,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace gopkg.in/telebot.v4 => github.com/maxbolgarin/telebot/v4 v4.0.0-20251112183228-5afbe3e33431

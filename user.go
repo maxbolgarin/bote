@@ -20,7 +20,7 @@ import (
 	"github.com/maxbolgarin/gorder"
 	"github.com/maxbolgarin/lang"
 	"github.com/maypok86/otter"
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // State is a user state in Telegram bot builded using this package.

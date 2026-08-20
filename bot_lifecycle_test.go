@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/maxbolgarin/lang"
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // mockUserStorage implements UsersStorage for testing

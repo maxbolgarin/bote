@@ -1,6 +1,6 @@
 # Bote: Interactive Telegram Bot Framework for Go
 
-Bote is a powerful wrapper for [Telebot v4](https://gopkg.in/telebot.v4) that simplifies building interactive Telegram bots with smart message management, user state tracking, and advanced keyboard handling.
+Bote is a powerful wrapper for [Telebot v4](https://github.com/maxbolgarin/telebot) (maxbolgarin fork) that simplifies building interactive Telegram bots with smart message management, user state tracking, and advanced keyboard handling.
 
 [![Go Version][version-img]][doc] [![GoDoc][doc-img]][doc] [![Build][ci-img]][ci] [![Coverage][coverage-img]][coverage] [![GoReport][report-img]][report]
 

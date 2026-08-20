@@ -12,7 +12,7 @@ import (
 	"github.com/maxbolgarin/lang"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // TestUserCreation tests user creation and initialization

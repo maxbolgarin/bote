@@ -1,7 +1,7 @@
 package bote
 
 import (
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // This file contains helpers for "service" bots: bots that post to channels and handle

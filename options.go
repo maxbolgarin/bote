@@ -13,7 +13,7 @@ import (
 	"github.com/maxbolgarin/lang"
 	"github.com/prometheus/client_golang/prometheus"
 
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 const (

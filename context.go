@@ -7,7 +7,7 @@ import (
 
 	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // Context is an interface that provides to every handler.

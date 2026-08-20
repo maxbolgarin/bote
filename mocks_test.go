@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
-	tele "gopkg.in/telebot.v4"
+	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // MockUsersStorage is a mock implementation of UsersStorage interface using testify/mock
