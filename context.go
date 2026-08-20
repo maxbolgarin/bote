@@ -144,6 +144,28 @@ type Context interface {
 	// WARNING: It works only in private chats.
 	SendNotificationRich(rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error
 
+	// EditNotification edits the notification message in place instead of replacing it.
+	//
+	// This is what makes a notification streamable: sending again would delete the previous
+	// message and post a new one, which reads as the bot retracting and reposting, and moves the
+	// message to the bottom of the chat on every frame. Editing keeps one message that grows.
+	//
+	// Does nothing when no notification is currently shown — a caller streaming into a
+	// notification that was closed mid-stream should stop, not resurrect it.
+	// WARNING: It works only in private chats.
+	EditNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error
+
+	// EditNotificationRich is the rich counterpart of EditNotification (Bot API 10.1).
+	// NOTE: Messages.PrepareMessage is NOT applied — see EditMainRich.
+	// WARNING: It works only in private chats.
+	EditNotificationRich(rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error
+
+	// HasNotification reports whether a notification message is currently shown.
+	//
+	// A streaming caller needs this to tell "the user closed the card" from "the edit failed":
+	// the first is a reason to stop quietly, the second is worth a log.
+	HasNotification() bool
+
 	// Edit edits main and head messages of the user.
 	// newState is a state of the user which will be set after editing message.
 	// opts are additional options for editing messages.
@@ -723,6 +745,50 @@ func (c *contextImpl) SendNotificationRich(rich *tele.InputRichMessage, kb *tele
 	}
 
 	return nil
+}
+
+func (c *contextImpl) EditNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error {
+	if !c.validateUserInputWithMessage(msg, "EditNotification", NoChange) {
+		return nil
+	}
+
+	msgID := c.user.Messages().NotificationID
+	if msgID == 0 {
+		return nil // closed, or never shown
+	}
+
+	if err := c.edit(msgID, msg, kb, opts...); err != nil {
+		return c.prepareEditError(err, msgID)
+	}
+	if kb != nil && len(kb.InlineKeyboard) > 0 {
+		c.user.copyButtonsToNewMsgID(c.MessageID(), msgID)
+	}
+
+	return nil
+}
+
+func (c *contextImpl) EditNotificationRich(rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error {
+	if !c.validateUserInputWithRich(rich, "EditNotificationRich", NoChange) {
+		return nil
+	}
+
+	msgID := c.user.Messages().NotificationID
+	if msgID == 0 {
+		return nil
+	}
+
+	if err := c.editRich(msgID, rich, kb, opts...); err != nil {
+		return c.prepareEditError(err, msgID)
+	}
+	if kb != nil && len(kb.InlineKeyboard) > 0 {
+		c.user.copyButtonsToNewMsgID(c.MessageID(), msgID)
+	}
+
+	return nil
+}
+
+func (c *contextImpl) HasNotification() bool {
+	return c.user.Messages().NotificationID != 0
 }
 
 func (c *contextImpl) SendError(msg string, opts ...any) error {

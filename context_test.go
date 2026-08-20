@@ -1431,3 +1431,38 @@ func TestSendNotificationRich(t *testing.T) {
 		_ = ctx.SendNotificationRich(&tele.InputRichMessage{Markdown: "# Answer"}, nil)
 	})
 }
+
+// TestEditNotification covers the streamable-notification path. The case that matters is the
+// closed card: a caller streaming frames into a notification the user dismissed must quietly stop
+// rather than resurrect it, so a zero notification id is a silent no-op and not an error.
+func TestEditNotification(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("no notification shown is a silent no-op", func(t *testing.T) {
+		ctx := NewContext(bot, 14001, 1)
+		assert.False(t, ctx.HasNotification())
+		assert.Nil(t, ctx.EditNotification("frame", nil))
+		assert.Nil(t, ctx.EditNotificationRich(&tele.InputRichMessage{Markdown: "frame"}, nil))
+	})
+
+	t.Run("empty content is rejected before the API call", func(t *testing.T) {
+		ctx := NewContext(bot, 14002, 1)
+		assert.Nil(t, ctx.EditNotification("", nil))
+		assert.Nil(t, ctx.EditNotificationRich(&tele.InputRichMessage{}, nil))
+		assert.Nil(t, ctx.EditNotificationRich(nil, nil))
+	})
+
+	t.Run("with a notification shown it attempts the edit", func(t *testing.T) {
+		ctx := NewContext(bot, 14003, 1)
+		impl := ctx.(*contextImpl)
+
+		impl.user.mu.Lock()
+		impl.user.user.Messages.NotificationID = 4242
+		impl.user.mu.Unlock()
+
+		assert.True(t, ctx.HasNotification())
+		// Offline, so this errors at transport — the point is that it got past the guards.
+		_ = ctx.EditNotification("frame", nil)
+		_ = ctx.EditNotificationRich(&tele.InputRichMessage{Markdown: "# frame"}, nil)
+	})
+}
