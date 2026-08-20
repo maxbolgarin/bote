@@ -135,6 +135,15 @@ type Context interface {
 	// WARNING: It works only in private chats.
 	SendRichDraft(draftID int, rich *tele.InputRichMessage, opts ...any) error
 
+	// SendNotificationRich sends a notification built from rich content (Bot API 10.1).
+	// It behaves exactly like SendNotification — replaces the previous notification, tracks the
+	// new message id so DeleteNotification can remove it, and re-keys the keyboard's buttons —
+	// but carries 32768 characters instead of 4096, so a notification does not have to be the
+	// short one when the main message is rich.
+	// NOTE: Messages.PrepareMessage is NOT applied — see EditMainRich.
+	// WARNING: It works only in private chats.
+	SendNotificationRich(rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error
+
 	// Edit edits main and head messages of the user.
 	// newState is a state of the user which will be set after editing message.
 	// opts are additional options for editing messages.
@@ -680,6 +689,31 @@ func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ..
 	}
 
 	msgID, err := c.bt.bot.send(c.user.ID(), msg, append(opts, kb)...)
+	if err != nil {
+		return c.prepareError(err, msgID)
+	}
+	c.user.setNotificationMessage(msgID)
+	if kb != nil && len(kb.InlineKeyboard) > 0 {
+		c.user.copyButtonsToNewMsgID(triggerMsgID, msgID)
+	}
+
+	return nil
+}
+
+func (c *contextImpl) SendNotificationRich(rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error {
+	if !c.validateUserInputWithRich(rich, "SendNotificationRich", NoChange) {
+		return nil
+	}
+
+	triggerMsgID := c.MessageID()
+
+	if c.user.Messages().NotificationID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), c.user.Messages().NotificationID); err != nil {
+			c.bt.bot.log.Warn("cannot delete previous notification message", c.bt.userFields(c.user)...)
+		}
+	}
+
+	msgID, err := c.bt.bot.sendRich(c.user.ID(), rich, append(opts, kb)...)
 	if err != nil {
 		return c.prepareError(err, msgID)
 	}

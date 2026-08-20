@@ -23,8 +23,8 @@ import (
 	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	"github.com/maxbolgarin/servex/v2"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	tele "github.com/maxbolgarin/telebot/v4"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // webhookPoller implements tele.Poller interface for webhook-based updates.

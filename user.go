@@ -19,8 +19,8 @@ import (
 	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/gorder"
 	"github.com/maxbolgarin/lang"
-	"github.com/maypok86/otter"
 	tele "github.com/maxbolgarin/telebot/v4"
+	"github.com/maypok86/otter"
 )
 
 // State is a user state in Telegram bot builded using this package.

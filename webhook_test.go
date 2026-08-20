@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
+	tele "github.com/maxbolgarin/telebot/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // TestGenerateSelfSignedCert tests self-signed certificate generation

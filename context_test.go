@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/maxbolgarin/abstract"
+	tele "github.com/maxbolgarin/telebot/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // TestContextCreation tests various ways to create context
@@ -1409,4 +1409,25 @@ func TestValidateDraft(t *testing.T) {
 	assert.False(t, impl.validateDraft(0, "SendDraft"))
 	assert.True(t, impl.validateDraft(1, "SendDraft"))
 	assert.True(t, impl.validateDraft(-1, "SendDraft"))
+}
+
+// TestSendNotificationRich mirrors TestSendMainRich for the notification path, whose extra
+// responsibility is replacing the previous notification and tracking the new id.
+func TestSendNotificationRich(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("nil rich returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 13001, 1)
+		assert.Nil(t, ctx.SendNotificationRich(nil, nil))
+	})
+
+	t.Run("empty rich returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 13002, 1)
+		assert.Nil(t, ctx.SendNotificationRich(&tele.InputRichMessage{}, nil))
+	})
+
+	t.Run("markdown content offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 13003, 1)
+		_ = ctx.SendNotificationRich(&tele.InputRichMessage{Markdown: "# Answer"}, nil)
+	})
 }

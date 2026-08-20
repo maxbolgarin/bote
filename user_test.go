@@ -10,9 +10,9 @@ import (
 
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/lang"
+	tele "github.com/maxbolgarin/telebot/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // TestUserCreation tests user creation and initialization

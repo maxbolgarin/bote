@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	tele "github.com/maxbolgarin/telebot/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	tele "github.com/maxbolgarin/telebot/v4"
 )
 
 // TestBotNew verifies that New creates a bot without error using offline mode.
