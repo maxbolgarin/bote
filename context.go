@@ -108,6 +108,33 @@ type Context interface {
 	// opts are additional options for sending the message.
 	SendInChat(chatID int64, threadID int, msg string, kb *tele.ReplyMarkup, opts ...any) (int, error)
 
+	// SendMainRich sends a new main message built from rich content (Bot API 10.1).
+	// newState is a state of the user which will be set after sending message.
+	// Exactly one of rich.HTML or rich.Markdown must be set. Rich content is parsed server-side
+	// into headings, lists, tables, blockquotes and media blocks and is rendered as one message
+	// regardless of length, so the 4096-character plain-text cap does not apply.
+	// NOTE: Messages.PrepareMessage is NOT applied — see EditMainRich.
+	// WARNING: It works only in private chats.
+	SendMainRich(newState State, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error
+
+	// SendInChatRich sends rich content to an arbitrary chat and returns the sent message ID.
+	// threadID is optional; pass zero for chats without topics.
+	SendInChatRich(chatID int64, threadID int, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) (int, error)
+
+	// SendDraft streams a partial message to the user while it is still being generated
+	// (Bot API 9.3). draftID must be non-zero; successive calls with the same draftID animate
+	// into each other client-side. Pass an empty text to show a "Thinking…" placeholder.
+	// A draft is an ephemeral ~30 second preview and is never persisted: the finished text must
+	// still be delivered through SendMain/EditMain afterwards.
+	// WARNING: It works only in private chats.
+	SendDraft(draftID int, text string, opts ...any) error
+
+	// SendRichDraft is the rich counterpart of SendDraft (Bot API 10.1), for streaming
+	// structured output such as a generated answer. The same ephemerality rules apply: finish
+	// with SendMainRich or EditMainRich.
+	// WARNING: It works only in private chats.
+	SendRichDraft(draftID int, rich *tele.InputRichMessage, opts ...any) error
+
 	// Edit edits main and head messages of the user.
 	// newState is a state of the user which will be set after editing message.
 	// opts are additional options for editing messages.
@@ -120,6 +147,18 @@ type Context interface {
 	// WARNING: It works only in private chats.
 	EditMain(newState State, msg string, kb *tele.ReplyMarkup, opts ...any) error
 
+	// EditMainRich edits the main message of the user with a rich message (Bot API 10.1).
+	// newState is a state of the user which will be set after editing message.
+	// Exactly one of rich.HTML or rich.Markdown must be set; Telegram parses it server-side
+	// into headings, lists, tables, blockquotes and media blocks, and renders it as a single
+	// message regardless of length — so the 4096-character cap on plain text does not apply.
+	// kb is preserved: Telegram keeps reply_markup alongside rich content.
+	// NOTE: Messages.PrepareMessage is NOT applied, because it operates on HTML strings while
+	// rich content carries its own structure. Compose any navigation header into rich yourself.
+	// opts are additional options for editing message.
+	// WARNING: It works only in private chats.
+	EditMainRich(newState State, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error
+
 	// EditMainReplyMarkup edits reply markup of the main message.
 	// opts are additional options for editing message.
 	// WARNING: It works only in private chats.
@@ -131,6 +170,11 @@ type Context interface {
 	// opts are additional options for editing message.
 	// WARNING: It works only in private chats.
 	EditHistory(newState State, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error
+
+	// EditHistoryRich edits a previously sent message of the user with rich content.
+	// msgID is the ID of the message to edit.
+	// NOTE: Messages.PrepareMessage is NOT applied — see EditMainRich.
+	EditHistoryRich(newState State, msgID int, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error
 
 	// EditHistoryReplyMarkup edits reply markup of the history message.
 	// opts are additional options for editing message.
@@ -153,6 +197,9 @@ type Context interface {
 	// kb is the keyboard to edit.
 	// opts are additional options for editing message.
 	EditInChat(chatID int64, msgID int, msg string, kb *tele.ReplyMarkup, opts ...any) error
+
+	// EditInChatRich edits a message in an arbitrary chat with rich content.
+	EditInChatRich(chatID int64, msgID int, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error
 
 	// DeleteHead deletes head message of the user.
 	// WARNING: It works only in private chats.
@@ -573,6 +620,50 @@ func (c *contextImpl) SendMain(newState State, msg string, kb *tele.ReplyMarkup,
 	return nil
 }
 
+func (c *contextImpl) SendMainRich(newState State, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error {
+	if !c.validateUserInputWithRich(rich, "SendMainRich", newState) {
+		return nil
+	}
+
+	triggerMsgID := c.MessageID()
+	msgID, err := c.bt.bot.sendRich(c.user.ID(), rich, append(opts, kb)...)
+	if err != nil {
+		return c.prepareError(err, msgID)
+	}
+
+	if oldHeadMsgID := c.user.Messages().HeadID; oldHeadMsgID != 0 {
+		if err := c.bt.bot.delete(c.user.ID(), oldHeadMsgID); err != nil {
+			c.bt.bot.log.Warn("cannot delete previous head message", c.bt.userFields(c.user)...)
+		}
+	}
+
+	c.user.handleSend(newState, msgID, 0)
+	c.user.copyButtonsToNewMsgID(triggerMsgID, msgID)
+
+	return nil
+}
+
+func (c *contextImpl) SendDraft(draftID int, text string, opts ...any) error {
+	if !c.validateDraft(draftID, "SendDraft") {
+		return nil
+	}
+
+	// Deliberately no prepareError: a failed draft costs the user a missing preview frame, not a
+	// missing message, and the caller is usually a render loop that must keep going.
+	return c.bt.bot.sendDraft(c.user.ID(), draftID, text, opts...)
+}
+
+func (c *contextImpl) SendRichDraft(draftID int, rich *tele.InputRichMessage, opts ...any) error {
+	if !c.validateDraft(draftID, "SendRichDraft") {
+		return nil
+	}
+	if !c.validateUserInputWithRich(rich, "SendRichDraft", NoChange) {
+		return nil
+	}
+
+	return c.bt.bot.sendRichDraft(c.user.ID(), draftID, rich, opts...)
+}
+
 func (c *contextImpl) SendNotification(msg string, kb *tele.ReplyMarkup, opts ...any) error {
 	if !c.validateUserInputWithMessage(msg, "SendNotification", NoChange) {
 		return nil
@@ -697,6 +788,30 @@ func (c *contextImpl) SendInChat(chatID int64, threadID int, msg string, kb *tel
 	return msgID, nil
 }
 
+func (c *contextImpl) SendInChatRich(chatID int64, threadID int, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) (int, error) {
+	if chatID == 0 {
+		c.bt.bot.log.Error("chat ID cannot be empty")
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
+		return 0, nil
+	}
+	if !isRichFilled(rich) {
+		c.bt.bot.log.Error("rich message cannot be empty")
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
+		return 0, nil
+	}
+
+	if threadID > 0 {
+		opts = append(opts, tele.MessageThreadID(threadID))
+	}
+
+	msgID, err := c.bt.bot.sendRich(chatID, rich, append(opts, kb)...)
+	if err != nil {
+		return 0, c.prepareError(err, msgID)
+	}
+
+	return msgID, nil
+}
+
 func (c *contextImpl) Edit(newState State, mainMsg, headMsg string, mainKb, headKb *tele.ReplyMarkup, opts ...any) error {
 	if !c.validateUserInputWithMessage(mainMsg, "Edit", newState) {
 		return nil
@@ -743,6 +858,23 @@ func (c *contextImpl) EditMain(newState State, msg string, kb *tele.ReplyMarkup,
 	return nil
 }
 
+func (c *contextImpl) EditMainRich(newState State, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error {
+	if !c.validateUserInputWithRich(rich, "EditMainRich", newState) {
+		return nil
+	}
+
+	msgIDs := c.user.Messages()
+
+	if err := c.editRich(msgIDs.MainID, rich, kb, opts...); err != nil {
+		return c.prepareEditError(err, msgIDs.MainID)
+	}
+
+	c.user.setState(newState)
+	c.user.copyButtonsToNewMsgID(c.MessageID(), msgIDs.MainID)
+
+	return nil
+}
+
 func (c *contextImpl) EditMainReplyMarkup(kb *tele.ReplyMarkup, opts ...any) error {
 	if !c.validateUserInputWithKeyboard(kb, "EditMainReplyMarkup", NoChange) {
 		return nil
@@ -766,6 +898,20 @@ func (c *contextImpl) EditHistory(newState State, msgID int, msg string, kb *tel
 
 	msg = c.bt.msgs.Messages(c.user.Language()).PrepareMessage(msg, c.user, newState, msgID, true)
 	if err := c.edit(msgID, msg, kb, opts...); err != nil {
+		return c.prepareEditError(err, msgID)
+	}
+
+	c.user.setState(newState, msgID)
+
+	return nil
+}
+
+func (c *contextImpl) EditHistoryRich(newState State, msgID int, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error {
+	if !c.validateUserInputWithRich(rich, "EditHistoryRich", newState) {
+		return nil
+	}
+
+	if err := c.editRich(msgID, rich, kb, opts...); err != nil {
 		return c.prepareEditError(err, msgID)
 	}
 
@@ -831,6 +977,25 @@ func (c *contextImpl) EditInChat(chatID int64, msgID int, msg string, kb *tele.R
 	}
 
 	if err := c.bt.bot.edit(chatID, msgID, msg, append(opts, kb)...); err != nil {
+		return c.prepareError(err, msgID)
+	}
+
+	return nil
+}
+
+func (c *contextImpl) EditInChatRich(chatID int64, msgID int, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error {
+	if chatID == 0 {
+		c.bt.bot.log.Error("chat ID cannot be empty")
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
+		return nil
+	}
+	if !isRichFilled(rich) {
+		c.bt.bot.log.Error("rich message cannot be empty")
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
+		return nil
+	}
+
+	if err := c.bt.bot.edit(chatID, msgID, rich, append(opts, kb)...); err != nil {
 		return c.prepareError(err, msgID)
 	}
 
@@ -1027,6 +1192,41 @@ func (c *contextImpl) validateUserInputWithMessage(msg string, methodName string
 	return true
 }
 
+// isRichFilled reports whether rich actually carries content.
+//
+// A non-nil InputRichMessage whose HTML and Markdown are both empty serializes to a payload
+// Telegram rejects, and the options-only case (SkipEntityDetection, IsRTL) looks populated at a
+// glance, so the check is on the two content fields rather than on the pointer.
+func isRichFilled(rich *tele.InputRichMessage) bool {
+	return rich != nil && (rich.HTML != "" || rich.Markdown != "")
+}
+
+func (c *contextImpl) validateUserInputWithRich(rich *tele.InputRichMessage, methodName string, state State) bool {
+	if !c.validateUserInput(methodName, state) {
+		return false
+	}
+	if !isRichFilled(rich) {
+		c.bt.bot.log.Error("rich message cannot be empty", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
+		return false
+	}
+	return true
+}
+
+// validateDraft guards the draft methods. draftID is the identity of the animation, so a zero
+// value is not a harmless default — Telegram rejects it, and every frame would be lost.
+func (c *contextImpl) validateDraft(draftID int, methodName string) bool {
+	if !c.validateUserInput(methodName, NoChange) {
+		return false
+	}
+	if draftID == 0 {
+		c.bt.bot.log.Error("draft id cannot be zero", c.bt.userFields(c.User())...)
+		c.bt.bot.metr.incError(MetricsErrorBadUsage, MetricsErrorSeverityHigh)
+		return false
+	}
+	return true
+}
+
 func (c *contextImpl) validateUserInputWithKeyboard(kb *tele.ReplyMarkup, methodName string, state State) bool {
 	if !c.validateUserInput(methodName, state) {
 		return false
@@ -1167,4 +1367,15 @@ func (c *contextImpl) edit(msgID int, msg string, kb *tele.ReplyMarkup, opts ...
 	}
 
 	return c.bt.bot.edit(c.user.ID(), msgID, msg, append(opts, kb)...)
+}
+
+// editRich is the rich-message counterpart of edit. It skips the empty-message/reply-markup
+// shortcut of edit, because rich content is never empty by the time it gets here.
+func (c *contextImpl) editRich(msgID int, rich *tele.InputRichMessage, kb *tele.ReplyMarkup, opts ...any) error {
+	if msgID == 0 {
+		c.bt.bot.log.Error("message id cannot be empty", c.bt.userFields(c.user)...)
+		return nil
+	}
+
+	return c.bt.bot.edit(c.user.ID(), msgID, rich, append(opts, kb)...)
 }

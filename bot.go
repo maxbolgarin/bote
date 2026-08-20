@@ -919,8 +919,9 @@ func (b *Bot) closeErrorMessage(ctx Context) error {
 }
 
 var (
-	errEmptyUserID = erro.New("empty user id")
-	errEmptyMsgID  = erro.New("empty msg id")
+	errEmptyUserID      = erro.New("empty user id")
+	errEmptyMsgID       = erro.New("empty msg id")
+	errEmptyRichMessage = erro.New("empty rich message")
 )
 
 type baseBot struct {
@@ -997,6 +998,66 @@ func (b *baseBot) send(userID int64, msg string, options ...any) (int, error) {
 	b.metr.incSendMessagesTotal()
 
 	return m.ID, nil
+}
+
+// sendDraft streams a partial plain-text message while it is still being generated
+// (Bot API 9.3, opened to all bots in 9.5). See sendRichDraft for the semantics of a draft.
+func (b *baseBot) sendDraft(userID int64, draftID int, text string, options ...any) error {
+	if userID == 0 {
+		return errEmptyUserID
+	}
+
+	if err := b.tbot.SendDraft(userIDWrapper(userID), draftID, text, options...); err != nil {
+		b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
+		return err
+	}
+
+	return nil
+}
+
+// sendRich is the rich-message counterpart of send (Bot API 10.1).
+//
+// It is a separate method rather than a widening of send's msg parameter to any, so that the
+// rich path stays greppable and send keeps its string contract for the dozen plain call sites.
+func (b *baseBot) sendRich(userID int64, rich *tele.InputRichMessage, options ...any) (int, error) {
+	if userID == 0 {
+		return 0, errEmptyUserID
+	}
+	if rich == nil {
+		return 0, errEmptyRichMessage
+	}
+
+	m, err := b.tbot.Send(userIDWrapper(userID), rich, append(options, b.defaultOptions...)...)
+	if err != nil {
+		b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
+		return 0, err
+	}
+
+	b.metr.incSendMessagesTotal()
+
+	return m.ID, nil
+}
+
+// sendRichDraft streams a partial rich message while it is still being generated.
+//
+// A draft is not a message: it is a ~30 second client-side preview keyed by draftID, and it is
+// never persisted. Successive calls with the same draftID animate into each other, and the
+// finished text must still be sent or edited in through the normal path afterwards. That is
+// also why this does not touch the send counter — nothing was sent.
+func (b *baseBot) sendRichDraft(userID int64, draftID int, rich *tele.InputRichMessage, options ...any) error {
+	if userID == 0 {
+		return errEmptyUserID
+	}
+	if rich == nil {
+		return errEmptyRichMessage
+	}
+
+	if err := b.tbot.SendRichDraft(userIDWrapper(userID), draftID, rich, options...); err != nil {
+		b.metr.incError(MetricsErrorTelegramAPI, MetricsErrorSeverityLow)
+		return err
+	}
+
+	return nil
 }
 
 func (b *baseBot) sendFile(userID int64, file []byte, name string, options ...any) (int, error) {

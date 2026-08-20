@@ -1217,3 +1217,196 @@ func TestButtonDispatchWithoutFixWouldFail(t *testing.T) {
 	_, foundUnderOld := impl.user.buttonMap.Lookup(correctKey)
 	assert.True(t, foundUnderOld, "button is still under the original trigger msg ID")
 }
+
+// TestEditMainRich covers the Bot API 10.1 rich-message variant of EditMain.
+// The bot is offline here, so the Telegram call itself always fails; what these
+// cases pin down is the validation gate in front of it — a malformed rich payload
+// must be rejected locally instead of being turned into a doomed API request.
+func TestEditMainRich(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("nil rich returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 11001, 1)
+		err := ctx.EditMainRich(NoChange, nil, nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("rich with neither HTML nor Markdown returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 11002, 1)
+		err := ctx.EditMainRich(NoChange, &tele.InputRichMessage{}, nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("rich carrying only options is still empty content", func(t *testing.T) {
+		ctx := NewContext(bot, 11003, 1)
+		err := ctx.EditMainRich(NoChange, &tele.InputRichMessage{SkipEntityDetection: true}, nil)
+		assert.Nil(t, err)
+	})
+
+	t.Run("markdown content offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 11004, 1)
+		_ = ctx.EditMainRich(NoChange, &tele.InputRichMessage{Markdown: "# Title\n\nBody"}, nil)
+	})
+
+	t.Run("html content offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 11005, 1)
+		_ = ctx.EditMainRich(NoChange, &tele.InputRichMessage{HTML: "<b>done</b>"}, nil)
+	})
+
+	t.Run("zero main message id returns nil instead of calling the API", func(t *testing.T) {
+		ctx := NewContext(bot, 11006, 1)
+		impl := ctx.(*contextImpl)
+
+		impl.user.mu.Lock()
+		impl.user.user.Messages.MainID = 0
+		impl.user.mu.Unlock()
+
+		err := ctx.EditMainRich(NoChange, &tele.InputRichMessage{Markdown: "x"}, nil)
+		assert.Nil(t, err)
+	})
+}
+
+// TestValidateUserInputWithRich checks the guard directly, including the case that
+// motivated it: a non-nil struct whose content fields are both empty would otherwise
+// serialize to "{}" and be rejected by Telegram rather than by us.
+func TestValidateUserInputWithRich(t *testing.T) {
+	bot := setupTestBot(t)
+	impl := NewContext(bot, 11100, 1).(*contextImpl)
+
+	assert.False(t, impl.validateUserInputWithRich(nil, "EditMainRich", NoChange))
+	assert.False(t, impl.validateUserInputWithRich(&tele.InputRichMessage{}, "EditMainRich", NoChange))
+	assert.True(t, impl.validateUserInputWithRich(&tele.InputRichMessage{Markdown: "hi"}, "EditMainRich", NoChange))
+	assert.True(t, impl.validateUserInputWithRich(&tele.InputRichMessage{HTML: "<b>hi</b>"}, "EditMainRich", NoChange))
+}
+
+// TestIsRichFilled covers the content check shared by every rich method.
+func TestIsRichFilled(t *testing.T) {
+	assert.False(t, isRichFilled(nil))
+	assert.False(t, isRichFilled(&tele.InputRichMessage{}))
+	// Options-only looks populated but carries nothing to render.
+	assert.False(t, isRichFilled(&tele.InputRichMessage{IsRTL: true, SkipEntityDetection: true}))
+	assert.True(t, isRichFilled(&tele.InputRichMessage{Markdown: "# hi"}))
+	assert.True(t, isRichFilled(&tele.InputRichMessage{HTML: "<b>hi</b>"}))
+}
+
+// TestSendMainRich mirrors TestEditMainRich for the send path.
+func TestSendMainRich(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("nil rich returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 12001, 1)
+		assert.Nil(t, ctx.SendMainRich(NoChange, nil, nil))
+	})
+
+	t.Run("empty rich returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 12002, 1)
+		assert.Nil(t, ctx.SendMainRich(NoChange, &tele.InputRichMessage{}, nil))
+	})
+
+	t.Run("markdown content offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 12003, 1)
+		_ = ctx.SendMainRich(NoChange, &tele.InputRichMessage{Markdown: "# Title"}, nil)
+	})
+}
+
+// TestEditHistoryRich covers the history variant, which targets an explicit message ID.
+func TestEditHistoryRich(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("empty rich returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 12101, 1)
+		assert.Nil(t, ctx.EditHistoryRich(NoChange, 42, &tele.InputRichMessage{}, nil))
+	})
+
+	t.Run("zero msg id returns nil instead of calling the API", func(t *testing.T) {
+		ctx := NewContext(bot, 12102, 1)
+		assert.Nil(t, ctx.EditHistoryRich(NoChange, 0, &tele.InputRichMessage{Markdown: "x"}, nil))
+	})
+
+	t.Run("valid args offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 12103, 1)
+		_ = ctx.EditHistoryRich(NoChange, 42, &tele.InputRichMessage{Markdown: "x"}, nil)
+	})
+}
+
+// TestRichInChat covers the two arbitrary-chat variants, whose guards are chat-scoped rather
+// than user-scoped and so do not go through validateUserInput.
+func TestRichInChat(t *testing.T) {
+	bot := setupTestBot(t)
+	ctx := NewContext(bot, 12201, 1)
+
+	t.Run("SendInChatRich zero chat id returns nil", func(t *testing.T) {
+		id, err := ctx.SendInChatRich(0, 0, &tele.InputRichMessage{Markdown: "x"}, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, 0, id)
+	})
+
+	t.Run("SendInChatRich empty rich returns nil", func(t *testing.T) {
+		id, err := ctx.SendInChatRich(12345, 0, &tele.InputRichMessage{}, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, 0, id)
+	})
+
+	t.Run("SendInChatRich valid args offline error expected", func(t *testing.T) {
+		_, _ = ctx.SendInChatRich(12345, 7, &tele.InputRichMessage{Markdown: "x"}, nil)
+	})
+
+	t.Run("EditInChatRich zero chat id returns nil", func(t *testing.T) {
+		assert.Nil(t, ctx.EditInChatRich(0, 1, &tele.InputRichMessage{Markdown: "x"}, nil))
+	})
+
+	t.Run("EditInChatRich empty rich returns nil", func(t *testing.T) {
+		assert.Nil(t, ctx.EditInChatRich(12345, 1, &tele.InputRichMessage{}, nil))
+	})
+
+	t.Run("EditInChatRich valid args offline error expected", func(t *testing.T) {
+		_ = ctx.EditInChatRich(12345, 1, &tele.InputRichMessage{Markdown: "x"}, nil)
+	})
+}
+
+// TestDrafts covers the streaming methods. draftID identifies the animation, so zero must be
+// rejected locally rather than sent.
+func TestDrafts(t *testing.T) {
+	bot := setupTestBot(t)
+
+	t.Run("SendDraft zero draft id returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 12301, 1)
+		assert.Nil(t, ctx.SendDraft(0, "partial"))
+	})
+
+	t.Run("SendDraft empty text is allowed as the Thinking placeholder", func(t *testing.T) {
+		ctx := NewContext(bot, 12302, 1)
+		// Offline, so this errors at transport — the point is that it got past validation.
+		_ = ctx.SendDraft(1, "")
+	})
+
+	t.Run("SendDraft valid args offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 12303, 1)
+		_ = ctx.SendDraft(1, "partial")
+	})
+
+	t.Run("SendRichDraft zero draft id returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 12304, 1)
+		assert.Nil(t, ctx.SendRichDraft(0, &tele.InputRichMessage{Markdown: "x"}))
+	})
+
+	t.Run("SendRichDraft empty rich returns nil", func(t *testing.T) {
+		ctx := NewContext(bot, 12305, 1)
+		assert.Nil(t, ctx.SendRichDraft(1, &tele.InputRichMessage{}))
+	})
+
+	t.Run("SendRichDraft valid args offline error expected", func(t *testing.T) {
+		ctx := NewContext(bot, 12306, 1)
+		_ = ctx.SendRichDraft(1, &tele.InputRichMessage{Markdown: "# partial"})
+	})
+}
+
+// TestValidateDraft checks the draft guard directly.
+func TestValidateDraft(t *testing.T) {
+	bot := setupTestBot(t)
+	impl := NewContext(bot, 12400, 1).(*contextImpl)
+
+	assert.False(t, impl.validateDraft(0, "SendDraft"))
+	assert.True(t, impl.validateDraft(1, "SendDraft"))
+	assert.True(t, impl.validateDraft(-1, "SendDraft"))
+}
